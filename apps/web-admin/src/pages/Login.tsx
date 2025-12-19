@@ -1,6 +1,6 @@
 /**
  * Login Page
- * Split layout login with brand section
+ * Split layout login with brand section - Tailwind CSS
  */
 
 import { useState } from 'react';
@@ -8,7 +8,6 @@ import BrandSection from '../components/ui/BrandSection';
 import Logo from '../components/ui/Logo';
 import InputField from '../components/ui/InputField';
 import Button from '../components/ui/Button';
-import './Login.css';
 
 // Icons
 const EmailIcon: React.FC = () => (
@@ -42,19 +41,23 @@ const Login: React.FC = () => {
     };
 
     return (
-        <div className="login-page">
+        <div className="flex min-h-screen bg-slate-900 font-sans">
             <BrandSection />
 
-            <section className="login-section">
-                <div className="login-card">
+            <section className="flex-1 flex flex-col justify-center items-center p-8 bg-slate-900 max-sm:p-6">
+                <div className="w-full max-w-[380px] animate-[fadeIn_0.5s_ease_forwards]">
                     <Logo />
 
-                    <div className="login-header">
-                        <h2 className="login-title">Bienvenido de nuevo</h2>
-                        <p className="login-subtitle">Ingresa tus credenciales para acceder.</p>
+                    <div className="text-center mb-8">
+                        <h2 className="text-2xl font-bold text-white mb-1 max-sm:text-xl">
+                            Bienvenido de nuevo
+                        </h2>
+                        <p className="text-sm text-slate-400">
+                            Ingresa tus credenciales para acceder.
+                        </p>
                     </div>
 
-                    <form className="login-form" onSubmit={handleSubmit}>
+                    <form className="flex flex-col gap-6" onSubmit={handleSubmit}>
                         <InputField
                             type="email"
                             id="email"
@@ -89,7 +92,7 @@ const Login: React.FC = () => {
                         </Button>
                     </form>
 
-                    <p className="login-footer">
+                    <p className="text-center mt-8 text-xs text-slate-500 leading-relaxed">
                         Este es un sistema privado para uso exclusivo de<br />
                         personal autorizado de Comex.
                     </p>
