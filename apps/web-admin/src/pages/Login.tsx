@@ -1,13 +1,24 @@
 /**
- * Login Page
- * Split layout login with brand section - Tailwind CSS
+ * Login Page - Updated to follow Sequence Diagram
+ * 
+ * Implements:
+ * - User -> Page: Ingresa email y contraseña
+ * - User -> Page: Clic en "Iniciar Sesión"
+ * - Page ->> UseCase: execute(credentials: LoginCredentials)
+ * - UseCase -->> Page: Success/Error
+ * - Page -> Page: navigate("/dashboard")
  */
 
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'react-toastify';
 import BrandSection from '../components/ui/BrandSection';
 import Logo from '../components/ui/Logo';
 import InputField from '../components/ui/InputField';
 import Button from '../components/ui/Button';
+import { useAuth } from '../context/AuthContext';
+import { loginUseCase } from '../core/application/usecases/LoginUseCase';
+import type { LoginCredentials } from '../core/domain/entities/User';
 
 // Icons
 const EmailIcon: React.FC = () => (
@@ -29,15 +40,50 @@ const Login: React.FC = () => {
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const navigate = useNavigate();
+    const { login } = useAuth();
+
+    /**
+     * Handle form submission
+     * Implements: Page ->> UseCase: execute(credentials: LoginCredentials)
+     */
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
 
-        setTimeout(() => {
-            console.log('Login:', { email, password });
+        const credentials: LoginCredentials = { email, password };
+
+        try {
+            // Page ->> UseCase: execute(credentials)
+            const result = await loginUseCase.execute(credentials);
+
+            if (result.success) {
+                // Update auth context
+                login(result.user);
+
+                // Show success toast
+                toast.success('¡Bienvenido de nuevo!', {
+                    position: 'top-right',
+                    autoClose: 2000,
+                });
+
+                // Page -> Page: navigate("/dashboard")
+                navigate('/dashboard');
+            } else {
+                // UseCase -->> Page: Toast error message
+                toast.error(result.error.message, {
+                    position: 'top-right',
+                    autoClose: 4000,
+                });
+            }
+        } catch (error) {
+            toast.error('Error inesperado. Intente nuevamente.', {
+                position: 'top-right',
+                autoClose: 4000,
+            });
+        } finally {
             setLoading(false);
-            alert('¡Login exitoso!');
-        }, 1500);
+        }
     };
 
     return (
@@ -62,7 +108,7 @@ const Login: React.FC = () => {
                             type="email"
                             id="email"
                             label="Correo Electrónico"
-                            placeholder="admin@comex.com"
+                            placeholder="jose.admin@gmail.com"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}
                             icon={<EmailIcon />}
