@@ -1,0 +1,156 @@
+@startuml
+title HU01 - Iniciar Sesión (QONTROL Enterprise)
+
+actor Admin as User
+
+box "Frontend (React + Vite)\napps/web-admin/src/" #WhiteSmoke
+    boundary "pages/Login.tsx" as Page << Page >>
+    control "core/application/usecases/LoginUseCase.ts" as UseCase << Core Logic >>
+    control "core/infrastructure/adapters/AuthApiAdapter.ts" as Gateway << Axios >>
+end box
+
+box "Infrastructure\ndocker/" #EFEFEF
+    boundary "nginx/nginx.conf" as Nginx << API Gateway >>
+end box
+
+box "Backend (Auth Service - Go)\napps/auth-service/" #Honeydew
+    control "cmd/main.go\ngin.Default()" as Router << Gin Framework >>
+    control "internal/adapters/handlers/\nauth_handler.go" as Handler << AuthHandler >>
+    control "internal/core/services/\nauth_service.go" as Service << AuthService >>
+    entity "internal/infrastructure/crypto/\nargon2.go" as Crypto << Argon2Hasher >>
+    control "internal/infrastructure/jwt/\njwt_manager.go" as JWT << JWTManager >>
+end box
+
+box "Data Persistence" #LightYellow
+    database "internal/infrastructure/cache/\nredis_client.go" as Cache << RedisClient >>
+    control "internal/adapters/repositories/\npostgres_user_repo.go" as Repo << PostgresUserRepo >>
+    database "PostgreSQL\ndocker/postgres/init.sql" as DB << Database >>
+end box
+
+== Inicio de Sesión ==
+
+User -> Page: Ingresa email y contraseña
+User -> Page: Clic en "Iniciar Sesión"
+
+activate Page
+    Page ->> UseCase: execute(credentials: LoginCredentials)
+    
+    activate UseCase
+        UseCase -> UseCase: validateEmail(email) → bool
+        
+        UseCase ->> Gateway: login(credentials)
+        
+        activate Gateway
+            Gateway ->> Nginx: POST /api/auth/login\n{email, password}
+            
+            activate Nginx
+                note right of Nginx
+                    location /api/auth/ {
+                        proxy_pass http://auth-service:8080/;
+                    }
+                end note
+                Nginx ->> Router: Forward to :8080
+                
+                activate Router
+                    Router ->> Handler: r.POST("/login", authHandler.Login)
+                    
+                    activate Handler
+                        Handler -> Handler: c.ShouldBindJSON(&req)
+                        Handler ->> Service: Authenticate(ctx, email, password, c.ClientIP())
+                        
+                        activate Service
+                        
+                            group #Pink Rate Limiting (Redis)
+                                Service ->> Cache: GetAttempts(ctx, "attempts:"+clientIP)
+                                activate Cache
+                                Cache -->> Service: count (int)
+                                deactivate Cache
+                                
+                                alt attempts >= s.maxAttempts (5)
+                                    Service -->> Handler: ErrTooManyRequests
+                                    Handler -->> Router: c.JSON(429, {...})
+                                    Router -->> Nginx: HTTP 429
+                                    Nginx -->> Gateway: HTTP 429
+                                    Gateway -->> UseCase: throw AuthError
+                                    UseCase -->> Page: Toast: "Bloqueo temporal (15 min)"
+                                end
+                            end
+
+                            Service ->> Repo: GetByEmail(ctx, email)
+                            activate Repo
+                                Repo ->> DB: SELECT id, email, password_hash,\nrole, is_active, created_at\nFROM users WHERE email = $1
+                                activate DB
+                                DB -->> Repo: *domain.User
+                                deactivate DB
+                                Repo -->> Service: *domain.User
+                            deactivate Repo
+                            
+                            alt User not found
+                                Service ->> Cache: IncrAttempts(ctx, key, 15*time.Minute)
+                                Service -->> Handler: ErrInvalidCredentials
+                            end
+                            
+                            alt !user.IsActive
+                                Service -->> Handler: ErrUserNotActive
+                                Handler -->> Router: c.JSON(403, {error: "user_inactive"})
+                            end
+
+                            Service ->> Crypto: Verify(user.PasswordHash, password)
+                            activate Crypto
+                            note right of Crypto
+                                argon2.IDKey(password, salt, 
+                                    iterations=3, memory=65536,
+                                    parallelism=4, keyLen=32)
+                                subtle.ConstantTimeCompare()
+                            end note
+                            Crypto -->> Service: match (bool)
+                            deactivate Crypto
+
+                            alt !match (Contraseña Incorrecta)
+                                Service ->> Cache: IncrAttempts(ctx, key, 15*time.Minute)
+                                Service -->> Handler: ErrInvalidCredentials
+                                Handler -->> Router: c.JSON(401, {error: "invalid_credentials"})
+                                Router -->> Nginx: HTTP 401
+                                Nginx -->> Gateway: HTTP 401
+                                Gateway -->> UseCase: throw AuthError
+                                UseCase -->> Page: Toast: "Email o contraseña incorrectos"
+                            else match (Contraseña Correcta)
+                                Service ->> Cache: ResetAttempts(ctx, key)
+                                
+                                Service ->> JWT: Generate(user.ID, email, role)
+                                activate JWT
+                                note right of JWT
+                                    jwt.NewWithClaims(HS256, {
+                                        sub: userID,
+                                        email: email,
+                                        role: role,
+                                        exp: now + 24h
+                                    })
+                                end note
+                                JWT -->> Service: token (string)
+                                deactivate JWT
+                                
+                                Service ->> Cache: SetSession(ctx, email, token, 24h)
+                                Service -->> Handler: &domain.LoginResponse{Token, User}
+                                Handler -->> Router: c.JSON(200, response)
+                                Router -->> Nginx: HTTP 200 JSON
+                                Nginx -->> Gateway: HTTP 200 JSON
+                                deactivate Router
+                                deactivate Handler
+                                deactivate Service
+                            end
+
+            deactivate Nginx
+            
+            Gateway -->> UseCase: LoginResponse {token, user}
+        deactivate Gateway
+        
+        UseCase -> UseCase: localStorage.setItem("token", token)\nlocalStorage.setItem("user", JSON.stringify(user))
+        UseCase -->> Page: Success
+    deactivate UseCase
+    
+    Page -> Page: navigate("/dashboard")
+    Page -> User: Muestra Dashboard
+deactivate Page
+
+@enduml

@@ -1,0 +1,17 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - cd apps/web-admin
+        - npm ci
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    baseDirectory: apps/web-admin/dist
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - apps/web-admin/node_modules/**/*
