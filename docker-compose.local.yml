@@ -1,0 +1,14 @@
+services:
+  nginx:
+    volumes:
+      - ./docker/nginx/nginx.local.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+      # No 443 needed for local
+    depends_on:
+      - auth-service
+
+  auth-service:
+    environment:
+      - DB_HOST=postgres
+      - REDIS_HOST=redis:6379
