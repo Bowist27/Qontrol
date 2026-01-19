@@ -1,0 +1,184 @@
+@startuml
+title HU01 - Iniciar Sesión Escritorio (QONTROL POS Offline-First)
+
+actor Cajero as User
+
+box "Frontend Renderer (React)\napps/app-pos-electron/src/" #WhiteSmoke
+    boundary "pages/Login.tsx" as Page << Page >>
+    control "hooks/useAuth.ts" as Hook << React Hook >>
+    boundary "electron/preload.ts" as Bridge << IPC Bridge >>
+end box
+
+box "Electron Main Process\napps/app-pos-electron/electron/" #Lavender
+    control "ipc/AuthIPC.ts" as IPC << IPC Handler >>
+end box
+
+box "Local Core (Business Logic)\nlocal-core/" #Honeydew
+    control "application/LoginUseCase.ts" as UseCase << Core Logic >>
+    control "adapters/sync-engine/SyncUsers.ts" as Sync << Sync Service >>
+end box
+
+box "Data Persistence (Local)" #LightYellow
+    control "adapters/sqlite/SQLiteUserRepo.ts" as Repo << SQLite Adapter >>
+    database "SQLite\n(user_data.db)" as DB << Local DB >>
+end box
+
+box "External Infrastructure" #EFEFEF
+    boundary "adapters/api/CloudAuthAdapter.ts" as Cloud << Axios >>
+    participant "AWS Auth Service\nGET /users/sync" as API << Cloud API >>
+end box
+
+== Inicio de Aplicación (Auto-Sync) ==
+
+activate IPC
+    IPC ->> Sync: syncUsersIfConnected()
+    activate Sync
+        Sync ->> Cloud: getUsersFromCloud()
+        activate Cloud
+            Cloud ->> API: GET /users/sync
+            activate API
+            API -->> Cloud: JSON { users: [hash, salt...] }
+            deactivate API
+            
+            alt Conexión Exitosa
+                Cloud -->> Sync: users[]
+                Sync ->> Repo: saveBatch(users)
+                activate Repo
+                    Repo ->> DB: UPSERT users
+                deactivate Repo
+            else Sin Internet
+                Cloud -->> Sync: Error (Ignorado)
+            end
+        deactivate Cloud
+    deactivate Sync
+deactivate IPC
+
+== Sincronización Manual (Botón UI) ==
+
+User -> Page: Clic en botón "Sincronizar"
+activate Page
+    Page ->> Hook: manualSync()
+    activate Hook
+        Hook ->> Bridge: window.auth.sync()
+        activate Bridge
+            Bridge ->> IPC: ipcRenderer.invoke('auth:sync-manual')
+            activate IPC
+                IPC ->> Sync: syncUsersForce()
+                activate Sync
+                    Sync ->> Cloud: getUsersFromCloud()
+                    activate Cloud
+                        Cloud ->> API: GET /users/sync
+                        activate API
+                        API -->> Cloud: JSON { users: [...] }
+                        deactivate API
+                        
+                        alt Conexión Exitosa
+                            Cloud -->> Sync: users[]
+                            Sync ->> Repo: saveBatch(users)
+                            activate Repo
+                                Repo ->> DB: UPSERT users
+                            deactivate Repo
+                            Sync -->> IPC: Success
+                        else Error de Red
+                            Cloud -->> Sync: Error
+                            Sync -->> IPC: Error("Sin conexión")
+                        end
+                    deactivate Cloud
+                deactivate Sync
+                
+                alt Éxito
+                    IPC -->> Bridge: true
+                else Fallo
+                    IPC -->> Bridge: false
+                end
+            deactivate IPC
+        deactivate Bridge
+        
+        alt Éxito
+            Hook ->> Page: Toast "Usuarios actualizados"
+        else Error
+            Hook ->> Page: Toast "Error de red"
+        end
+    deactivate Hook
+deactivate Page
+
+== Inicio de Sesión ==
+
+User -> Page: Ingresa Clave/Email y Pass
+User -> Page: Clic en "Entrar"
+
+activate Page
+    Page ->> Hook: login(email, password)
+    activate Hook
+        Hook ->> Bridge: window.auth.login({email, password})
+        activate Bridge
+            Bridge ->> IPC: ipcRenderer.invoke('auth:login', ...)
+            activate IPC
+                IPC ->> UseCase: execute(email, password)
+                activate UseCase
+                    
+                    UseCase ->> Repo: getByEmail(email)
+                    activate Repo
+                        Repo ->> DB: SELECT * FROM users WHERE email = ?
+                        activate DB
+                        DB -->> Repo: UserEntity (o null)
+                        deactivate DB
+                    deactivate Repo
+                    
+                    alt User No Encontrado (Local)
+                        ' === CORRECCIÓN 2: Lógica de Feedback BD Vacía ===
+                        UseCase ->> Repo: countUsers()
+                        activate Repo
+                            Repo ->> DB: SELECT COUNT(*) FROM users
+                            DB -->> Repo: count (int)
+                        deactivate Repo
+                        
+                        alt count == 0 (BD Vacía)
+                            UseCase -->> IPC: Error("DB_EMPTY")
+                            IPC -->> Bridge: throw Error("DB_EMPTY")
+                            Bridge -->> Hook: Error
+                            Hook -->> Page: Alerta: "Sistema vacío.\nConéctese a internet y Sincronice."
+                        else count > 0 (Usuario Incorrecto)
+                            UseCase -->> IPC: Error("USER_NOT_FOUND")
+                            IPC -->> Bridge: throw Error("USER_NOT_FOUND")
+                            Bridge -->> Hook: Error
+                            Hook -->> Page: Alerta: "Usuario o clave incorrectos."
+                        end
+                        ' ===============================================
+
+                    else User Encontrado
+                        
+                        ' === CORRECCIÓN 1: Argon2 Asíncrono / Worker ===
+                        UseCase -> UseCase: await Argon2.verify(hash, pass)\n(Async/Worker Thread)
+                        
+                        alt Password Inválido
+                            UseCase -->> IPC: Error("Credenciales inválidas")
+                        else Password Válido
+                            UseCase ->> Repo: registerSession(user.id)
+                            UseCase -->> IPC: Success { user, valid: true }
+                            
+                            par Audit Log (Async)
+                                UseCase ->> Cloud: sendAuditLog("login_success")
+                            end
+                        end
+                    end
+                    
+                deactivate UseCase
+                
+                alt Error
+                    IPC -->> Bridge: Error
+                else Success
+                    IPC -->> Bridge: LoginResult
+                end
+            deactivate IPC
+        deactivate Bridge
+        
+        alt Success
+            Hook ->> Page: Redirect to /pos/dashboard
+        else Error
+            Hook ->> Page: Show Toast Error
+        end
+    deactivate Hook
+deactivate Page
+
+@enduml
