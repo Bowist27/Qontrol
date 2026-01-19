@@ -1,0 +1,67 @@
+@startuml HU03_Catalog_Harvesting_Flow
+!theme cerulean-outline
+title HU-03: Flujo de Ingesta de Catálogo (Catalog Harvesting)
+
+skinparam backgroundColor #1e293b
+skinparam defaultFontColor #e2e8f0
+skinparam activityBackgroundColor #334155
+skinparam activityBorderColor #64748b
+skinparam arrowColor #06aef0
+skinparam noteBackgroundColor #1e40af
+skinparam noteBorderColor #3b82f6
+
+|#334155|Tienda / Excel|
+start
+:Subir archivo Excel/CSV;
+note right
+  Contiene:
+  - SKU
+  - Nombre (opcional)
+  - Cantidad
+  - Precio (opcional)
+end note
+
+|#1e3a5f|ETL Service|
+:Parsear archivo;
+:Extraer filas de productos;
+
+repeat :Por cada fila del Excel;
+  :Buscar SKU en Catálogo Maestro;
+  
+  if (¿SKU existe en BD?) then (SÍ)
+    #10b981:Actualizar stock\nde la tienda;
+    note right #065f46
+      Solo actualiza cantidad
+      NO toca nombre/precio
+      (First Write Wins)
+    end note
+  else (NO)
+    #f59e0b:Crear producto nuevo;
+    note right #92400e
+      status: PROVISIONAL
+      source_store_id: ID tienda
+      discovered_at: NOW()
+    end note
+    :Registrar stock inicial;
+    :Agregar a Cola de Curación;
+  endif
+repeat while (¿Más filas?) is (sí) not (no)
+
+|#334155|Resultado|
+:Generar reporte de importación;
+note right
+  - X productos actualizados
+  - Y productos nuevos (provisionales)
+  - Z errores/advertencias
+end note
+
+|#1e3a5f|Dashboard Admin|
+if (¿Hay productos provisionales?) then (SÍ)
+  #fbbf24:Mostrar badge\n"N Productos por Validar";
+else (NO)
+  :Todo limpio ✓;
+endif
+
+stop
+
+@enduml

@@ -1,0 +1,97 @@
+@startuml HU03_Entity_Diagram
+!theme cerulean-outline
+title HU-03: Modelo de Entidades - Catálogo con Estados
+
+skinparam backgroundColor #1e293b
+skinparam defaultFontColor #e2e8f0
+skinparam classBackgroundColor #334155
+skinparam classBorderColor #64748b
+skinparam arrowColor #06aef0
+skinparam noteBackgroundColor #1e40af
+skinparam noteBorderColor #3b82f6
+
+enum ValidationStatus {
+  PROVISIONAL
+  VERIFIED
+}
+
+class Product {
+  + sku: VARCHAR(50) <<PK>>
+  --
+  + name: VARCHAR(255)
+  + family: VARCHAR(100)
+  + presentation: VARCHAR(50)
+  + price: DECIMAL(10,2)
+  --
+  + **validation_status**: ValidationStatus
+  + **source_store_id**: INT <<FK>>
+  + **discovered_at**: TIMESTAMP
+  + **verified_by**: VARCHAR(100)
+  + **verified_at**: TIMESTAMP
+  --
+  + created_at: TIMESTAMP
+  + updated_at: TIMESTAMP
+}
+
+class Store {
+  + id: INT <<PK>>
+  --
+  + name: VARCHAR(100)
+  + city: VARCHAR(100)
+  + status: StoreStatus
+}
+
+class StoreInventory {
+  + id: INT <<PK>>
+  --
+  + store_id: INT <<FK>>
+  + product_sku: VARCHAR(50) <<FK>>
+  + quantity: INT
+  + min_stock: INT
+  + max_stock: INT
+  + in_transit: INT
+  --
+  + last_updated: TIMESTAMP
+}
+
+class AuditLog {
+  + id: UUID <<PK>>
+  --
+  + store_id: INT <<FK>>
+  + user_id: UUID <<FK>>
+  + file_name: VARCHAR(255)
+  + products_updated: INT
+  + products_created: INT
+  + status: AuditStatus
+  --
+  + created_at: TIMESTAMP
+}
+
+Product "1" -- "*" StoreInventory : tiene stock en
+Store "1" -- "*" StoreInventory : mantiene
+Store "1" -- "*" Product : descubre (source)
+Store "1" -- "*" AuditLog : genera
+
+note bottom of Product #92400e
+  **Nuevos campos para Catalog Harvesting:**
+  
+  • validation_status: Indica si el producto
+    fue validado manualmente o es auto-descubierto
+  
+  • source_store_id: ¿Qué tienda lo descubrió?
+  
+  • discovered_at: ¿Cuándo apareció por primera vez?
+  
+  • verified_by/at: ¿Quién y cuándo lo validó?
+end note
+
+note bottom of AuditLog #065f46
+  **Nuevo campo:**
+  products_created: INT
+  
+  Para saber cuántos productos
+  provisionales se crearon en
+  cada importación.
+end note
+
+@enduml

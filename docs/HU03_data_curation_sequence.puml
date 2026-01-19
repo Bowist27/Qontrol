@@ -1,0 +1,80 @@
+@startuml HU03_Data_Curation_Sequence
+!theme cerulean-outline
+title HU-03: Secuencia de Curación de Datos
+
+skinparam backgroundColor #1e293b
+skinparam defaultFontColor #e2e8f0
+skinparam participantBackgroundColor #334155
+skinparam participantBorderColor #64748b
+skinparam sequenceArrowColor #06aef0
+skinparam noteBackgroundColor #1e40af
+skinparam noteBorderColor #3b82f6
+skinparam sequenceLifeLineBorderColor #64748b
+
+actor "Adrián\n(Admin)" as Admin #f59e0b
+participant "Web Admin\nDashboard" as UI #334155
+participant "Catalog\nService" as API #1e3a5f
+database "PostgreSQL\nCatálogo Maestro" as DB #0f172a
+
+== Notificación de Productos Provisionales ==
+
+UI -> API: GET /products?status=provisional
+API -> DB: SELECT * FROM products\nWHERE validation_status = 'provisional'
+DB --> API: [5 productos]
+API --> UI: { products: [...], count: 5 }
+UI --> Admin: 🟡 Badge: "5 productos por validar"
+
+== Flujo de Curación ==
+
+Admin -> UI: Clic en "Productos por Validar"
+UI -> UI: Abre modal/tabla de curación
+
+note over UI
+  Muestra tabla con:
+  | SKU | Nombre Original | Origen | Fecha |
+  |-----|-----------------|--------|-------|
+  | NEW-001 | BROCHA 2 PPG | Celaya | 19/01 |
+end note
+
+Admin -> UI: Selecciona producto NEW-001
+UI -> UI: Abre formulario de edición
+
+note over Admin
+  Adrián corrige:
+  - Nombre: "Brocha Profesional 2""
+  - Familia: Accesorios
+  - Precio: $85.00
+end note
+
+Admin -> UI: Clic en "Validar y Guardar"
+UI -> API: PATCH /products/NEW-001
+note right of UI
+  {
+    "name": "Brocha Profesional 2\"",
+    "family": "Accesorios",
+    "price": 85.00,
+    "validation_status": "verified",
+    "verified_by": "adrian@comex.com"
+  }
+end note
+
+API -> DB: UPDATE products SET\nvalidation_status = 'verified',\nverified_by = '...',\nverified_at = NOW()\nWHERE sku = 'NEW-001'
+DB --> API: OK
+API --> UI: 200 OK
+UI --> Admin: ✅ "Producto validado"
+
+== Manejo de Conflicto de Nombres ==
+
+note over DB #92400e
+  **Regla: First Write Wins**
+  
+  Si otra tienda sube el mismo SKU
+  con nombre diferente, el sistema
+  IGNORA el nuevo nombre y solo
+  actualiza la cantidad.
+  
+  El nombre solo puede cambiar
+  manualmente por un Admin.
+end note
+
+@enduml

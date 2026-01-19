@@ -181,3 +181,59 @@ export const getStockStatus = (stock: number, minStock: number, maxStock: number
 export const getProductStockForStore = (product: ProductWithStock, storeId: number) => {
     return product.stockByStore.find(s => s.storeId === storeId) || null;
 };
+
+// --- PRODUCTOS PROVISIONALES (Auto-descubiertos) ---
+import type { ProvisionalProduct } from '../types';
+
+export const PROVISIONAL_PRODUCTS: ProvisionalProduct[] = [
+    {
+        sku: 'NEW-001',
+        originalName: 'BROCHA 2 PPG',
+        suggestedFamily: undefined,
+        suggestedPrice: undefined,
+        sourceStoreId: 1,
+        sourceStoreName: 'Celaya Centro',
+        discoveredAt: '2026-01-19 10:32',
+        initialStock: 45,
+    },
+    {
+        sku: 'NEW-002',
+        originalName: 'SELLADOR GENERICO 19L',
+        suggestedFamily: 'Selladores',
+        suggestedPrice: 980,
+        sourceStoreId: 10,
+        sourceStoreName: 'León Centro',
+        discoveredAt: '2026-01-18 14:15',
+        initialStock: 28,
+    },
+    {
+        sku: 'NEW-003',
+        originalName: 'PINTURA ROJA MATE 4L',
+        suggestedFamily: undefined,
+        suggestedPrice: undefined,
+        sourceStoreId: 4,
+        sourceStoreName: 'Querétaro Centro',
+        discoveredAt: '2026-01-17 09:45',
+        initialStock: 12,
+    },
+    {
+        sku: 'NEW-004',
+        originalName: 'RODILLO EXTRALARGO',
+        suggestedFamily: 'Accesorios',
+        suggestedPrice: 145,
+        sourceStoreId: 24,
+        sourceStoreName: 'Guadalajara Centro',
+        discoveredAt: '2026-01-16 16:20',
+        initialStock: 85,
+    },
+    {
+        sku: 'NEW-005',
+        originalName: 'ESMALTE AZUL CIELO',
+        suggestedFamily: 'Esmaltes',
+        suggestedPrice: undefined,
+        sourceStoreId: 20,
+        sourceStoreName: 'Morelia Centro',
+        discoveredAt: '2026-01-15 11:00',
+        initialStock: 33,
+    },
+];

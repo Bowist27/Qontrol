@@ -40,8 +40,8 @@ const StockPopover: React.FC<StockPopoverProps> = ({ product, onClose }) => {
                                 </div>
                                 <div className="flex items-center gap-2">
                                     <span className={`font-bold text-sm ${status === 'critical' ? 'text-red-600'
-                                            : status === 'low' ? 'text-amber-600'
-                                                : 'text-emerald-600'
+                                        : status === 'low' ? 'text-amber-600'
+                                            : 'text-emerald-600'
                                         }`}>
                                         {storeStock.stock} pzs
                                     </span>

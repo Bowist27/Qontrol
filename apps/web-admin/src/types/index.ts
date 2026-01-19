@@ -7,6 +7,19 @@ export type StoreStatus = 'online' | 'warning' | 'offline';
 export type AuditDiffAction = 'ok' | 'adjust_up' | 'adjust_down' | 'new_product';
 export type AuditStatus = 'applied' | 'cancelled' | 'pending';
 export type ViewType = 'dashboard' | 'inventory_detail' | 'audits' | 'catalog' | 'users';
+export type ValidationStatus = 'provisional' | 'verified';
+
+// Producto provisional descubierto por una tienda
+export interface ProvisionalProduct {
+    sku: string;
+    originalName: string;  // Nombre que vino en el Excel
+    suggestedFamily?: ProductFamily;
+    suggestedPrice?: number;
+    sourceStoreId: number;
+    sourceStoreName: string;
+    discoveredAt: string;
+    initialStock: number;
+}
 
 export interface Store {
     id: number;
