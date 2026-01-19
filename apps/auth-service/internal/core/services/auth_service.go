@@ -28,6 +28,7 @@ func (e *BlockedError) Error() string {
 // UserRepository interface for database operations
 type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (*domain.User, error)
+	GetAllActive(ctx context.Context) ([]*domain.User, error)
 }
 
 // CacheClient interface for Redis operations
@@ -189,4 +190,26 @@ func (s *AuthService) calculateBlockDuration(attempts int) time.Duration {
 // Logout invalidates the user session
 func (s *AuthService) Logout(ctx context.Context, email string) error {
 	return s.cache.DeleteSession(ctx, email)
+}
+
+// GetAllActiveUsers retrieves all active users and returns their sync DTOs
+// This is used by the desktop app for offline login
+func (s *AuthService) GetAllActiveUsers(ctx context.Context) ([]domain.UserSyncDTO, error) {
+	users, err := s.userRepo.GetAllActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var syncUsers []domain.UserSyncDTO
+	for _, user := range users {
+		syncUsers = append(syncUsers, domain.UserSyncDTO{
+			ID:           user.ID,
+			Email:        user.Email,
+			PasswordHash: user.PasswordHash,
+			Role:         user.Role,
+			IsActive:     user.IsActive,
+		})
+	}
+
+	return syncUsers, nil
 }

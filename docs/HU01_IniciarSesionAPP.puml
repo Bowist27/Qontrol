@@ -10,12 +10,12 @@ box "Frontend Renderer (React)\napps/app-pos-electron/src/" #WhiteSmoke
 end box
 
 box "Electron Main Process\napps/app-pos-electron/electron/" #Lavender
-    control "ipc/AuthIPC.ts" as IPC << IPC Handler >>
+    control "main.ts" as IPC << IPC Handler >>
 end box
 
 box "Local Core (Business Logic)\nlocal-core/" #Honeydew
     control "application/LoginUseCase.ts" as UseCase << Core Logic >>
-    control "adapters/sync-engine/SyncUsers.ts" as Sync << Sync Service >>
+    control "application/SyncUsers.ts" as Sync << Sync Service >>
 end box
 
 box "Data Persistence (Local)" #LightYellow
@@ -31,7 +31,7 @@ end box
 == Inicio de Aplicación (Auto-Sync) ==
 
 activate IPC
-    IPC ->> Sync: syncUsersIfConnected()
+    IPC ->> Sync: execute()
     activate Sync
         Sync ->> Cloud: getUsersFromCloud()
         activate Cloud
@@ -61,9 +61,9 @@ activate Page
     activate Hook
         Hook ->> Bridge: window.auth.sync()
         activate Bridge
-            Bridge ->> IPC: ipcRenderer.invoke('auth:sync-manual')
+            Bridge ->> IPC: ipcRenderer.invoke('auth:sync')
             activate IPC
-                IPC ->> Sync: syncUsersForce()
+                IPC ->> Sync: execute()
                 activate Sync
                     Sync ->> Cloud: getUsersFromCloud()
                     activate Cloud
@@ -117,7 +117,7 @@ activate Page
                 IPC ->> UseCase: execute(email, password)
                 activate UseCase
                     
-                    UseCase ->> Repo: getByEmail(email)
+                    UseCase ->> Repo: findByEmail(email)
                     activate Repo
                         Repo ->> DB: SELECT * FROM users WHERE email = ?
                         activate DB
@@ -126,8 +126,8 @@ activate Page
                     deactivate Repo
                     
                     alt User No Encontrado (Local)
-                        ' === CORRECCIÓN 2: Lógica de Feedback BD Vacía ===
-                        UseCase ->> Repo: countUsers()
+                        ' === Lógica de Feedback BD Vacía ===
+                        UseCase ->> Repo: count()
                         activate Repo
                             Repo ->> DB: SELECT COUNT(*) FROM users
                             DB -->> Repo: count (int)
@@ -148,18 +148,13 @@ activate Page
 
                     else User Encontrado
                         
-                        ' === CORRECCIÓN 1: Argon2 Asíncrono / Worker ===
-                        UseCase -> UseCase: await Argon2.verify(hash, pass)\n(Async/Worker Thread)
+                        ' === Argon2 Verificación ===
+                        UseCase -> UseCase: await argon2.verify(hash, pass)
                         
                         alt Password Inválido
                             UseCase -->> IPC: Error("Credenciales inválidas")
                         else Password Válido
-                            UseCase ->> Repo: registerSession(user.id)
-                            UseCase -->> IPC: Success { user, valid: true }
-                            
-                            par Audit Log (Async)
-                                UseCase ->> Cloud: sendAuditLog("login_success")
-                            end
+                            UseCase -->> IPC: Success { user, valid: true } 
                         end
                     end
                     
@@ -180,5 +175,3 @@ activate Page
         end
     deactivate Hook
 deactivate Page
-
-@enduml

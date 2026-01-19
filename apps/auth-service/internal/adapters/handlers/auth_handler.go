@@ -3,7 +3,9 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 
 	"github.com/comex/auth-service/internal/core/domain"
 	"github.com/comex/auth-service/internal/core/services"
@@ -89,5 +91,47 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	// In production, you'd extract email from JWT and invalidate session
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Sesión cerrada exitosamente",
+	})
+}
+
+// SyncUsers handles GET /users/sync requests
+// Protected by API Key (X-Sync-Key)
+func (h *AuthHandler) SyncUsers(c *gin.Context) {
+	// 1. Security Check
+	apiKey := c.GetHeader("X-Sync-Key")
+	requiredKey := os.Getenv("SYNC_SECRET_KEY")
+
+	if requiredKey == "" {
+		log.Println("⚠️ CRITICAL: SYNC_SECRET_KEY not configured in environment")
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "config_error",
+			Message: "Server misconfiguration",
+		})
+		return
+	}
+
+	if apiKey != requiredKey {
+		log.Printf("⚠️ Unauthorized Sync Attempt. IP: %s", c.ClientIP())
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "Invalid Sync Key",
+		})
+		return
+	}
+
+	// 2. Fetch Active Users
+	users, err := h.authService.GetAllActiveUsers(c.Request.Context())
+	if err != nil {
+		log.Printf("Failed to fetch users for sync: %v", err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Failed to fetch users",
+		})
+		return
+	}
+
+	// 3. Return JSON with hashes
+	c.JSON(http.StatusOK, gin.H{
+		"users": users,
 	})
 }

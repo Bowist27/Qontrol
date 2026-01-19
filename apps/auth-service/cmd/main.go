@@ -67,11 +67,14 @@ func main() {
 	})
 
 	// Auth routes
+	// Auth routes
 	r.POST("/login", authHandler.Login)
 	r.POST("/logout", authHandler.Logout)
+	r.GET("/users/sync", authHandler.SyncUsers)
 
-	log.Println("🚀 Auth service starting on :8080")
-	if err := r.Run(":8080"); err != nil {
+	port := getEnv("PORT", "8080")
+	log.Println("🚀 Auth service starting on :" + port)
+	if err := r.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
 }

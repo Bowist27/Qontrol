@@ -12,6 +12,16 @@ type User struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+// UserSyncDTO is used for offline synchronization
+// It exposes the PasswordHash so the local app can verify credentials offline.
+type UserSyncDTO struct {
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+	Role         string `json:"role"`
+	IsActive     bool   `json:"is_active"`
+}
+
 // LoginRequest represents the login request payload
 type LoginRequest struct {
 	Email    string `json:"email" binding:"required,email"`
