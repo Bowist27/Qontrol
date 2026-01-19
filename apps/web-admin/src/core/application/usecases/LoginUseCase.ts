@@ -93,7 +93,6 @@ export class LoginUseCase {
         const errorMessages: Record<string, string> = {
             'invalid_credentials': 'Email o contraseña incorrectos.',
             'user_inactive': 'Su cuenta está desactivada. Contacte al administrador.',
-            'too_many_requests': 'Demasiados intentos fallidos. Intente en 15 minutos.',
             'network_error': 'No se pudo conectar al servidor.',
         };
 

@@ -12,10 +12,18 @@ import (
 // Custom errors for authentication
 var (
 	ErrInvalidCredentials = errors.New("invalid_credentials")
-	ErrTooManyRequests    = errors.New("too_many_requests")
 	ErrUserNotActive      = errors.New("user_not_active")
 	ErrUserNotFound       = errors.New("user_not_found")
 )
+
+// BlockedError captures the remaining block duration
+type BlockedError struct {
+	Duration time.Duration
+}
+
+func (e *BlockedError) Error() string {
+	return "too_many_requests"
+}
 
 // UserRepository interface for database operations
 type UserRepository interface {
@@ -29,6 +37,8 @@ type CacheClient interface {
 	ResetAttempts(ctx context.Context, key string) error
 	SetSession(ctx context.Context, email, token string, ttl time.Duration) error
 	DeleteSession(ctx context.Context, email string) error
+	SetBlock(ctx context.Context, key string, duration time.Duration) error
+	IsBlocked(ctx context.Context, key string) (bool, time.Duration, error)
 }
 
 // PasswordHasher interface for password verification
@@ -64,36 +74,36 @@ func NewAuthService(
 		cache:         cache,
 		hasher:        hasher,
 		tokenMgr:      tokenMgr,
-		maxAttempts:   5,                // Max 5 failed attempts
-		blockDuration: 15 * time.Minute, // Block for 15 minutes
-		sessionTTL:    24 * time.Hour,   // Session valid for 24 hours
+		maxAttempts:   5,               // Max 5 failed attempts
+		blockDuration: 3 * time.Minute, // Block for 3 minutes
+		sessionTTL:    24 * time.Hour,  // Session valid for 24 hours
 	}
 }
 
 // Authenticate validates user credentials and returns a token
 // This implements the LoginService.Authenticate from the sequence diagram
 func (s *AuthService) Authenticate(ctx context.Context, email, password, clientIP string) (*domain.LoginResponse, error) {
-	attemptKey := "attempts:" + clientIP
+	attemptKey := "login_attempts:" + clientIP
 
-	// Step 1: Check rate limiting (GET attempts:{ip})
-	attempts, err := s.cache.GetAttempts(ctx, attemptKey)
+	// Step 1: Check if blocked (IsBlocked)
+	blocked, ttl, err := s.cache.IsBlocked(ctx, clientIP)
 	if err != nil {
-		log.Printf("Warning: Failed to get attempts from Redis: %v", err)
-		// Continue anyway, don't block login if Redis fails
+		log.Printf("Warning: Failed to check block status: %v", err)
 	}
 
-	// Step 2: If attempts > 5, return TooManyRequests (HTTP 429)
-	if attempts >= s.maxAttempts {
-		log.Printf("Rate limit exceeded for IP: %s (attempts: %d)", clientIP, attempts)
-		return nil, ErrTooManyRequests
+	if blocked {
+		log.Printf("IP %s is blocked. Remaining TTL: %v", clientIP, ttl)
+		return nil, &BlockedError{Duration: ttl}
 	}
+
+	// Step 2: Get current attempts (to see if we should warn/block on next fail?)
+	// Actually we only care about attempts if we fail, or to check if we exceeded a hard cap?
+	// But in this logic, the block is applied AFTER failure. If not blocked, we proceed.
 
 	// Step 3: GetUserByEmail(email) - Query database
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
-		// User not found - increment attempts
-		log.Printf("User not found: %s", email)
-		s.cache.IncrAttempts(ctx, attemptKey, s.blockDuration)
+		s.handleFailedAttempt(ctx, attemptKey, clientIP)
 		return nil, ErrInvalidCredentials
 	}
 
@@ -105,16 +115,16 @@ func (s *AuthService) Authenticate(ctx context.Context, email, password, clientI
 
 	// Step 5: Verify password with Argon2
 	if !s.hasher.Verify(user.PasswordHash, password) {
-		// Wrong password - INCR attempts:{ip}
-		log.Printf("Invalid password for user: %s", email)
-		s.cache.IncrAttempts(ctx, attemptKey, s.blockDuration)
+		s.handleFailedAttempt(ctx, attemptKey, clientIP)
 		return nil, ErrInvalidCredentials
 	}
 
-	// Step 6: Password correct - DEL attempts:{ip} (Reset)
+	// Step 6: Password correct - RESET everything
 	if err := s.cache.ResetAttempts(ctx, attemptKey); err != nil {
 		log.Printf("Warning: Failed to reset attempts: %v", err)
 	}
+	// Also clear any block (optional, but good practice if user waited it out)
+	// We don't have Unblock method, but block key expires.
 
 	// Step 7: Generate JWT Token
 	token, err := s.tokenMgr.Generate(user.ID, user.Email, user.Role)
@@ -135,6 +145,45 @@ func (s *AuthService) Authenticate(ctx context.Context, email, password, clientI
 		Token: token,
 		User:  *user,
 	}, nil
+}
+
+func (s *AuthService) handleFailedAttempt(ctx context.Context, attemptKey, clientIP string) {
+	// Increment attempts with long window (e.g. 24h) to keep history
+	window := 24 * time.Hour
+	s.cache.IncrAttempts(ctx, attemptKey, window)
+
+	attempts, _ := s.cache.GetAttempts(ctx, attemptKey)
+	log.Printf("Failed login from %s. Attempts: %d", clientIP, attempts)
+
+	// Calculate if block is needed
+	blockDuration := s.calculateBlockDuration(attempts)
+	if blockDuration > 0 {
+		log.Printf("Blocking IP %s for %v (Attempts: %d)", clientIP, blockDuration, attempts)
+		s.cache.SetBlock(ctx, clientIP, blockDuration)
+	}
+}
+
+func (s *AuthService) calculateBlockDuration(attempts int) time.Duration {
+	// Policy:
+	// < 5 attempts: No block
+	// 5 attempts: 1 min
+	// 6 attempts: 3 min
+	// 7 attempts: 5 min
+	// >= 8 attempts: 15 min
+
+	if attempts < 6 {
+		return 0
+	}
+	if attempts == 6 {
+		return 1 * time.Minute
+	}
+	if attempts == 7 {
+		return 3 * time.Minute
+	}
+	if attempts == 8 {
+		return 5 * time.Minute
+	}
+	return 15 * time.Minute
 }
 
 // Logout invalidates the user session

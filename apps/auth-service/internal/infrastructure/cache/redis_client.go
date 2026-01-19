@@ -37,9 +37,28 @@ func (r *RedisClient) GetAttempts(ctx context.Context, key string) (int, error) 
 func (r *RedisClient) IncrAttempts(ctx context.Context, key string, ttl time.Duration) error {
 	pipe := r.client.Pipeline()
 	pipe.Incr(ctx, key)
+	// Only set expiry if key is new or we want to extend window
+	// For incremental backoff, we want a long retention (e.g. 24h) handled by service
 	pipe.Expire(ctx, key, ttl)
 	_, err := pipe.Exec(ctx)
 	return err
+}
+
+// SetBlock sets a block key with a specific duration
+func (r *RedisClient) SetBlock(ctx context.Context, key string, duration time.Duration) error {
+	return r.client.Set(ctx, "block:"+key, "blocked", duration).Err()
+}
+
+// IsBlocked checks if a key is currently blocked
+func (r *RedisClient) IsBlocked(ctx context.Context, key string) (bool, time.Duration, error) {
+	ttl, err := r.client.TTL(ctx, "block:"+key).Result()
+	if err != nil {
+		return false, 0, err
+	}
+	if ttl <= 0 {
+		return false, 0, nil
+	}
+	return true, ttl, nil
 }
 
 // ResetAttempts deletes the attempt counter (on successful login)

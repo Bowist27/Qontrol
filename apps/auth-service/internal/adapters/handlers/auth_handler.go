@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/comex/auth-service/internal/core/domain"
@@ -38,13 +40,23 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	response, err := h.authService.Authenticate(c.Request.Context(), req.Email, req.Password, clientIP)
 
 	if err != nil {
-		switch err {
-		case services.ErrTooManyRequests:
-			// HTTP 429 - Too Many Requests
+		// Check for custom BlockedError
+		var blockedErr *services.BlockedError
+		if errors.As(err, &blockedErr) {
+			// Round duration to minutes or seconds for display
+			minutes := int(blockedErr.Duration.Minutes())
+			if minutes < 1 {
+				minutes = 1 // Show at least 1 min
+			}
 			c.JSON(http.StatusTooManyRequests, domain.ErrorResponse{
 				Error:   "too_many_requests",
-				Message: "Demasiados intentos fallidos. Intente nuevamente en 15 minutos.",
+				Message: fmt.Sprintf("Demasiados intentos. Intente nuevamente en %d minutos.", minutes),
 			})
+			return
+		}
+
+		switch err {
+		// ErrTooManyRequests is removed/replaced by key check, but keep if needed for fallback
 		case services.ErrInvalidCredentials:
 			// HTTP 401 - Unauthorized
 			c.JSON(http.StatusUnauthorized, domain.ErrorResponse{
