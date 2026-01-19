@@ -9,6 +9,8 @@ services:
       - auth-service
 
   auth-service:
+    ports:
+      - "8081:8080" # Mapea al puerto 8081 para desarrollo local
     environment:
       - DB_HOST=postgres
       - REDIS_HOST=redis:6379

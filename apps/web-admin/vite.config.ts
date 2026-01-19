@@ -7,11 +7,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      // Proxy API requests to Nginx (Docker)
-      '/api': {
-        target: 'http://localhost',
+      // Proxy API requests directly to auth-service (Docker en 8081)
+      '/api/auth': {
+        target: 'http://localhost:8081',
         changeOrigin: true,
         secure: false,
+        rewrite: (path) => path.replace(/^\/api\/auth/, ''),
       },
     },
   },

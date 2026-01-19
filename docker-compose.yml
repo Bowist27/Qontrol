@@ -35,6 +35,7 @@ services:
       REDIS_HOST: ${REDIS_HOST}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRY: ${JWT_EXPIRY}
+      SYNC_SECRET_KEY: ${SYNC_SECRET_KEY}
     depends_on:
       postgres:
         condition: service_healthy

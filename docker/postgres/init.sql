@@ -27,7 +27,7 @@ INSERT INTO
 VALUES
     (
         'jose.admin@gmail.com',
-        '$$argon2id$$v=19$$m=65536,t=3,p=4$$cW9udHJvbHNhbHQxMjM0NQ$$nbTtxV/jtxikvwgKIVDxWIIszfPPL/ZBvtNU5AiaTH4',
+        '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$nbTtxV/jtxikvwgKIVDxWIIszfPPL/ZBvtNU5AiaTH4',
         'admin',
         true
     ) ON CONFLICT (email) DO NOTHING;
@@ -38,7 +38,7 @@ INSERT INTO
 VALUES
     (
         'test.user@hotmail.com',
-        '$$argon2id$$v=19$$m=65536,t=3,p=4$$cW9udHJvbHNhbHQxMjM0NQ$$8OKPOMEHMpMjbT0ADTgZ9i23sxdvLJLZYGV0X5kj08Y',
+        '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$8OKPOMEHMpMjbT0ADTgZ9i23sxdvLJLZYGV0X5kj08Y',
         'user',
         true
     ) ON CONFLICT (email) DO NOTHING;
@@ -49,7 +49,7 @@ INSERT INTO
 VALUES
     (
         'inactive@gmail.com',
-        '$$argon2id$$v=19$$m=65536,t=3,p=4$$cW9udHJvbHNhbHQxMjM0NQ$$DPGehdPjWaWK2+lR2HAbQ7wp/GoRwh/caZQrbTtxV/g',
+        '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$DPGehdPjWaWK2+lR2HAbQ7wp/GoRwh/caZQrbTtxV/g',
         'admin',
         false
     ) ON CONFLICT (email) DO NOTHING;
