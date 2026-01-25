@@ -6,8 +6,8 @@
 import { useState, useEffect } from 'react';
 import {
     ChevronDown, FileText, Upload, Wifi, WifiOff, Clock, Users, AlertTriangle,
-    CheckCircle2, RefreshCw, Eye, Search, FileSpreadsheet,
-    Activity, AlertCircle, Package, BarChart3, History
+    CheckCircle2, RefreshCw, Eye, Search, FileSpreadsheet, X,
+    Activity, AlertCircle, Package, BarChart3, History, MapPin, Calendar, User
 } from 'lucide-react';
 import { STORES_DATA } from '../../data/mockData';
 
@@ -91,6 +91,7 @@ const AuditsView: React.FC = () => {
     const [showStoreDropdown, setShowStoreDropdown] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(25);
+    const [selectedItem, setSelectedItem] = useState<DiffItem | null>(null);
 
     // Calculate audit status
     const getAuditStatus = (): AuditStatus => {
@@ -446,7 +447,7 @@ const AuditsView: React.FC = () => {
                                 </button>
                             </div>
 
-                            {/* Right: Search + Tool Icons (Grouped) */}
+                            {/* Right: Search + Density + Tool Icons (Grouped) */}
                             <div className="flex items-center gap-2">
                                 {/* Search Input - Enhanced */}
                                 <div className="relative">
@@ -532,8 +533,11 @@ const AuditsView: React.FC = () => {
                                         paginatedItems.map((item, idx) => (
                                             <tr
                                                 key={item.sku}
-                                                className={`border-b border-slate-100 hover:bg-slate-50 ${item.difference !== 0 ? 'bg-red-50/40' : ''
-                                                    } ${idx % 2 === 1 ? 'bg-slate-25' : ''}`}
+                                                onClick={() => setSelectedItem(item)}
+                                                className={`border-b border-slate-100 cursor-pointer transition-colors
+                                                    ${selectedItem?.sku === item.sku ? 'bg-blue-100 hover:bg-blue-100' : 'hover:bg-slate-50'}
+                                                    ${item.difference !== 0 && selectedItem?.sku !== item.sku ? 'bg-red-50/40' : ''}
+                                                    ${idx % 2 === 1 && selectedItem?.sku !== item.sku && item.difference === 0 ? 'bg-slate-25' : ''}`}
                                             >
                                                 {/* SKU - Monospace */}
                                                 <td className="px-3 py-1.5 font-mono text-xs text-slate-600">{item.sku}</td>
@@ -549,7 +553,7 @@ const AuditsView: React.FC = () => {
                                                 </td>
                                                 {/* Diferencia */}
                                                 <td className={`px-3 py-1.5 text-right font-bold tabular-nums border-l border-slate-100 ${item.difference === 0 ? 'text-emerald-600' :
-                                                    item.difference < 0 ? 'text-red-700' : 'text-amber-600'
+                                                        item.difference < 0 ? 'text-red-700' : 'text-amber-600'
                                                     }`}>
                                                     {item.difference === 0 ? (
                                                         <span className="flex items-center justify-end gap-1">
@@ -562,7 +566,7 @@ const AuditsView: React.FC = () => {
                                                 </td>
                                                 {/* Impacto - Financial Tabular */}
                                                 <td className={`px-3 py-1.5 text-right font-semibold tabular-nums border-l border-slate-100 ${item.impact === 0 ? 'text-slate-400' :
-                                                    item.impact < 0 ? 'text-red-700' : 'text-emerald-600'
+                                                        item.impact < 0 ? 'text-red-700' : 'text-emerald-600'
                                                     }`}>
                                                     {item.impact !== 0 ? `$${Math.abs(item.impact).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
                                                 </td>
@@ -637,6 +641,124 @@ const AuditsView: React.FC = () => {
                     </>
                 )}
             </div>
+
+            {/* Detail Drawer - Slides from Right (Master-Detail Pattern) */}
+            <div className={`fixed top-0 right-0 h-full bg-white shadow-2xl border-l border-slate-200 transition-all duration-300 ease-in-out z-30 ${selectedItem ? 'w-96 translate-x-0' : 'w-96 translate-x-full'
+                }`}>
+                {selectedItem && (
+                    <div className="h-full flex flex-col">
+                        {/* Drawer Header */}
+                        <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                            <h3 className="font-semibold text-slate-800">Detalle del Producto</h3>
+                            <button
+                                onClick={() => setSelectedItem(null)}
+                                className="p-1 hover:bg-slate-200 rounded transition-colors"
+                            >
+                                <X size={20} className="text-slate-500" />
+                            </button>
+                        </div>
+
+                        {/* Product Info */}
+                        <div className="p-4 border-b border-slate-100">
+                            <p className="font-mono text-xs text-slate-500 mb-1">{selectedItem.sku}</p>
+                            <h4 className="font-semibold text-slate-800 text-lg">{selectedItem.name}</h4>
+                            <p className="text-sm text-slate-500 mt-1">Costo unitario: ${selectedItem.unitCost.toLocaleString()}</p>
+                        </div>
+
+                        {/* Comparison Card */}
+                        <div className="p-4 border-b border-slate-100">
+                            <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Comparación de Inventario</h5>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-gray-50 rounded-lg p-3 text-center">
+                                    <p className="text-xs text-slate-500 mb-1">Según PDF</p>
+                                    <p className="text-2xl font-bold text-gray-700 tabular-nums">{selectedItem.theoretical}</p>
+                                </div>
+                                <div className="bg-blue-50 rounded-lg p-3 text-center">
+                                    <p className="text-xs text-blue-600 mb-1">Conteo Físico</p>
+                                    <p className="text-2xl font-bold text-blue-700 tabular-nums">{selectedItem.physical}</p>
+                                </div>
+                            </div>
+                            <div className={`mt-3 p-3 rounded-lg text-center ${selectedItem.difference === 0 ? 'bg-emerald-50' :
+                                selectedItem.difference < 0 ? 'bg-red-50' : 'bg-amber-50'
+                                }`}>
+                                <p className="text-xs text-slate-500 mb-1">Diferencia</p>
+                                <p className={`text-xl font-bold tabular-nums ${selectedItem.difference === 0 ? 'text-emerald-600' :
+                                    selectedItem.difference < 0 ? 'text-red-700' : 'text-amber-600'
+                                    }`}>
+                                    {selectedItem.difference === 0 ? '✓ OK' : `${selectedItem.difference > 0 ? '+' : ''}${selectedItem.difference}`}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Financial Impact */}
+                        {selectedItem.difference !== 0 && (
+                            <div className="p-4 border-b border-slate-100">
+                                <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Impacto Financiero</h5>
+                                <div className={`p-3 rounded-lg ${selectedItem.impact < 0 ? 'bg-red-50' : 'bg-emerald-50'}`}>
+                                    <p className={`text-2xl font-bold tabular-nums ${selectedItem.impact < 0 ? 'text-red-700' : 'text-emerald-600'}`}>
+                                        ${Math.abs(selectedItem.impact).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                    </p>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        {selectedItem.impact < 0 ? 'Pérdida estimada' : 'Excedente encontrado'}
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Scan History Placeholder (HU-13) */}
+                        <div className="p-4 flex-1 overflow-auto">
+                            <h5 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+                                Historial de Escaneos
+                            </h5>
+                            <div className="space-y-2">
+                                <div className="flex items-start gap-3 p-2 bg-slate-50 rounded-lg">
+                                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                        <User size={14} className="text-blue-600" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-slate-700">Juan García</p>
+                                        <p className="text-xs text-slate-500">Escaneó {selectedItem.physical} unidades</p>
+                                        <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
+                                            <Clock size={10} /> Hace 15 min • <MapPin size={10} /> Pasillo A3
+                                        </p>
+                                    </div>
+                                </div>
+                                {selectedItem.difference !== 0 && (
+                                    <div className="flex items-start gap-3 p-2 bg-amber-50 rounded-lg">
+                                        <div className="w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                            <AlertTriangle size={14} className="text-amber-600" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium text-amber-700">Discrepancia Detectada</p>
+                                            <p className="text-xs text-slate-500">Se requiere verificación manual</p>
+                                            <p className="text-xs text-slate-400 flex items-center gap-1 mt-1">
+                                                <Calendar size={10} /> {new Date().toLocaleDateString('es-MX')}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Action Footer */}
+                        {selectedItem.difference !== 0 && (
+                            <div className="p-4 border-t border-slate-200 bg-slate-50">
+                                <button className="w-full py-2 px-4 bg-slate-800 text-white rounded-lg font-medium hover:bg-slate-700 transition-colors">
+                                    Justificar Diferencia
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Overlay when drawer is open */}
+            {selectedItem && (
+                <div
+                    className="fixed inset-0 bg-black/20 z-20"
+                    onClick={() => setSelectedItem(null)}
+                />
+            )}
         </div>
     );
 };
