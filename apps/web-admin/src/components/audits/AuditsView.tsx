@@ -413,10 +413,10 @@ const AuditsView: React.FC = () => {
                     </div>
                 ) : (
                     <>
-                        {/* Unified Action Bar: Tabs + KPI + Tools */}
+                        {/* Action Bar: Tabs LEFT | Tools RIGHT (Dumbbell Pattern) */}
                         <div className="px-4 py-2 border-b border-slate-200 bg-white flex items-center justify-between">
                             {/* Left: Tabs */}
-                            <div className="flex border-b-0">
+                            <div className="flex">
                                 <button
                                     onClick={() => { setActiveTab('differences'); setCurrentPage(1); }}
                                     className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'differences'
@@ -446,51 +446,51 @@ const AuditsView: React.FC = () => {
                                 </button>
                             </div>
 
-                            {/* Center: Search */}
-                            <div className="relative">
-                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                                <input
-                                    type="text"
-                                    placeholder="Buscar SKU o producto..."
-                                    value={searchQuery}
-                                    onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-                                    className="pl-9 pr-4 py-1.5 border border-slate-300 rounded text-sm w-56 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                />
-                            </div>
-
-                            {/* Right: KPI + Tools */}
-                            <div className="flex items-center gap-4">
-                                {/* KPI - Inline Financial Style */}
-                                <div className="flex items-center gap-2">
-                                    <span className="text-sm text-slate-500">Pérdida Actual:</span>
-                                    <span className="text-lg font-bold text-red-700 tabular-nums">
-                                        ${Math.abs(totalNegativeImpact).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                                    </span>
+                            {/* Right: Search + Tool Icons (Grouped) */}
+                            <div className="flex items-center gap-2">
+                                {/* Search Input - Enhanced */}
+                                <div className="relative">
+                                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input
+                                        type="text"
+                                        placeholder="Buscar por SKU, Producto..."
+                                        value={searchQuery}
+                                        onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+                                        className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm w-64 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
+                                    />
                                 </div>
 
-                                <div className="h-6 w-px bg-slate-200"></div>
+                                {/* Separator */}
+                                <div className="h-8 w-px bg-slate-200"></div>
 
                                 {/* Tool Buttons */}
-                                <div className="flex items-center gap-1">
-                                    <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors" title="Exportar Excel">
-                                        <FileSpreadsheet size={18} />
-                                    </button>
-                                    <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors" title="Recargar">
-                                        <RefreshCw size={18} />
-                                    </button>
-                                </div>
+                                <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="Exportar Excel">
+                                    <FileSpreadsheet size={20} />
+                                </button>
+                                <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="Recargar datos">
+                                    <RefreshCw size={20} />
+                                </button>
                             </div>
                         </div>
 
-                        {/* Alert Banner (only if high value diffs) */}
-                        {highValueDiffs > 0 && (
-                            <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 flex items-center gap-2">
-                                <AlertCircle size={16} className="text-amber-600" />
-                                <span className="text-sm text-amber-800">
-                                    {highValueDiffs} productos con diferencia mayor a $5,000 MXN
+                        {/* Alert Banner with Integrated KPI */}
+                        <div className={`px-4 py-2 border-b flex items-center justify-between ${highValueDiffs > 0 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
+                            <div className="flex items-center gap-2">
+                                <AlertCircle size={16} className={highValueDiffs > 0 ? 'text-amber-600' : 'text-red-600'} />
+                                <span className="text-sm text-slate-700">
+                                    {highValueDiffs > 0
+                                        ? `${highValueDiffs} productos con diferencia mayor a $5,000 MXN`
+                                        : `${discrepanciesCount} productos con diferencias detectadas`
+                                    }
                                 </span>
                             </div>
-                        )}
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm text-slate-600">Pérdida Total:</span>
+                                <span className="text-lg font-bold text-red-700 tabular-nums">
+                                    ${Math.abs(totalNegativeImpact).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                </span>
+                            </div>
+                        </div>
 
                         {/* Data Grid - Enterprise Style */}
                         <div className="flex-1 overflow-auto">
@@ -549,7 +549,7 @@ const AuditsView: React.FC = () => {
                                                 </td>
                                                 {/* Diferencia */}
                                                 <td className={`px-3 py-1.5 text-right font-bold tabular-nums border-l border-slate-100 ${item.difference === 0 ? 'text-emerald-600' :
-                                                        item.difference < 0 ? 'text-red-700' : 'text-amber-600'
+                                                    item.difference < 0 ? 'text-red-700' : 'text-amber-600'
                                                     }`}>
                                                     {item.difference === 0 ? (
                                                         <span className="flex items-center justify-end gap-1">
@@ -562,7 +562,7 @@ const AuditsView: React.FC = () => {
                                                 </td>
                                                 {/* Impacto - Financial Tabular */}
                                                 <td className={`px-3 py-1.5 text-right font-semibold tabular-nums border-l border-slate-100 ${item.impact === 0 ? 'text-slate-400' :
-                                                        item.impact < 0 ? 'text-red-700' : 'text-emerald-600'
+                                                    item.impact < 0 ? 'text-red-700' : 'text-emerald-600'
                                                     }`}>
                                                     {item.impact !== 0 ? `$${Math.abs(item.impact).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
                                                 </td>
