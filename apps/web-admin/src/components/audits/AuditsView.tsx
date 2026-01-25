@@ -84,11 +84,13 @@ const AuditsView: React.FC = () => {
     const [theoretical, setTheoretical] = useState<TheoreticalData>({ status: 'empty', totalItems: 0, totalUnits: 0, totalValue: 0 });
     const [physical, setPhysical] = useState<PhysicalData>({ status: 'disconnected', scannedItems: 0, activeUsers: [] });
     const [diffItems, setDiffItems] = useState<DiffItem[]>([]);
-    const [filter, setFilter] = useState<'all' | 'differences' | 'missing'>('all');
+    const [activeTab, setActiveTab] = useState<'all' | 'differences' | 'extras'>('differences'); // Default to discrepancies
     const [searchQuery, setSearchQuery] = useState('');
     const [isDragging, setIsDragging] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [showStoreDropdown, setShowStoreDropdown] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState(25);
 
     // Calculate audit status
     const getAuditStatus = (): AuditStatus => {
@@ -138,19 +140,25 @@ const AuditsView: React.FC = () => {
         }
     };
 
-    // Filter diff items
+    // Filter diff items based on active tab
     const filteredItems = diffItems.filter(item => {
         const matchesSearch = item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
             item.name.toLowerCase().includes(searchQuery.toLowerCase());
 
-        if (filter === 'differences') return matchesSearch && item.difference !== 0;
-        if (filter === 'missing') return matchesSearch && item.difference < 0;
+        if (activeTab === 'differences') return matchesSearch && item.difference !== 0;
+        if (activeTab === 'extras') return matchesSearch && item.theoretical === 0 && item.physical > 0;
         return matchesSearch;
     });
 
-    // Stats for alerts
+    // Pagination logic
+    const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
+    const paginatedItems = filteredItems.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+    // Stats for tabs and alerts
+    const totalProducts = diffItems.length;
+    const discrepanciesCount = diffItems.filter(i => i.difference !== 0).length;
+    const extrasCount = diffItems.filter(i => i.theoretical === 0 && i.physical > 0).length;
     const highValueDiffs = diffItems.filter(i => i.impact < -5000).length;
-    const unlistedProducts = diffItems.filter(i => i.theoretical === 0 && i.physical > 0).length;
     const totalNegativeImpact = diffItems.filter(i => i.impact < 0).reduce((sum, i) => sum + i.impact, 0);
 
     const selectedStore = STORES_DATA.find(s => s.id === selectedStoreId);
@@ -405,119 +413,226 @@ const AuditsView: React.FC = () => {
                     </div>
                 ) : (
                     <>
-                        <div className="px-3 py-2 border-b border-slate-100 flex gap-2">
-                            {highValueDiffs > 0 && (
+                        {/* Unified Action Bar: Tabs + KPI + Tools */}
+                        <div className="px-4 py-2 border-b border-slate-200 bg-white flex items-center justify-between">
+                            {/* Left: Tabs */}
+                            <div className="flex border-b-0">
                                 <button
-                                    onClick={() => setFilter('missing')}
-                                    className="flex-1 bg-red-50 border border-red-200 rounded px-2 py-1.5 text-left hover:bg-red-100 transition-colors"
+                                    onClick={() => { setActiveTab('differences'); setCurrentPage(1); }}
+                                    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'differences'
+                                        ? 'border-red-500 text-red-700'
+                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                        }`}
                                 >
-                                    <div className="flex items-center gap-1 text-red-700">
-                                        <AlertCircle size={14} />
-                                        <span className="font-medium text-xs">{highValueDiffs} Diferencias Altas (&gt;$5k)</span>
-                                    </div>
+                                    🚨 Discrepancias ({discrepanciesCount})
                                 </button>
-                            )}
-                            {unlistedProducts > 0 && (
                                 <button
-                                    onClick={() => setFilter('all')}
-                                    className="flex-1 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 text-left hover:bg-amber-100 transition-colors"
+                                    onClick={() => { setActiveTab('all'); setCurrentPage(1); }}
+                                    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'all'
+                                        ? 'border-blue-500 text-blue-700'
+                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                        }`}
                                 >
-                                    <div className="flex items-center gap-1 text-amber-700">
-                                        <Package size={14} />
-                                        <span className="font-medium text-xs">{unlistedProducts} No Listados en PDF</span>
-                                    </div>
+                                    📋 Todos ({totalProducts})
                                 </button>
-                            )}
-                            <div className="bg-slate-800 rounded px-3 py-1.5 text-white min-w-[140px]">
-                                <p className="text-[10px] text-slate-300">Impacto Faltantes</p>
-                                <p className="text-base font-bold text-red-400">${Math.abs(totalNegativeImpact).toLocaleString()}</p>
+                                <button
+                                    onClick={() => { setActiveTab('extras'); setCurrentPage(1); }}
+                                    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'extras'
+                                        ? 'border-amber-500 text-amber-700'
+                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                        }`}
+                                >
+                                    🆕 Extras ({extrasCount})
+                                </button>
                             </div>
-                        </div>
 
-                        {/* Filters */}
-                        <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
-                            <div className="flex gap-2">
-                                {(['all', 'differences', 'missing'] as const).map(f => (
-                                    <button
-                                        key={f}
-                                        onClick={() => setFilter(f)}
-                                        className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${filter === f
-                                            ? 'text-white'
-                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                            }`}
-                                        style={filter === f ? { backgroundColor: '#06aef0' } : {}}
-                                    >
-                                        {f === 'all' && 'Ver Todo'}
-                                        {f === 'differences' && 'Diferencias'}
-                                        {f === 'missing' && 'Faltantes'}
-                                    </button>
-                                ))}
-                            </div>
+                            {/* Center: Search */}
                             <div className="relative">
-                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                                 <input
                                     type="text"
-                                    placeholder="Buscar SKU..."
+                                    placeholder="Buscar SKU o producto..."
                                     value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="pl-8 pr-3 py-1 border border-slate-200 rounded-lg text-sm w-40 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+                                    className="pl-9 pr-4 py-1.5 border border-slate-300 rounded text-sm w-56 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                                 />
+                            </div>
+
+                            {/* Right: KPI + Tools */}
+                            <div className="flex items-center gap-4">
+                                {/* KPI - Inline Financial Style */}
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm text-slate-500">Pérdida Actual:</span>
+                                    <span className="text-lg font-bold text-red-700 tabular-nums">
+                                        ${Math.abs(totalNegativeImpact).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                    </span>
+                                </div>
+
+                                <div className="h-6 w-px bg-slate-200"></div>
+
+                                {/* Tool Buttons */}
+                                <div className="flex items-center gap-1">
+                                    <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors" title="Exportar Excel">
+                                        <FileSpreadsheet size={18} />
+                                    </button>
+                                    <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors" title="Recargar">
+                                        <RefreshCw size={18} />
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
+                        {/* Alert Banner (only if high value diffs) */}
+                        {highValueDiffs > 0 && (
+                            <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 flex items-center gap-2">
+                                <AlertCircle size={16} className="text-amber-600" />
+                                <span className="text-sm text-amber-800">
+                                    {highValueDiffs} productos con diferencia mayor a $5,000 MXN
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Data Grid - Enterprise Style */}
                         <div className="flex-1 overflow-auto">
-                            <table className="w-full text-sm">
-                                <thead className="bg-slate-50 text-slate-500 sticky top-0">
-                                    <tr>
-                                        <th className="px-3 py-2 text-left font-medium w-24">SKU</th>
-                                        <th className="px-3 py-2 text-left font-medium">Producto</th>
-                                        <th className="px-3 py-2 text-right font-medium w-24">Costo</th>
-                                        <th className="px-3 py-2 text-right font-medium w-16 bg-slate-100">Teórico</th>
-                                        <th className="px-3 py-2 text-right font-medium w-16 bg-blue-50 text-blue-700">Físico</th>
-                                        <th className="px-3 py-2 text-right font-medium w-16">Dif</th>
-                                        <th className="px-3 py-2 text-right font-medium w-24">Impacto</th>
-                                        <th className="px-3 py-2 text-center font-medium w-24">Acción</th>
+                            <table className="w-full text-sm border-collapse">
+                                <thead className="sticky top-0 z-10">
+                                    {/* Group Headers */}
+                                    <tr className="bg-slate-100 border-b border-slate-300">
+                                        <th colSpan={2} className="px-3 py-1.5 text-left font-semibold text-slate-700 text-xs uppercase tracking-wide">
+                                            Producto
+                                        </th>
+                                        <th className="px-3 py-1.5 text-center font-semibold text-slate-600 text-xs uppercase tracking-wide bg-gray-200 border-l border-slate-300">
+                                            Según PDF (Teórico)
+                                        </th>
+                                        <th className="px-3 py-1.5 text-center font-semibold text-blue-800 text-xs uppercase tracking-wide bg-blue-100 border-l border-slate-300">
+                                            Según Conteo (Físico)
+                                        </th>
+                                        <th colSpan={2} className="px-3 py-1.5 text-center font-semibold text-slate-700 text-xs uppercase tracking-wide border-l border-slate-300">
+                                            Resultado
+                                        </th>
+                                    </tr>
+                                    {/* Column Headers */}
+                                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                                        <th className="px-3 py-1.5 text-left font-medium text-xs w-28">SKU</th>
+                                        <th className="px-3 py-1.5 text-left font-medium text-xs">Descripción</th>
+                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-20 bg-gray-100 border-l border-slate-200">Cant.</th>
+                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-20 bg-blue-50 border-l border-slate-200 text-blue-700">Cant.</th>
+                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-16 border-l border-slate-200">Dif.</th>
+                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-28 border-l border-slate-200">Impacto ($)</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {filteredItems.map((item) => (
-                                        <tr key={item.sku} className="hover:bg-slate-50">
-                                            <td className="px-3 py-1.5 font-mono text-xs">{item.sku}</td>
-                                            <td className="px-3 py-1.5 text-slate-700">{item.name}</td>
-                                            <td className="px-3 py-1.5 text-right text-slate-600">${item.unitCost.toLocaleString()}</td>
-                                            <td className="px-3 py-1.5 text-right bg-slate-50 text-slate-600">{item.theoretical}</td>
-                                            <td className="px-3 py-1.5 text-right bg-blue-50 font-bold text-blue-700">{item.physical}</td>
-                                            <td className={`px-3 py-1.5 text-right font-bold ${item.difference === 0 ? 'text-emerald-600' :
-                                                item.difference < 0 ? 'text-red-600' : 'text-amber-600'
-                                                }`}>
-                                                {item.difference === 0 ? (
-                                                    <span className="flex items-center justify-end gap-1">
-                                                        <CheckCircle2 size={12} /> OK
-                                                    </span>
-                                                ) : (
-                                                    `${item.difference > 0 ? '+' : ''}${item.difference}`
-                                                )}
-                                            </td>
-                                            <td className={`px-3 py-1.5 text-right font-bold ${item.impact === 0 ? 'text-slate-400' :
-                                                item.impact < 0 ? 'text-red-600' : 'text-amber-600'
-                                                }`}>
-                                                {item.impact !== 0 ? `$${item.impact.toLocaleString()}` : '—'}
-                                            </td>
-                                            <td className="px-3 py-1.5 text-center">
-                                                {item.difference !== 0 && (
-                                                    <select className="text-xs border border-slate-200 rounded px-1.5 py-0.5 text-slate-600">
-                                                        <option>Justificar...</option>
-                                                        <option>Merma</option>
-                                                        <option>Robo</option>
-                                                        <option>Error</option>
-                                                        <option>Recontar</option>
-                                                    </select>
-                                                )}
+                                <tbody>
+                                    {paginatedItems.length === 0 ? (
+                                        <tr>
+                                            <td colSpan={6} className="px-4 py-12 text-center text-slate-400">
+                                                No hay productos que mostrar en esta pestaña
                                             </td>
                                         </tr>
-                                    ))}
+                                    ) : (
+                                        paginatedItems.map((item, idx) => (
+                                            <tr
+                                                key={item.sku}
+                                                className={`border-b border-slate-100 hover:bg-slate-50 ${item.difference !== 0 ? 'bg-red-50/40' : ''
+                                                    } ${idx % 2 === 1 ? 'bg-slate-25' : ''}`}
+                                            >
+                                                {/* SKU - Monospace */}
+                                                <td className="px-3 py-1.5 font-mono text-xs text-slate-600">{item.sku}</td>
+                                                {/* Description */}
+                                                <td className="px-3 py-1.5 text-slate-700 text-xs">{item.name}</td>
+                                                {/* Teórico - Gray Column Tinting */}
+                                                <td className="px-3 py-1.5 text-right bg-gray-50 text-gray-700 font-medium tabular-nums border-l border-slate-100">
+                                                    {item.theoretical}
+                                                </td>
+                                                {/* Físico - Blue Column Tinting */}
+                                                <td className="px-3 py-1.5 text-right bg-blue-50/70 text-blue-700 font-bold tabular-nums border-l border-slate-100">
+                                                    {item.physical}
+                                                </td>
+                                                {/* Diferencia */}
+                                                <td className={`px-3 py-1.5 text-right font-bold tabular-nums border-l border-slate-100 ${item.difference === 0 ? 'text-emerald-600' :
+                                                        item.difference < 0 ? 'text-red-700' : 'text-amber-600'
+                                                    }`}>
+                                                    {item.difference === 0 ? (
+                                                        <span className="flex items-center justify-end gap-1">
+                                                            <CheckCircle2 size={12} className="text-emerald-500" />
+                                                            <span className="text-emerald-600 text-xs">OK</span>
+                                                        </span>
+                                                    ) : (
+                                                        `${item.difference > 0 ? '+' : ''}${item.difference}`
+                                                    )}
+                                                </td>
+                                                {/* Impacto - Financial Tabular */}
+                                                <td className={`px-3 py-1.5 text-right font-semibold tabular-nums border-l border-slate-100 ${item.impact === 0 ? 'text-slate-400' :
+                                                        item.impact < 0 ? 'text-red-700' : 'text-emerald-600'
+                                                    }`}>
+                                                    {item.impact !== 0 ? `$${Math.abs(item.impact).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
+                                                </td>
+                                            </tr>
+                                        ))
+                                    )}
                                 </tbody>
                             </table>
+                        </div>
+
+                        {/* Pagination Footer - Enterprise Style */}
+                        <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+                            {/* Left: Rows per page */}
+                            <div className="flex items-center gap-2 text-sm text-slate-600">
+                                <span>Filas por página:</span>
+                                <select
+                                    value={itemsPerPage}
+                                    onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                                    className="border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                >
+                                    <option value={25}>25</option>
+                                    <option value={50}>50</option>
+                                    <option value={100}>100</option>
+                                </select>
+                            </div>
+
+                            {/* Center: Info */}
+                            <span className="text-sm text-slate-500 tabular-nums">
+                                {filteredItems.length > 0
+                                    ? `${((currentPage - 1) * itemsPerPage) + 1}–${Math.min(currentPage * itemsPerPage, filteredItems.length)} de ${filteredItems.length}`
+                                    : '0 productos'
+                                }
+                            </span>
+
+                            {/* Right: Navigation */}
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={() => setCurrentPage(1)}
+                                    disabled={currentPage === 1}
+                                    className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title="Primera página"
+                                >
+                                    ««
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                    disabled={currentPage === 1}
+                                    className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    ‹ Anterior
+                                </button>
+                                <span className="px-3 py-1 text-sm font-medium text-slate-700 tabular-nums">
+                                    {currentPage} / {totalPages || 1}
+                                </span>
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                    disabled={currentPage === totalPages || totalPages === 0}
+                                    className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    Siguiente ›
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(totalPages)}
+                                    disabled={currentPage === totalPages || totalPages === 0}
+                                    className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title="Última página"
+                                >
+                                    »»
+                                </button>
+                            </div>
                         </div>
                     </>
                 )}
