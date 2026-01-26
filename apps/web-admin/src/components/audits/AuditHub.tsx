@@ -1,29 +1,30 @@
 /**
- * AuditHub Component - Premium Enterprise UX
- * - Badges planos (pasivos) vs Botones de acción (excepciones)
- * - Barra de progreso siempre visible
- * - Color verde para saldos positivos, jerarquía visual en montos
- * - Indicadores de ordenamiento
+ * AuditHub Component - Enterprise with Lifecycle Management
+ * - Auto-archive: LOCKED > 24h → History
+ * - Fecha Inicio column (DD/M/YYYY format)
+ * - Kebab menu with admin actions (Ver Detalle, Forzar Cierre, Cancelar)
+ * - CANCELLED status with gray badge
  */
 
 import { useState, useRef, useEffect } from 'react';
 import {
     Store, TrendingDown, TrendingUp, FileText, Play, CheckCircle2, Lock, KeyRound,
-    Search, Calendar, ChevronRight, Plus, ChevronDown, Globe,
-    Filter, RefreshCw, ChevronLeft, X, FileUp, ScanLine, ArrowUpDown
+    Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle,
+    Filter, RefreshCw, ChevronLeft, X, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole
 } from 'lucide-react';
 import { STORES_DATA } from '../../data/mockData';
 
-// Types
+// Types with full lifecycle states
 export type AuditSessionStatus =
-    | 'WAITING_PDF'      // Esperando PDF
-    | 'IN_PROGRESS'      // En Conteo
-    | 'FINALIZED'        // Finalizado
+    | 'WAITING_PDF'      // Esperando PDF (falta documento)
+    | 'IN_PROGRESS'      // En Conteo (operativo)
+    | 'LOCKED_BY_STORE'  // Cerrado por tienda (pendiente 24h para archivo)
     | 'REOPEN_REQUEST'   // Solicitud Reapertura (excepción)
-    | 'COMPLETED';       // Histórico
+    | 'CANCELLED'        // Cancelada (soft delete)
+    | 'ARCHIVED';        // Historial (auto-archived after 24h)
 
 export type FocusFilter = 'all' | 'exceptions' | 'in_progress';
-export type SortField = 'store' | 'loss' | 'progress';
+export type SortField = 'store' | 'loss' | 'progress' | 'date';
 export type SortDir = 'asc' | 'desc';
 
 export interface AuditSession {
@@ -33,15 +34,15 @@ export interface AuditSession {
     managerName: string;
     status: AuditSessionStatus;
     hasPdf: boolean;
-    startedAt?: string;
+    createdAt: string;        // Fecha de inicio (DD/M/YYYY)
+    lockedAt?: string;        // When store locked it
     completedAt?: string;
-    finalizedAt?: string;
     finalizedBy?: string;
     percentComplete: number;
-    currentLoss: number; // Can be negative (surplus/sobrante)
+    currentLoss: number;
     theoreticalItems: number;
     scannedItems: number;
-    lastActivity?: string;
+    scanLogsCount: number;    // For delete logic (hard vs soft)
 }
 
 const MANAGER_NAMES = [
@@ -50,7 +51,25 @@ const MANAGER_NAMES = [
     'Fernando González', 'Rosa Morales', 'Eduardo Castro', 'Carmen Ortiz', 'José Ruiz'
 ];
 
-// Generate sessions with varied loss/surplus values
+// Format date as DD/M/YYYY (strict format per spec)
+const formatDateDDMYYYY = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    const day = date.getDate();
+    const month = date.getMonth() + 1;
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+};
+
+// Check if locked more than 24 hours ago (for auto-archive)
+const isLockedOver24h = (lockedAt?: string): boolean => {
+    if (!lockedAt) return false;
+    const lockedDate = new Date(lockedAt);
+    const now = new Date();
+    const hoursElapsed = (now.getTime() - lockedDate.getTime()) / (1000 * 60 * 60);
+    return hoursElapsed > 24;
+};
+
+// Generate mock sessions with realistic lifecycle states
 const generateMockSessions = (): AuditSession[] => {
     const sessions: AuditSession[] = [];
 
@@ -62,40 +81,67 @@ const generateMockSessions = (): AuditSession[] => {
         let theoreticalItems = Math.floor(Math.random() * 500) + 800;
         let finalizedBy: string | undefined;
         let currentLoss = 0;
+        let lockedAt: string | undefined;
+        let scanLogsCount = 0;
 
-        const stateRoll = idx % 10;
+        // Random creation date in last 7 days
+        const daysAgo = Math.floor(Math.random() * 7);
+        const createdAt = new Date(Date.now() - daysAgo * 86400000).toISOString();
+
+        const stateRoll = idx % 12;
 
         if (stateRoll < 2) {
+            // Waiting PDF - no scans yet
             status = 'WAITING_PDF';
             hasPdf = false;
             percentComplete = 0;
-        } else if (stateRoll < 6) {
+            scanLogsCount = 0;
+        } else if (stateRoll < 5) {
+            // In progress
             status = 'IN_PROGRESS';
             hasPdf = true;
             percentComplete = Math.floor(Math.random() * 70) + 15;
             scannedItems = Math.floor(theoreticalItems * percentComplete / 100);
-            // Mix of losses and small gains
             currentLoss = Math.random() > 0.3
                 ? Math.floor(Math.random() * 40000) + 500
-                : -Math.floor(Math.random() * 2000); // Negative = sobrante
-        } else if (stateRoll < 9) {
-            status = 'FINALIZED';
+                : -Math.floor(Math.random() * 2000);
+            scanLogsCount = scannedItems;
+        } else if (stateRoll < 8) {
+            // Locked by store (recently - still in Activas)
+            status = 'LOCKED_BY_STORE';
             hasPdf = true;
             percentComplete = 100;
             scannedItems = theoreticalItems;
             finalizedBy = MANAGER_NAMES[idx % MANAGER_NAMES.length];
-            // Mix: some at 0, some losses, some surplus
+            lockedAt = new Date(Date.now() - Math.random() * 20 * 3600000).toISOString(); // 0-20 hours ago
             const lossType = idx % 3;
             if (lossType === 0) currentLoss = 0;
             else if (lossType === 1) currentLoss = Math.floor(Math.random() * 30000) + 5000;
-            else currentLoss = -Math.floor(Math.random() * 3000); // Sobrante
-        } else {
+            else currentLoss = -Math.floor(Math.random() * 3000);
+            scanLogsCount = theoreticalItems;
+        } else if (stateRoll < 10) {
+            // Reopen request (exception)
             status = 'REOPEN_REQUEST';
             hasPdf = true;
-            percentComplete = Math.floor(Math.random() * 20) + 80; // 80-100%
+            percentComplete = Math.floor(Math.random() * 20) + 80;
             scannedItems = Math.floor(theoreticalItems * percentComplete / 100);
             finalizedBy = MANAGER_NAMES[idx % MANAGER_NAMES.length];
             currentLoss = Math.floor(Math.random() * 50000) + 10000;
+            scanLogsCount = scannedItems;
+        } else if (stateRoll === 10) {
+            // Cancelled (soft deleted)
+            status = 'CANCELLED';
+            hasPdf = true;
+            percentComplete = Math.floor(Math.random() * 50);
+            scannedItems = Math.floor(theoreticalItems * percentComplete / 100);
+            currentLoss = Math.floor(Math.random() * 10000);
+            scanLogsCount = scannedItems;
+        } else {
+            // Empty session (ready for hard delete demo)
+            status = 'IN_PROGRESS';
+            hasPdf = false;
+            percentComplete = 0;
+            scanLogsCount = 0;
         }
 
         sessions.push({
@@ -105,43 +151,46 @@ const generateMockSessions = (): AuditSession[] => {
             managerName: MANAGER_NAMES[idx % MANAGER_NAMES.length],
             status,
             hasPdf,
+            createdAt,
+            lockedAt,
             percentComplete,
             currentLoss,
             theoreticalItems,
             scannedItems,
             finalizedBy,
-            lastActivity: status === 'IN_PROGRESS'
-                ? `Hace ${Math.floor(Math.random() * 30) + 1} min`
-                : undefined,
+            scanLogsCount,
         });
     });
 
-    // Historical sessions
+    // Historical sessions (archived)
     for (let i = 0; i < 150; i++) {
         const store = STORES_DATA[i % STORES_DATA.length];
         const daysAgo = Math.floor(Math.random() * 365) + 30;
         const theoreticalItems = Math.floor(Math.random() * 500) + 800;
-        // Historical can have losses, zero, or surplus
         const lossType = i % 4;
         let currentLoss = 0;
         if (lossType === 0) currentLoss = 0;
         else if (lossType < 3) currentLoss = Math.floor(Math.random() * 50000);
         else currentLoss = -Math.floor(Math.random() * 5000);
 
+        // Some cancelled in history
+        const status: AuditSessionStatus = i % 15 === 0 ? 'CANCELLED' : 'ARCHIVED';
+
         sessions.push({
             id: `session-${store.id}-hist-${i}`,
             storeId: store.id,
             storeName: store.name,
             managerName: MANAGER_NAMES[i % MANAGER_NAMES.length],
-            status: 'COMPLETED',
+            status,
             hasPdf: true,
-            startedAt: new Date(Date.now() - daysAgo * 86400000).toISOString(),
-            completedAt: new Date(Date.now() - (daysAgo - 1) * 86400000).toISOString(),
-            percentComplete: 100,
+            createdAt: new Date(Date.now() - (daysAgo + 2) * 86400000).toISOString(),
+            completedAt: new Date(Date.now() - daysAgo * 86400000).toISOString(),
+            percentComplete: status === 'CANCELLED' ? Math.floor(Math.random() * 50) : 100,
             currentLoss,
             theoreticalItems,
             scannedItems: theoreticalItems,
             finalizedBy: MANAGER_NAMES[i % MANAGER_NAMES.length],
+            scanLogsCount: theoreticalItems,
         });
     }
 
@@ -159,7 +208,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
     const [focusFilter, setFocusFilter] = useState<FocusFilter>('all');
 
     // Sorting
-    const [sortField, setSortField] = useState<SortField>('loss');
+    const [sortField, setSortField] = useState<SortField>('date');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
 
     // Pagination
@@ -178,6 +227,10 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
     const [contextSearch, setContextSearch] = useState('');
     const contextRef = useRef<HTMLDivElement>(null);
 
+    // Kebab Menu State
+    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+    const menuRef = useRef<HTMLDivElement>(null);
+
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
             if (contextRef.current && !contextRef.current.contains(e.target as Node)) {
@@ -185,6 +238,9 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
             }
             if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
                 setShowHistoryFilter(false);
+            }
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+                setOpenMenuId(null);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
@@ -195,27 +251,44 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         setCurrentPage(1);
     }, [activeTab, focusFilter, filterStore, filterDateFrom, filterDateTo, sortField, sortDir]);
 
-    // Session categorization
-    const inProgressSessions = MOCK_SESSIONS.filter(s => s.status === 'IN_PROGRESS' || s.status === 'WAITING_PDF');
-    const finalizedSessions = MOCK_SESSIONS.filter(s => s.status === 'FINALIZED');
-    const exceptionSessions = MOCK_SESSIONS.filter(s => s.status === 'REOPEN_REQUEST');
-    const allHistorySessions = MOCK_SESSIONS.filter(s => s.status === 'COMPLETED');
+    // Session categorization with auto-archive logic
+    // Active: IN_PROGRESS, WAITING_PDF, LOCKED_BY_STORE (< 24h), REOPEN_REQUEST
+    // History: ARCHIVED, CANCELLED, LOCKED_BY_STORE (> 24h)
+    const getActiveSessions = () => {
+        return MOCK_SESSIONS.filter(s => {
+            if (s.status === 'ARCHIVED' || s.status === 'CANCELLED') return false;
+            if (s.status === 'LOCKED_BY_STORE' && isLockedOver24h(s.lockedAt)) return false;
+            return true;
+        });
+    };
 
-    const activeSessions = [...exceptionSessions, ...inProgressSessions, ...finalizedSessions];
+    const getHistorySessions = () => {
+        return MOCK_SESSIONS.filter(s => {
+            if (s.status === 'ARCHIVED' || s.status === 'CANCELLED') return true;
+            if (s.status === 'LOCKED_BY_STORE' && isLockedOver24h(s.lockedAt)) return true;
+            return false;
+        });
+    };
+
+    const activeSessions = getActiveSessions();
+    const historySessions = getHistorySessions();
+
+    const inProgressSessions = activeSessions.filter(s => s.status === 'IN_PROGRESS' || s.status === 'WAITING_PDF');
+    const exceptionSessions = activeSessions.filter(s => s.status === 'REOPEN_REQUEST');
 
     const getFilteredHistory = () => {
-        let filtered = allHistorySessions;
+        let filtered = historySessions;
         if (filterStore !== 'all') {
             filtered = filtered.filter(s => s.storeId === parseInt(filterStore));
         }
         if (filterDateFrom) {
             const fromDate = new Date(filterDateFrom);
-            filtered = filtered.filter(s => s.completedAt && new Date(s.completedAt) >= fromDate);
+            filtered = filtered.filter(s => new Date(s.createdAt) >= fromDate);
         }
         if (filterDateTo) {
             const toDate = new Date(filterDateTo);
             toDate.setHours(23, 59, 59);
-            filtered = filtered.filter(s => s.completedAt && new Date(s.completedAt) <= toDate);
+            filtered = filtered.filter(s => new Date(s.createdAt) <= toDate);
         }
         return filtered;
     };
@@ -243,6 +316,9 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                 case 'progress':
                     comparison = a.percentComplete - b.percentComplete;
                     break;
+                case 'date':
+                    comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+                    break;
             }
             return sortDir === 'asc' ? comparison : -comparison;
         });
@@ -265,7 +341,6 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
     const totalLoss = activeSessions.reduce((sum, s) => sum + s.currentLoss, 0);
     const hasActiveFilters = filterStore !== 'all' || filterDateFrom || filterDateTo;
 
-    // Toggle sort
     const handleSort = (field: SortField) => {
         if (sortField === field) {
             setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -275,12 +350,34 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         }
     };
 
+    // Admin Actions
+    const handleForceClose = (session: AuditSession) => {
+        // TODO: API call to force lock
+        alert(`Forzar cierre para ${session.storeName}\nEstado cambiará a LOCKED_BY_STORE`);
+        setOpenMenuId(null);
+    };
+
+    const handleCancelSession = (session: AuditSession) => {
+        const hasData = session.scanLogsCount > 0;
+        const action = hasData ? 'SOFT DELETE (Marcar como CANCELADA)' : 'HARD DELETE (Borrar permanentemente)';
+
+        if (confirm(`¿Cancelar auditoría de ${session.storeName}?\n\nAcción: ${action}\nScans registrados: ${session.scanLogsCount}`)) {
+            // TODO: API call
+            alert(`Auditoría cancelada.\nAcción ejecutada: ${action}`);
+        }
+        setOpenMenuId(null);
+    };
+
+    const handleViewDetail = (session: AuditSession) => {
+        onSelectSession(session.id, session.storeName);
+        setOpenMenuId(null);
+    };
+
     /**
-     * SITUACIÓN: Badges planos (pasivos) vs Botón de acción (excepciones)
+     * Estado Badge (pasivo)
      */
-    const renderSituacionBadge = (session: AuditSession) => {
-        // PASSIVE BADGE: Waiting PDF
-        if (!session.hasPdf || session.status === 'WAITING_PDF') {
+    const renderStatusBadge = (session: AuditSession) => {
+        if (session.status === 'WAITING_PDF') {
             return (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-500">
                     <FileUp size={12} />
@@ -289,7 +386,6 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
             );
         }
 
-        // PASSIVE BADGE: In progress
         if (session.status === 'IN_PROGRESS') {
             return (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
@@ -299,8 +395,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
             );
         }
 
-        // PASSIVE BADGE: Finalized
-        if (session.status === 'FINALIZED') {
+        if (session.status === 'LOCKED_BY_STORE') {
             return (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
                     <Lock size={12} />
@@ -309,13 +404,11 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
             );
         }
 
-        // ACTION BUTTON: Reopen Request (exception - direct action)
         if (session.status === 'REOPEN_REQUEST') {
             return (
                 <button
                     onClick={(e) => {
                         e.stopPropagation();
-                        // TODO: Open authorization modal directly
                         alert(`Autorizar reapertura para ${session.storeName}`);
                     }}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-orange-500 text-white hover:bg-orange-600 transition-colors shadow-sm"
@@ -326,8 +419,16 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
             );
         }
 
-        // PASSIVE BADGE: Completed (history)
-        if (session.status === 'COMPLETED') {
+        if (session.status === 'CANCELLED') {
+            return (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-200 text-slate-600">
+                    <XCircle size={12} />
+                    Cancelada
+                </span>
+            );
+        }
+
+        if (session.status === 'ARCHIVED') {
             return (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-500">
                     <CheckCircle2 size={12} />
@@ -339,9 +440,6 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         return null;
     };
 
-    /**
-     * PROGRESS BAR: Always visible, independent of status
-     */
     const renderProgressBar = (session: AuditSession) => {
         if (session.status === 'WAITING_PDF') {
             return <span className="text-slate-200">—</span>;
@@ -363,20 +461,16 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         );
     };
 
-    /**
-     * LOSS/SURPLUS: Color hierarchy with green for positive
-     */
     const renderLossColumn = (loss: number) => {
         if (loss === 0) {
             return <span className="text-slate-400 text-sm">$0</span>;
         }
 
-        const isPositive = loss < 0; // Negative loss = surplus/sobrante
+        const isPositive = loss < 0;
         const absLoss = Math.abs(loss);
         const isBig = absLoss > 10000;
 
         if (isPositive) {
-            // Sobrante (surplus) - GREEN
             return (
                 <span className={`text-emerald-600 tabular-nums ${isBig ? 'font-bold' : 'font-medium'}`}>
                     +${absLoss.toLocaleString()}
@@ -384,7 +478,6 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
             );
         }
 
-        // Pérdida - RED (bold only if > 10k)
         return (
             <span className={`text-red-600 tabular-nums ${isBig ? 'font-bold' : 'font-normal'}`}>
                 -${absLoss.toLocaleString()}
@@ -395,7 +488,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
     const handleStoreSelect = (store: typeof STORES_DATA[0]) => {
         setShowContextDropdown(false);
         setContextSearch('');
-        const session = MOCK_SESSIONS.find(s => s.storeId === store.id && s.status !== 'COMPLETED');
+        const session = MOCK_SESSIONS.find(s => s.storeId === store.id && s.status !== 'ARCHIVED' && s.status !== 'CANCELLED');
         if (session) {
             onSelectSession(session.id, session.storeName);
         }
@@ -407,7 +500,6 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         setFilterDateTo('');
     };
 
-    // Sort header component
     const SortHeader = ({ field, label }: { field: SortField; label: string }) => (
         <button
             onClick={() => handleSort(field)}
@@ -502,7 +594,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                     : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
                                 }`}
                         >
-                            Historial ({allHistorySessions.length})
+                            Historial ({historySessions.length})
                         </button>
                     </div>
 
@@ -640,22 +732,22 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                 </th>
                                 <th className="px-4 py-3 text-right font-medium">
                                     <div className="flex items-center justify-end">
-                                        <SortHeader field="loss" label="Diferencia" />
+                                        <SortHeader field="loss" label="Riesgo ($)" />
                                     </div>
                                 </th>
+                                <th className="px-4 py-3 text-left font-medium">
+                                    <SortHeader field="date" label="Fecha Inicio" />
+                                </th>
                                 {activeTab === 'history' && (
-                                    <>
-                                        <th className="px-4 py-3 text-left font-medium">Fecha</th>
-                                        <th className="px-4 py-3 text-center font-medium">Reporte</th>
-                                    </>
+                                    <th className="px-4 py-3 text-center font-medium">Reporte</th>
                                 )}
-                                <th className="px-4 py-3 w-10"></th>
+                                <th className="px-4 py-3 w-12 text-center font-medium">Acciones</th>
                             </tr>
                         </thead>
                         <tbody>
                             {displayedSessions.length === 0 ? (
                                 <tr>
-                                    <td colSpan={activeTab === 'history' ? 7 : 5} className="px-4 py-16 text-center">
+                                    <td colSpan={activeTab === 'history' ? 7 : 6} className="px-4 py-16 text-center">
                                         <CheckCircle2 size={40} className="mx-auto mb-3 text-emerald-400" />
                                         <p className="font-semibold text-slate-700">¡Todo en orden!</p>
                                         <p className="text-sm text-slate-500 mt-1">No hay auditorías en esta vista</p>
@@ -666,64 +758,119 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                     <tr
                                         key={session.id}
                                         onClick={() => onSelectSession(session.id, session.storeName)}
-                                        className={`border-b border-slate-100 cursor-pointer transition-colors ${session.status === 'REOPEN_REQUEST' ? 'bg-orange-50/60' : (idx % 2 === 1 ? 'bg-slate-50/40' : '')
+                                        className={`border-b border-slate-100 cursor-pointer transition-colors ${session.status === 'REOPEN_REQUEST' ? 'bg-orange-50/60' :
+                                                session.status === 'CANCELLED' ? 'bg-slate-50' :
+                                                    (idx % 2 === 1 ? 'bg-slate-50/40' : '')
                                             } hover:bg-blue-50/50`}
                                     >
-                                        {/* TIENDA - Bigger icon with bg */}
+                                        {/* TIENDA */}
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-3">
-                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${session.status === 'REOPEN_REQUEST' ? 'bg-orange-100' : 'bg-slate-100'
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${session.status === 'REOPEN_REQUEST' ? 'bg-orange-100' :
+                                                        session.status === 'CANCELLED' ? 'bg-slate-200' : 'bg-slate-100'
                                                     }`}>
                                                     <Store size={18} className={
-                                                        session.status === 'REOPEN_REQUEST' ? 'text-orange-600' : 'text-slate-500'
+                                                        session.status === 'REOPEN_REQUEST' ? 'text-orange-600' :
+                                                            session.status === 'CANCELLED' ? 'text-slate-400' : 'text-slate-500'
                                                     } />
                                                 </div>
                                                 <div>
-                                                    <p className="font-medium text-slate-800">{session.storeName}</p>
+                                                    <p className={`font-medium ${session.status === 'CANCELLED' ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
+                                                        {session.storeName}
+                                                    </p>
                                                     <p className="text-xs text-slate-400">{session.managerName}</p>
                                                 </div>
                                             </div>
                                         </td>
 
-                                        {/* ESTADO - Badge or Action Button */}
+                                        {/* ESTADO */}
                                         <td className="px-4 py-3">
-                                            {renderSituacionBadge(session)}
+                                            {renderStatusBadge(session)}
                                         </td>
 
-                                        {/* AVANCE - Always visible progress bar */}
+                                        {/* AVANCE */}
                                         <td className="px-4 py-3">
                                             {renderProgressBar(session)}
                                         </td>
 
-                                        {/* DIFERENCIA - Color hierarchy */}
+                                        {/* RIESGO */}
                                         <td className="px-4 py-3 text-right">
                                             {renderLossColumn(session.currentLoss)}
                                         </td>
 
-                                        {/* HISTORY ONLY */}
+                                        {/* FECHA INICIO (DD/M/YYYY) */}
+                                        <td className="px-4 py-3">
+                                            <div className="flex items-center gap-1.5 text-slate-600 text-sm">
+                                                <Calendar size={14} className="text-slate-400" />
+                                                {formatDateDDMYYYY(session.createdAt)}
+                                            </div>
+                                        </td>
+
+                                        {/* HISTORY: Reporte Button */}
                                         {activeTab === 'history' && (
-                                            <>
-                                                <td className="px-4 py-3">
-                                                    <div className="flex items-center gap-1.5 text-slate-600 text-sm">
-                                                        <Calendar size={14} />
-                                                        {session.completedAt
-                                                            ? new Date(session.completedAt).toLocaleDateString('es-MX')
-                                                            : '—'}
-                                                    </div>
-                                                </td>
-                                                <td className="px-4 py-3 text-center">
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); }}
-                                                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"
-                                                    >
-                                                        <FileText size={16} />
-                                                    </button>
-                                                </td>
-                                            </>
+                                            <td className="px-4 py-3 text-center">
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); }}
+                                                    className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"
+                                                >
+                                                    <FileText size={16} />
+                                                </button>
+                                            </td>
                                         )}
 
-                                        <td className="px-4 py-3">
-                                            <ChevronRight size={16} className="text-slate-300" />
+                                        {/* ACCIONES - Kebab Menu */}
+                                        <td className="px-4 py-3 text-center">
+                                            <div className="relative" ref={openMenuId === session.id ? menuRef : null}>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setOpenMenuId(openMenuId === session.id ? null : session.id);
+                                                    }}
+                                                    className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded transition-colors"
+                                                >
+                                                    <MoreVertical size={16} />
+                                                </button>
+
+                                                {openMenuId === session.id && (
+                                                    <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1 text-left">
+                                                        {/* Ver Detalle */}
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleViewDetail(session); }}
+                                                            className="w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                                                        >
+                                                            <Eye size={14} />
+                                                            Ver Detalle
+                                                        </button>
+
+                                                        {/* Forzar Cierre - Only for active non-locked sessions */}
+                                                        {activeTab === 'active' && session.status !== 'LOCKED_BY_STORE' && session.status !== 'CANCELLED' && (
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); handleForceClose(session); }}
+                                                                className="w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                                                            >
+                                                                <LockKeyhole size={14} />
+                                                                Forzar Cierre
+                                                            </button>
+                                                        )}
+
+                                                        {/* Divider */}
+                                                        {activeTab === 'active' && session.status !== 'CANCELLED' && (
+                                                            <div className="border-t border-slate-100 my-1"></div>
+                                                        )}
+
+                                                        {/* Cancelar - Destructive (Red) */}
+                                                        {activeTab === 'active' && session.status !== 'CANCELLED' && (
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); handleCancelSession(session); }}
+                                                                className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                                                            >
+                                                                <XCircle size={14} />
+                                                                Cancelar Auditoría
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
                                         </td>
                                     </tr>
                                 ))
