@@ -12,7 +12,7 @@ import {
     Activity, AlertCircle, Package, BarChart3, History, MapPin, Calendar, User,
     ChevronDown, Store, Save, Loader2
 } from 'lucide-react';
-import { STORES_DATA } from '../../data/mockData';
+import { auditApi, type Store as StoreType } from '../../services/audit.api';
 
 // Types
 type AuditStatus = 'not_started' | 'partial' | 'in_progress' | 'reconciled' | 'locked';
@@ -95,10 +95,20 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
     const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
     const [showStoreDropdown, setShowStoreDropdown] = useState(false);
     const [storeSearch, setStoreSearch] = useState('');
+    const [stores, setStores] = useState<StoreType[]>([]);
+
+    // Fetch stores from API on mount
+    useEffect(() => {
+        if (isNewAudit) {
+            auditApi.getStores()
+                .then(setStores)
+                .catch(err => console.error('Failed to load stores:', err));
+        }
+    }, [isNewAudit]);
 
     // Get the effective store name (used when creating new audit vs viewing existing)
     const effectiveStoreName = isNewAudit && selectedStoreId
-        ? STORES_DATA.find(s => s.id === selectedStoreId)?.name || ''
+        ? stores.find(s => s.id === selectedStoreId)?.name || ''
         : storeName;
 
     // Log for debugging - will be used for API calls in future
@@ -216,16 +226,16 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                                 onClick={() => theoretical.status !== 'loaded' && setShowStoreDropdown(!showStoreDropdown)}
                                 disabled={theoretical.status === 'loaded'}
                                 className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${theoretical.status === 'loaded'
-                                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
-                                        : selectedStoreId
-                                            ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-300'
-                                            : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
+                                    ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                                    : selectedStoreId
+                                        ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-300'
+                                        : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
                                     }`}
                             >
                                 <Store size={16} />
                                 <span className="font-medium">
                                     {selectedStoreId
-                                        ? STORES_DATA.find(s => s.id === selectedStoreId)?.name
+                                        ? stores.find(s => s.id === selectedStoreId)?.name
                                         : 'Selecciona una Tienda'}
                                 </span>
                                 {theoretical.status !== 'loaded' && <ChevronDown size={16} className={`transition-transform ${showStoreDropdown ? 'rotate-180' : ''}`} />}
@@ -244,7 +254,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                                         />
                                     </div>
                                     <div className="max-h-56 overflow-y-auto">
-                                        {STORES_DATA
+                                        {stores
                                             .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
                                             .map(store => (
                                                 <button

@@ -44,6 +44,23 @@ services:
     ports:
       - "8080:8080"
 
+  audit-service:
+    build: ./apps/audit-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      USE_MOCK_PARSER: ${USE_MOCK_PARSER:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+
   nginx:
     image: nginx:alpine
     ports:

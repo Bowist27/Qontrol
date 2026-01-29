@@ -53,3 +53,85 @@ VALUES
         'admin',
         false
     ) ON CONFLICT (email) DO NOTHING;
+
+-- =====================================================
+-- STORES (Tiendas)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS stores (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    status BOOLEAN DEFAULT true,
+    created_at TIMESTAMP
+    WITH
+        TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO
+    stores (name, status)
+VALUES
+    ('Celaya Centro', true),
+    ('Dolores Hidalgo', true),
+    ('San Miguel de Allende', true),
+    ('Salamanca', true),
+    ('Salvatierra', false),
+    ('Irapuato Norte', true),
+    ('León Centro', true) ON CONFLICT DO NOTHING;
+
+-- =====================================================
+-- AUDIT SESSIONS (Sesiones de Auditoría)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS audit_sessions (
+    id SERIAL PRIMARY KEY,
+    store_id INT NOT NULL REFERENCES stores (id),
+    created_by UUID REFERENCES users (id),
+    status VARCHAR(20) DEFAULT 'UPLOADING',
+    reference_date DATE,
+    pdf_url VARCHAR(500),
+    created_at TIMESTAMP
+    WITH
+        TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        closed_at TIMESTAMP
+    WITH
+        TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_sessions_store ON audit_sessions (store_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_sessions_status ON audit_sessions (status);
+
+-- =====================================================
+-- AUDIT THEORETICAL (Items del PDF)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS audit_theoretical (
+    id SERIAL PRIMARY KEY,
+    audit_id INT NOT NULL REFERENCES audit_sessions (id) ON DELETE CASCADE,
+    product_code VARCHAR(50) NOT NULL,
+    product_name VARCHAR(255),
+    unit_cost DECIMAL(10, 2),
+    last_purchase DATE,
+    expected_qty DECIMAL(10, 3) NOT NULL,
+    created_at TIMESTAMP
+    WITH
+        TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_theoretical_audit ON audit_theoretical (audit_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_theoretical_code ON audit_theoretical (product_code);
+
+-- =====================================================
+-- AUDIT PHYSICAL (Escaneos desde App - para futuro)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS audit_physical (
+    id SERIAL PRIMARY KEY,
+    audit_id INT NOT NULL REFERENCES audit_sessions (id) ON DELETE CASCADE,
+    barcode VARCHAR(50) NOT NULL,
+    quantity DECIMAL(10, 3) DEFAULT 1,
+    scanned_by UUID REFERENCES users (id),
+    device_id VARCHAR(100),
+    scanned_at TIMESTAMP
+    WITH
+        TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_physical_audit ON audit_physical (audit_id);
