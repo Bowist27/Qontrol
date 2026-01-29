@@ -8,7 +8,7 @@
 import { useState, useEffect } from 'react';
 import {
     FileText, Upload, Wifi, WifiOff, Clock, Users, AlertTriangle,
-    CheckCircle2, RefreshCw, Eye, Search, FileSpreadsheet, X, ArrowLeft,
+    CheckCircle2, RefreshCw, Search, FileSpreadsheet, X, ArrowLeft,
     Activity, AlertCircle, Package, BarChart3, History, MapPin, Calendar, User,
     ChevronDown, Store, Save, Loader2
 } from 'lucide-react';
@@ -462,10 +462,6 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                                     <p className="text-[10px] text-emerald-600">Valor</p>
                                 </div>
                             </div>
-
-                            <button className="w-full mt-2 py-1.5 border border-slate-200 rounded text-slate-600 text-xs hover:bg-slate-50 flex items-center justify-center gap-1">
-                                <Eye size={12} /> Ver Detalle
-                            </button>
                         </div>
                     )}
                 </div>
