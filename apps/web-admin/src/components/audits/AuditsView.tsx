@@ -33,6 +33,7 @@ const AuditsView: React.FC = () => {
                 sessionId={selectedSession.id}
                 storeName={selectedSession.storeName}
                 onBack={handleBack}
+                isNewAudit={selectedSession.id === 'new'}
             />
         );
     }

@@ -9,8 +9,10 @@ import { useState, useEffect } from 'react';
 import {
     FileText, Upload, Wifi, WifiOff, Clock, Users, AlertTriangle,
     CheckCircle2, RefreshCw, Eye, Search, FileSpreadsheet, X, ArrowLeft,
-    Activity, AlertCircle, Package, BarChart3, History, MapPin, Calendar, User
+    Activity, AlertCircle, Package, BarChart3, History, MapPin, Calendar, User,
+    ChevronDown, Store, Save, Loader2
 } from 'lucide-react';
+import { STORES_DATA } from '../../data/mockData';
 
 // Types
 type AuditStatus = 'not_started' | 'partial' | 'in_progress' | 'reconciled' | 'locked';
@@ -45,9 +47,10 @@ interface DiffItem {
 
 // Props interface for Hub & Spoke pattern
 interface AuditSessionDetailProps {
-    sessionId: string;
-    storeName: string;
+    sessionId: string;  // 'new' for creating new audit
+    storeName: string;  // Empty string when creating new
     onBack: () => void;
+    isNewAudit?: boolean;  // Flag for create mode
 }
 
 // Mock Data
@@ -87,7 +90,20 @@ const MOCK_DIFF_ITEMS: DiffItem[] = [
     { sku: 'NEW-002', name: 'ARTICULO DESCONOCIDO ESCANEADO', unitCost: 0, theoretical: 0, physical: 5, difference: 5, impact: 0 },
 ];
 
-const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId, storeName, onBack }) => {
+const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _sessionId, storeName, onBack, isNewAudit = false }) => {
+    // Store selector state for new audit
+    const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+    const [showStoreDropdown, setShowStoreDropdown] = useState(false);
+    const [storeSearch, setStoreSearch] = useState('');
+
+    // Get the effective store name (used when creating new audit vs viewing existing)
+    const effectiveStoreName = isNewAudit && selectedStoreId
+        ? STORES_DATA.find(s => s.id === selectedStoreId)?.name || ''
+        : storeName;
+
+    // Log for debugging - will be used for API calls in future
+    console.debug('[AuditSession] Store:', effectiveStoreName || 'Not selected');
+
     // In future: fetch session data based on sessionId
     const [theoretical, setTheoretical] = useState<TheoreticalData>({ status: 'empty', totalItems: 0, totalUnits: 0, totalValue: 0 });
     const [physical, setPhysical] = useState<PhysicalData>({ status: 'disconnected', scannedItems: 0, activeUsers: [] });
@@ -99,6 +115,10 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId, stor
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(25);
     const [selectedItem, setSelectedItem] = useState<DiffItem | null>(null);
+
+    // Modal and save states
+    const [showCancelModal, setShowCancelModal] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
 
     // Calculate audit status
     const getAuditStatus = (): AuditStatus => {
@@ -185,13 +205,78 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId, stor
 
                     <div className="h-6 w-px bg-slate-200"></div>
 
-                    <h2 className="text-lg font-bold text-slate-800">Auditoría en Curso</h2>
+                    <h2 className="text-lg font-bold text-slate-800">
+                        {isNewAudit ? 'Nueva Auditoría' : 'Auditoría en Curso'}
+                    </h2>
 
-                    {/* Store Name Badge */}
-                    <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-lg">
-                        <Package size={16} className="text-slate-500" />
-                        <span className="font-medium text-slate-700">{storeName}</span>
-                    </div>
+                    {/* Store Selector (New Audit) OR Store Badge (Existing) */}
+                    {isNewAudit ? (
+                        <div className="relative">
+                            <button
+                                onClick={() => theoretical.status !== 'loaded' && setShowStoreDropdown(!showStoreDropdown)}
+                                disabled={theoretical.status === 'loaded'}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${theoretical.status === 'loaded'
+                                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                                        : selectedStoreId
+                                            ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-300'
+                                            : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
+                                    }`}
+                            >
+                                <Store size={16} />
+                                <span className="font-medium">
+                                    {selectedStoreId
+                                        ? STORES_DATA.find(s => s.id === selectedStoreId)?.name
+                                        : 'Selecciona una Tienda'}
+                                </span>
+                                {theoretical.status !== 'loaded' && <ChevronDown size={16} className={`transition-transform ${showStoreDropdown ? 'rotate-180' : ''}`} />}
+                            </button>
+
+                            {showStoreDropdown && theoretical.status !== 'loaded' && (
+                                <div className="absolute top-full mt-2 left-0 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                                    <div className="p-2 border-b border-slate-100">
+                                        <input
+                                            type="text"
+                                            placeholder="Buscar tienda..."
+                                            value={storeSearch}
+                                            onChange={(e) => setStoreSearch(e.target.value)}
+                                            autoFocus
+                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                    </div>
+                                    <div className="max-h-56 overflow-y-auto">
+                                        {STORES_DATA
+                                            .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
+                                            .map(store => (
+                                                <button
+                                                    key={store.id}
+                                                    onClick={() => {
+                                                        setSelectedStoreId(store.id);
+                                                        setShowStoreDropdown(false);
+                                                        setStoreSearch('');
+                                                        // TODO: POST /api/sessions to create session
+                                                    }}
+                                                    className={`w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50 transition-colors ${selectedStoreId === store.id ? 'bg-blue-50' : ''
+                                                        }`}
+                                                >
+                                                    <Store size={14} className={selectedStoreId === store.id ? 'text-blue-600' : 'text-slate-400'} />
+                                                    <span className={`text-sm font-medium ${selectedStoreId === store.id ? 'text-blue-700' : 'text-slate-700'}`}>
+                                                        {store.name}
+                                                    </span>
+                                                    {selectedStoreId === store.id && (
+                                                        <CheckCircle2 size={14} className="ml-auto text-blue-600" />
+                                                    )}
+                                                </button>
+                                            ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-lg">
+                            <Package size={16} className="text-slate-500" />
+                            <span className="font-medium text-slate-700">{storeName}</span>
+                        </div>
+                    )}
 
                     {/* Status Badge */}
                     <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${auditStatus === 'not_started' ? 'bg-slate-100 text-slate-600' :
@@ -216,28 +301,82 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId, stor
                         <History size={16} />
                         Bitácora de Eventos
                     </button>
-                    <button
-                        disabled={auditStatus !== 'in_progress'}
-                        className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    >
-                        <CheckCircle2 size={16} />
-                        Cerrar Auditoría
-                    </button>
+
+                    {/* Action buttons for creation mode */}
+                    {isNewAudit ? (
+                        <>
+                            {/* Cancel button - shows confirmation modal if PDF loaded */}
+                            <button
+                                onClick={() => {
+                                    if (theoretical.status === 'loaded') {
+                                        setShowCancelModal(true);
+                                    } else {
+                                        onBack();
+                                    }
+                                }}
+                                className="px-4 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                            >
+                                <X size={16} />
+                                Cancelar
+                            </button>
+
+                            {/* Save button - enabled when store selected and PDF loaded */}
+                            <button
+                                onClick={() => {
+                                    setIsSaving(true);
+                                    // Simulate API call
+                                    setTimeout(() => {
+                                        setIsSaving(false);
+                                        alert('Auditoría guardada correctamente');
+                                        onBack();
+                                    }, 2000);
+                                }}
+                                disabled={!selectedStoreId || theoretical.status !== 'loaded' || isSaving}
+                                className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+                            >
+                                {isSaving ? (
+                                    <>
+                                        <Loader2 size={16} className="animate-spin" />
+                                        Guardando...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Save size={16} />
+                                        Guardar Auditoría
+                                    </>
+                                )}
+                            </button>
+                        </>
+                    ) : (
+                        /* Close button for active audits */
+                        <button
+                            disabled={auditStatus !== 'in_progress'}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        >
+                            <CheckCircle2 size={16} />
+                            Cerrar Auditoría
+                        </button>
+                    )}
                 </div>
             </div>
 
             {/* SECTION B: Split Cards */}
             <div className="grid grid-cols-2 gap-3">
                 {/* B.1 Theoretical Card (PDF) */}
-                <div className={`bg-white rounded-xl border-2 transition-all ${isDragging ? 'border-blue-500 bg-blue-50' :
-                    theoretical.status === 'loaded' ? 'border-emerald-300' :
-                        theoretical.status === 'error' ? 'border-red-300 animate-pulse' :
-                            'border-slate-200'
+                <div className={`rounded-xl border-2 transition-all ${isNewAudit && !selectedStoreId
+                    ? 'bg-slate-50 border-slate-200 opacity-60'
+                    : isDragging
+                        ? 'border-blue-500 bg-blue-50'
+                        : theoretical.status === 'loaded'
+                            ? 'border-emerald-300 bg-white'
+                            : theoretical.status === 'error'
+                                ? 'border-red-300 animate-pulse bg-white'
+                                : 'border-slate-200 bg-white'
                     }`}>
                     <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <FileSpreadsheet size={16} style={{ color: '#06aef0' }} />
-                            <h3 className="font-semibold text-slate-800 text-sm">Inventario Teórico</h3>
+                            <FileSpreadsheet size={16} style={{ color: isNewAudit && !selectedStoreId ? '#94a3b8' : '#06aef0' }} />
+                            <h3 className={`font-semibold text-sm ${isNewAudit && !selectedStoreId ? 'text-slate-400' : 'text-slate-800'}`}>Inventario Teórico</h3>
                             <span className="text-[10px] text-slate-400">(Deber Ser)</span>
                         </div>
                         {theoretical.status === 'loaded' && (
@@ -247,7 +386,14 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId, stor
                         )}
                     </div>
 
-                    {theoretical.status === 'empty' ? (
+                    {/* Locked state when no store selected */}
+                    {isNewAudit && !selectedStoreId ? (
+                        <div className="p-4 flex flex-col items-center justify-center min-h-[120px] cursor-not-allowed">
+                            <Upload size={28} className="text-slate-300" />
+                            <p className="font-medium text-slate-400 mt-2 text-sm">Selecciona una tienda arriba</p>
+                            <p className="text-[10px] text-slate-400 mt-1">para habilitar la carga del PDF</p>
+                        </div>
+                    ) : theoretical.status === 'empty' ? (
                         /* Empty State - Dropzone */
                         <div
                             className="p-4 flex flex-col items-center justify-center min-h-[120px] cursor-pointer"
@@ -314,16 +460,20 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId, stor
                     )}
                 </div>
 
-                {/* B.2 Physical Card (Live Scanner) */}
-                <div className={`bg-white rounded-xl border-2 transition-all ${physical.status === 'active' ? 'border-blue-300' : 'border-slate-200'
+                {/* B.2 Physical Card (Live Scanner) - Passive in creation mode */}
+                <div className={`rounded-xl border-2 transition-all ${isNewAudit
+                    ? 'bg-slate-50 border-slate-200'
+                    : physical.status === 'active'
+                        ? 'border-blue-300 bg-white'
+                        : 'border-slate-200 bg-white'
                     }`}>
                     <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <Activity size={16} className={physical.status === 'active' ? 'text-blue-500' : 'text-slate-400'} />
-                            <h3 className="font-semibold text-slate-800 text-sm">Inventario Físico</h3>
+                            <Activity size={16} className={isNewAudit || physical.status === 'disconnected' ? 'text-slate-400' : 'text-blue-500'} />
+                            <h3 className={`font-semibold text-sm ${isNewAudit ? 'text-slate-500' : 'text-slate-800'}`}>Inventario Físico</h3>
                             <span className="text-[10px] text-slate-400">(Realidad)</span>
                         </div>
-                        {physical.status === 'active' && (
+                        {!isNewAudit && physical.status === 'active' && (
                             <span className="flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-full">
                                 <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
                                 LIVE
@@ -331,11 +481,15 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId, stor
                         )}
                     </div>
 
-                    {physical.status === 'disconnected' ? (
+                    {isNewAudit || physical.status === 'disconnected' ? (
                         <div className="p-4 flex flex-col items-center justify-center min-h-[120px]">
-                            <WifiOff size={28} className="text-slate-400" />
-                            <p className="font-medium text-slate-600 mt-2 text-sm">Esperando sincronización</p>
-                            <p className="text-[10px] text-slate-400 mt-1">No hay escaneos aún</p>
+                            <WifiOff size={28} className="text-slate-300" />
+                            <p className="font-medium text-slate-500 mt-2 text-sm">
+                                {isNewAudit ? 'Esperando conexión con App...' : 'Esperando sincronización'}
+                            </p>
+                            <p className="text-[10px] text-slate-400 mt-1">
+                                {isNewAudit ? 'La tienda escaneará desde la App móvil' : 'No hay escaneos aún'}
+                            </p>
                         </div>
                     ) : (
                         <div className="p-3">
@@ -752,6 +906,42 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId, stor
                     className="fixed inset-0 bg-black/20 z-20"
                     onClick={() => setSelectedItem(null)}
                 />
+            )}
+
+            {/* Cancel Confirmation Modal */}
+            {showCancelModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+                        <div className="p-6">
+                            <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+                                <AlertTriangle size={24} className="text-amber-600" />
+                            </div>
+                            <h3 className="text-lg font-semibold text-slate-800 text-center mb-2">
+                                ¿Descartar auditoría?
+                            </h3>
+                            <p className="text-sm text-slate-600 text-center">
+                                Ya procesaste el PDF de valuación. Si cancelas, se perderán los datos procesados y tendrás que volver a empezar.
+                            </p>
+                        </div>
+                        <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end border-t border-slate-200">
+                            <button
+                                onClick={() => setShowCancelModal(false)}
+                                className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800"
+                            >
+                                Seguir editando
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowCancelModal(false);
+                                    onBack();
+                                }}
+                                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+                            >
+                                Sí, descartar
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

@@ -567,7 +567,10 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                     )}
                 </div>
 
-                <button className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-sm">
+                <button
+                    onClick={() => onSelectSession('new', '')}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-sm"
+                >
                     <Plus size={18} />
                     Nueva Auditoría
                 </button>
@@ -581,8 +584,8 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                         <button
                             onClick={() => { setActiveTab('active'); setFocusFilter('all'); }}
                             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === 'active'
-                                    ? 'bg-white text-slate-800 shadow-sm border border-slate-200'
-                                    : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
+                                ? 'bg-white text-slate-800 shadow-sm border border-slate-200'
+                                : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
                                 }`}
                         >
                             Activas ({activeSessions.length})
@@ -590,8 +593,8 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                         <button
                             onClick={() => setActiveTab('history')}
                             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === 'history'
-                                    ? 'bg-white text-slate-800 shadow-sm border border-slate-200'
-                                    : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
+                                ? 'bg-white text-slate-800 shadow-sm border border-slate-200'
+                                : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
                                 }`}
                         >
                             Historial ({historySessions.length})
@@ -605,8 +608,8 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                     <button
                                         onClick={() => setFocusFilter(focusFilter === 'exceptions' ? 'all' : 'exceptions')}
                                         className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${focusFilter === 'exceptions'
-                                                ? 'bg-orange-200 text-orange-900 border-2 border-orange-400'
-                                                : 'bg-orange-100 text-orange-700 border border-orange-300 hover:border-orange-400'
+                                            ? 'bg-orange-200 text-orange-900 border-2 border-orange-400'
+                                            : 'bg-orange-100 text-orange-700 border border-orange-300 hover:border-orange-400'
                                             }`}
                                     >
                                         <KeyRound size={14} />
@@ -618,8 +621,8 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                 <button
                                     onClick={() => setFocusFilter(focusFilter === 'in_progress' ? 'all' : 'in_progress')}
                                     className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${focusFilter === 'in_progress'
-                                            ? 'bg-blue-100 text-blue-800 border-2 border-blue-300'
-                                            : 'bg-blue-50 text-blue-700 border border-blue-200 hover:border-blue-300'
+                                        ? 'bg-blue-100 text-blue-800 border-2 border-blue-300'
+                                        : 'bg-blue-50 text-blue-700 border border-blue-200 hover:border-blue-300'
                                         }`}
                                 >
                                     <Play size={14} />
@@ -654,8 +657,8 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                     <button
                                         onClick={() => setShowHistoryFilter(!showHistoryFilter)}
                                         className={`p-2 rounded-lg transition-colors ${hasActiveFilters || showHistoryFilter
-                                                ? 'bg-blue-100 text-blue-600'
-                                                : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
+                                            ? 'bg-blue-100 text-blue-600'
+                                            : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
                                             }`}
                                     >
                                         <Filter size={18} />
@@ -759,15 +762,15 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                         key={session.id}
                                         onClick={() => onSelectSession(session.id, session.storeName)}
                                         className={`border-b border-slate-100 cursor-pointer transition-colors ${session.status === 'REOPEN_REQUEST' ? 'bg-orange-50/60' :
-                                                session.status === 'CANCELLED' ? 'bg-slate-50' :
-                                                    (idx % 2 === 1 ? 'bg-slate-50/40' : '')
+                                            session.status === 'CANCELLED' ? 'bg-slate-50' :
+                                                (idx % 2 === 1 ? 'bg-slate-50/40' : '')
                                             } hover:bg-blue-50/50`}
                                     >
                                         {/* TIENDA */}
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-3">
                                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center ${session.status === 'REOPEN_REQUEST' ? 'bg-orange-100' :
-                                                        session.status === 'CANCELLED' ? 'bg-slate-200' : 'bg-slate-100'
+                                                    session.status === 'CANCELLED' ? 'bg-slate-200' : 'bg-slate-100'
                                                     }`}>
                                                     <Store size={18} className={
                                                         session.status === 'REOPEN_REQUEST' ? 'text-orange-600' :
@@ -920,6 +923,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
             </div>
         </div>
     );
+
 };
 
 export default AuditHub;
