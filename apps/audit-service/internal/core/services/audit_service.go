@@ -32,7 +32,42 @@ func (s *AuditService) ListStores(ctx context.Context) ([]domain.Store, error) {
 	return s.repo.FindAllStores(ctx)
 }
 
-// CreateAudit implements the full audit creation flow from the sequence diagram
+// ParseResult contains the parsed PDF data for preview (no DB save yet)
+type ParseResult struct {
+	Items      []domain.AuditItem `json:"items"`
+	TotalItems int                `json:"total_items"`
+	TotalUnits float64            `json:"total_units"`
+	TotalValue float64            `json:"total_value"`
+}
+
+// ParsePDF parses a PDF and returns items for preview WITHOUT saving to DB
+// This implements FASE 3 of the new sequence diagram
+func (s *AuditService) ParsePDF(ctx context.Context, pdfData []byte) (*ParseResult, error) {
+	// Parse PDF in memory - no database operations
+	items, err := s.pdfParser.Parse(pdfData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse PDF: %w", err)
+	}
+
+	// Calculate summary stats
+	totalUnits := 0.0
+	totalValue := 0.0
+	for _, item := range items {
+		totalUnits += item.ExpectedQty
+		totalValue += item.UnitCost * item.ExpectedQty
+	}
+
+	return &ParseResult{
+		Items:      items,
+		TotalItems: len(items),
+		TotalUnits: totalUnits,
+		TotalValue: totalValue,
+	}, nil
+}
+
+// CreateAudit is called AFTER user confirms the preview
+// This implements FASE 5 of the new sequence diagram
+// It saves: Session → S3 → Items (all in transaction)
 func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []byte, createdBy *string) (*domain.AuditDTO, error) {
 	// 1. session := NewAuditSession(storeID)
 	session := domain.NewAuditSession(storeID, createdBy)
@@ -44,52 +79,37 @@ func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []b
 	}
 	session.ID = sessionID
 
-	// 3. s3.PutObject(pdf, key) → s3_url (or ERROR)
+	// 3. s3.PutObject(pdf, key) → s3_url
 	key := fmt.Sprintf("audits/%d/%d.pdf", storeID, time.Now().Unix())
 	s3URL, err := s.s3Client.PutObject(ctx, key, pdfData, "application/pdf")
 	if err != nil {
-		// Update status to ERROR
-		_ = s.repo.UpdateSessionStatus(ctx, sessionID, "ERROR")
+		// Rollback: delete the session we just created
+		_ = s.repo.DeleteSession(ctx, sessionID)
 		return nil, fmt.Errorf("failed to upload PDF: %w", err)
 	}
 
 	// 4. items := parser.Parse(pdf)
 	items, err := s.pdfParser.Parse(pdfData)
 	if err != nil {
-		_ = s.repo.UpdateSessionStatus(ctx, sessionID, "ERROR")
+		_ = s.repo.DeleteSession(ctx, sessionID)
 		return nil, fmt.Errorf("failed to parse PDF: %w", err)
 	}
 
-	// 5. repo.SaveAuditBatch(session_id, items, s3_url) ← TRANSACTION
-	err = s.repo.SaveAuditBatch(ctx, sessionID, items, s3URL)
+	// 5. repo.SaveAuditBatch(session_id, items, s3_url) with status = IN_PROGRESS
+	err = s.repo.SaveAuditBatchWithStatus(ctx, sessionID, items, s3URL, "IN_PROGRESS")
 	if err != nil {
-		_ = s.repo.UpdateSessionStatus(ctx, sessionID, "ERROR")
+		_ = s.repo.DeleteSession(ctx, sessionID)
 		return nil, fmt.Errorf("failed to save audit batch: %w", err)
 	}
 
 	// Update session with new data
-	session.Status = "REVIEW_PENDING"
+	session.Status = "IN_PROGRESS"
 	session.PDFURL = &s3URL
 
 	return &domain.AuditDTO{
 		Session: *session,
 		Items:   items,
 	}, nil
-}
-
-// ConfirmAudit changes status to IN_PROGRESS
-func (s *AuditService) ConfirmAudit(ctx context.Context, sessionID int) error {
-	// Verify session exists and is in REVIEW_PENDING status
-	session, err := s.repo.GetSessionByID(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("session not found: %w", err)
-	}
-
-	if session.Status != "REVIEW_PENDING" {
-		return fmt.Errorf("session is not in REVIEW_PENDING status, current: %s", session.Status)
-	}
-
-	return s.repo.UpdateSessionStatus(ctx, sessionID, "IN_PROGRESS")
 }
 
 // GetAuditByID retrieves an audit with its items

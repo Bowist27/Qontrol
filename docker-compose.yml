@@ -54,7 +54,7 @@ services:
       DB_NAME: ${POSTGRES_DB}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
       AWS_REGION: ${AWS_REGION:-us-east-1}
-      USE_MOCK_PARSER: ${USE_MOCK_PARSER:-true}
+      USE_MOCK_PARSER: ${USE_MOCK_PARSER:-false}
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,6 +1,11 @@
 /**
  * Audit API Client
  * Connects frontend to audit-service (port 8081)
+ * 
+ * Flow (Approach B):
+ * 1. parsePDF() - Parse for preview, no save
+ * 2. User reviews preview
+ * 3. createAudit() - Save after user confirms
  */
 
 const API_BASE = import.meta.env.VITE_AUDIT_API_URL || 'http://localhost:8081';
@@ -35,6 +40,14 @@ export interface AuditDTO {
     items: AuditItem[];
 }
 
+// Response from parsePDF (preview only, no DB save)
+export interface ParseResult {
+    items: AuditItem[];
+    total_items: number;
+    total_units: number;
+    total_value: number;
+}
+
 // API Client
 export const auditApi = {
     /**
@@ -48,7 +61,27 @@ export const auditApi = {
     },
 
     /**
-     * POST /api/audits - Create audit session with PDF
+     * POST /api/audits/parse - Parse PDF for preview (FASE 3)
+     * Does NOT save to database - only returns parsed items for user review
+     */
+    parsePDF: async (file: File): Promise<ParseResult> => {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const res = await fetch(`${API_BASE}/api/audits/parse`, {
+            method: 'POST',
+            body: formData,
+        });
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.message || 'Failed to parse PDF');
+        }
+        return res.json();
+    },
+
+    /**
+     * POST /api/audits - Create audit session (FASE 5)
+     * Called AFTER user confirms the preview - saves everything
      */
     createAudit: async (storeId: number, file: File): Promise<AuditDTO> => {
         const formData = new FormData();
@@ -64,19 +97,6 @@ export const auditApi = {
             throw new Error(error.message || 'Failed to create audit');
         }
         return res.json();
-    },
-
-    /**
-     * POST /api/audits/:id/confirm - Confirm audit (status → IN_PROGRESS)
-     */
-    confirmAudit: async (sessionId: number): Promise<void> => {
-        const res = await fetch(`${API_BASE}/api/audits/${sessionId}/confirm`, {
-            method: 'POST',
-        });
-        if (!res.ok) {
-            const error = await res.json();
-            throw new Error(error.message || 'Failed to confirm audit');
-        }
     },
 
     /**

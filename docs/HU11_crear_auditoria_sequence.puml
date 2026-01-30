@@ -1,5 +1,5 @@
 @startuml
-title HU11 - Crear Auditoría Planificada (Versión Optimizada Batch)
+title HU11 - Crear Auditoría (Preview antes de Guardar)
 
 skinparam BoxPadding 10
 skinparam SequenceMessageAlignment center
@@ -15,7 +15,6 @@ end box
 box "Audit Service (Go)\nservices/audit-service/" #Honeydew
     boundary "adapters/handler/\naudit_handler.go" as Handler <<HTTP Handler>>
     control "core/services/\naudit_service.go" as Service <<Business Logic>>
-    ' CORRECCIÓN UML: Eliminada la línea de vida "Domain" (es lógica interna)
     control "adapters/repository/\npostgres_repo.go" as Repo <<Repository>>
 end box
 
@@ -38,8 +37,8 @@ activate API
         activate Service
             Service ->> Repo: FindAllStores()
             activate Repo
-                Repo ->> DB: SELECT * FROM stores
-                DB -->> Repo: []Store (Structs)
+                Repo ->> DB: SELECT * FROM stores WHERE active=true
+                DB -->> Repo: []Store
             deactivate Repo
             Service -->> Handler: []StoreDTO
         deactivate Service
@@ -47,43 +46,85 @@ activate API
     deactivate Handler
 deactivate API
 Page <<-- API: stores[]
-Page -> Page: Renderiza dropdown
+Page -> Page: Renderiza dropdown de tiendas
 
-== 🟡 FASE 2: Selección y Envío PDF ==
+== 🟡 FASE 2: Selección Tienda + Subir PDF ==
 
-User -> Page: Selecciona tienda + Sube PDF
+User -> Page: Selecciona tienda
+User -> Page: Arrastra/Sube PDF de valuación
 Page -> Page: Prepara FormData {store_id, file}
 
-Page ->> API: createAudit(store_id, file)
+Page ->> API: parsePDF(store_id, file)
+activate API
+    API ->> Handler: POST /api/audits/parse
+    activate Handler
+
+== 🔵 FASE 3: Parseo (SIN guardar) ==
+
+        Handler ->> Service: ParseAuditPDF(storeID, pdf)
+        activate Service
+            
+            note right of Service
+                **SOLO PARSEA - NO GUARDA**
+                El PDF se procesa en memoria
+                No hay INSERT a DB todavía
+            end note
+            
+            Service -> Service: items := ParsePDF(pdf)
+            
+            alt Parseo Fallido
+                Service -->> Handler: Error 400
+                Handler -->> API: 400 Bad Request
+            else Parseo Exitoso
+                Service -->> Handler: ParseResult{items, summary}
+            end
+            
+        deactivate Service
+        Handler -->> API: 200 OK {items: [...], totalItems, totalValue}
+    deactivate Handler
+deactivate API
+
+== 🟠 FASE 4: Previsualización ==
+
+Page -> Page: setPreviewItems(items)
+note right of Page
+  **Tabla muestra 3 Tabs:**
+  • **Todos (1250)**: Items del PDF
+  • **Discrepancias (0)**: Aún vacío
+  • **Extras (0)**: Aún vacío
+  
+  Usuario revisa ANTES de guardar.
+  Puede cancelar sin datos en DB.
+end note
+
+Page -> Page: Renderiza Tabla "Todos (1250)"
+User -> Page: Revisa items del PDF
+User -> Page: Clic "Guardar Auditoría"
+
+== 🏁 FASE 5: Confirmación (AHORA sí guarda) ==
+
+Page ->> API: confirmAudit(store_id, file)
 activate API
     API ->> Handler: POST /api/audits
     activate Handler
-
-== 🔵 FASE 3: Procesamiento Backend ==
-
         Handler ->> Service: CreateAudit(storeID, pdf)
         activate Service
             
-            ' 3.1 - Crear registro borrador (Interno)
-            note right of Service
-                1. Inicializa Struct (Interno)
-                2. Guarda Sesión vacía
-            end note
+            ' 5.1 - Crear sesión
             Service -> Service: session := NewAuditSession(storeID)
-            
             Service ->> Repo: InsertSession(session)
             activate Repo
                 Repo ->> DB: INSERT audit_sessions... RETURNING id
                 DB -->> Repo: session_id = 505
             deactivate Repo
 
-            ' 3.2 - Upload a S3
+            ' 5.2 - Upload a S3
             Service ->> S3: PutObject(pdf, key)
             activate S3
             
             alt Subida Fallida
                 S3 -->> Service: Error
-                Service ->> Repo: UpdateStatus(505, "ERROR")
+                Service ->> Repo: DeleteSession(505)
                 Service -->> Handler: Error 500
                 Handler -->> API: 500 Internal Error
             else Subida Exitosa
@@ -91,54 +132,33 @@ activate API
             end
             deactivate S3
 
-            ' 3.3 - Parsear PDF
+            ' 5.3 - Parsear y guardar batch
             Service -> Service: items := ParsePDF(pdf)
-
-            ' 3.4 - CORRECCIÓN CRÍTICA: BATCH INSERT (Adiós Loop N+1)
+            
             note right of Service
-                OPTIMIZACIÓN:
-                Guarda 1250 items + Update Status
-                en una sola transacción.
+                **BATCH INSERT**
+                Guarda 1250 items + 
+                actualiza status en
+                una sola transacción.
             end note
 
             Service ->> Repo: SaveAuditBatch(505, items, s3_url)
             activate Repo
                 note right of DB: BEGIN TRANSACTION
-                Repo ->> DB: INSERT INTO audit_items VALUES (...), (...), (...) \n(Batch de 1250 filas)
-                Repo ->> DB: UPDATE audit_sessions SET status='REVIEW_PENDING'...
+                Repo ->> DB: INSERT INTO audit_theoretical VALUES (...) x1250
+                Repo ->> DB: UPDATE audit_sessions SET status='IN_PROGRESS', pdf_url=...
                 note right of DB: COMMIT
             deactivate Repo
 
             Service -->> Handler: AuditDTO (Session + Items)
         deactivate Service
         
-        Handler -->> API: 200 OK {items: [...]}
+        Handler -->> API: 201 Created {session_id: 505}
     deactivate Handler
 deactivate API
 
-== 🟠 FASE 4: Previsualización ==
-
-Page -> Page: Renderiza Tabla de Previsualización
-User -> Page: Revisa y Clic "Guardar Auditoría"
-
-== 🏁 FASE 5: Confirmación Final ==
-
-Page ->> API: confirmAudit(505)
-activate API
-    API ->> Handler: POST /api/audits/505/confirm
-    activate Handler
-        Handler ->> Service: ConfirmAudit(505)
-        activate Service
-            Service ->> Repo: UpdateStatus(505, "IN_PROGRESS")
-            activate Repo
-                Repo ->> DB: UPDATE audit_sessions SET status='IN_PROGRESS'
-            deactivate Repo
-            Service -->> Handler: nil
-        deactivate Service
-        Handler -->> API: 200 OK
-    deactivate Handler
-deactivate API
-
+Page -> Page: Muestra "Auditoría creada exitosamente"
 Page -> Page: Redirige a AuditHub
 deactivate Page
+
 @enduml
