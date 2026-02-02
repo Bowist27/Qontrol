@@ -57,7 +57,7 @@ func main() {
 
 	// Handlers
 	auditHandler := handlers.NewAuditHandler(auditService)
-	catalogHandler := handlers.NewCatalogHandler(catalogService)
+	catalogHandler := handlers.NewCatalogHandler(catalogService, pdfParser)
 
 	// Gin router
 	router := gin.Default()

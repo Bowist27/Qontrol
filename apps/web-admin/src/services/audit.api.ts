@@ -132,4 +132,89 @@ export const auditApi = {
         });
         if (!res.ok) throw new Error('Failed to delete audit');
     },
+
+    // ============ CATALOG APIs ============
+
+    /**
+     * GET /api/catalog - Get all catalog products
+     */
+    getCatalogProducts: async () => {
+        const res = await fetch(`${API_BASE}/api/catalog`);
+        if (!res.ok) throw new Error('Failed to fetch catalog');
+        return res.json();
+    },
+
+    /**
+     * POST /api/catalog/analyze - Analyze a valuation report against catalog
+     */
+    analyzeValuation: async (file: File, storeName: string) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('store_name', storeName);
+
+        const res = await fetch(`${API_BASE}/api/catalog/analyze`, {
+            method: 'POST',
+            body: formData,
+        });
+        if (!res.ok) throw new Error('Failed to analyze valuation');
+        return res.json();
+    },
+
+    /**
+     * GET /api/catalog/valuation/latest - Get latest pending valuation
+     */
+    getLatestValuation: async () => {
+        const res = await fetch(`${API_BASE}/api/catalog/valuation/latest`);
+        if (!res.ok) {
+            if (res.status === 404) return null;
+            throw new Error('Failed to fetch latest valuation');
+        }
+        return res.json();
+    },
+
+    /**
+     * POST /api/catalog/analyze/save - Save analysis for later commit
+     */
+    saveAnalysis: async (result: any, userName: string) => {
+        const res = await fetch(`${API_BASE}/api/catalog/analyze/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ result, user_name: userName }),
+        });
+        if (!res.ok) throw new Error('Failed to save analysis');
+        return res.json();
+    },
+
+    /**
+     * POST /api/catalog/imports/:id/commit - Apply selected changes
+     */
+    commitCatalogImport: async (importId: number, selectedSKUs: string[]) => {
+        const res = await fetch(`${API_BASE}/api/catalog/imports/${importId}/commit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ selected_skus: selectedSKUs }),
+        });
+        if (!res.ok) throw new Error('Failed to commit import');
+        return res.json();
+    },
+
+    /**
+     * POST /api/catalog/imports/:id/revert - Revert import
+     */
+    revertCatalogImport: async (importId: number) => {
+        const res = await fetch(`${API_BASE}/api/catalog/imports/${importId}/revert`, {
+            method: 'POST',
+        });
+        if (!res.ok) throw new Error('Failed to revert import');
+        return res.json();
+    },
+
+    /**
+     * GET /api/catalog/imports - Get import history
+     */
+    getCatalogHistory: async (limit = 20) => {
+        const res = await fetch(`${API_BASE}/api/catalog/imports?limit=${limit}`);
+        if (!res.ok) throw new Error('Failed to fetch history');
+        return res.json();
+    },
 };

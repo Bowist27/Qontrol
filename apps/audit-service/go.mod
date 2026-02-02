@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.47.5
 	github.com/gin-gonic/gin v1.9.1
 	github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.11.1
 	github.com/xuri/excelize/v2 v2.10.0
 )
 

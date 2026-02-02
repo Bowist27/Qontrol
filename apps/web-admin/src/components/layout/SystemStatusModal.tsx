@@ -40,7 +40,7 @@ const SystemStatusModal: React.FC<SystemStatusModalProps> = ({ isOpen, onClose }
                         return (
                             <div key={service.id} className="flex items-center gap-4 p-4 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors">
                                 <div className="p-2.5 rounded-xl bg-slate-200">
-                                    <IconComponent size={20} style={{ color: '#06aef0' }} />
+                                    <IconComponent size={20} className="text-[#06aef0]" />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="font-semibold text-slate-800">{service.name}</p>

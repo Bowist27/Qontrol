@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"audit-service/internal/core/domain"
+
+	"github.com/lib/pq"
 )
 
 // AuditRepository defines the interface for audit data access
@@ -312,4 +315,342 @@ func (r *PostgresRepository) GetCatalogStats(ctx context.Context) (int, float64,
 	var value float64
 	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(last_price), 0) FROM products`).Scan(&count, &value)
 	return count, value, err
+}
+
+// normalizeSKU removes the "19A" prefix from valuation SKUs to match catalog SKUs
+// Example: 19AWA02007 -> WA02007, 19AH963116 -> H963116, 19A3524744 -> 3524744
+func normalizeSKU(sku string) []string {
+	variants := []string{sku}
+	
+	// If SKU starts with "19A", also try without the prefix
+	if strings.HasPrefix(sku, "19A") && len(sku) > 3 {
+		// Remove "19A" prefix
+		withoutPrefix := sku[3:]
+		variants = append(variants, withoutPrefix)
+	}
+	
+	// Also try adding "19A" prefix in case the input doesn't have it
+	if !strings.HasPrefix(sku, "19A") {
+		withPrefix := "19A" + sku
+		variants = append(variants, withPrefix)
+	}
+	
+	return variants
+}
+
+// FindProductBySKU finds a product by its SKU, trying multiple variants
+func (r *PostgresRepository) FindProductBySKU(ctx context.Context, sku string) (*domain.Product, error) {
+	variants := normalizeSKU(sku)
+	
+	for _, variant := range variants {
+		var p domain.Product
+		err := r.db.QueryRowContext(ctx, `
+			SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+			FROM products WHERE sku = $1`, variant).
+			Scan(&p.ID, &p.SKU, &p.Barcode, &p.Name, &p.Unit, &p.LastPrice, &p.LastUpdated, &p.Source, &p.CreatedAt)
+		if err == nil {
+			return &p, nil
+		}
+	}
+	
+	// None found
+	return nil, fmt.Errorf("product not found for SKU: %s", sku)
+}
+
+// ============ CATALOG IMPORT METHODS ============
+
+// SaveCatalogImport saves a catalog import session
+func (r *PostgresRepository) SaveCatalogImport(ctx context.Context, imp *domain.CatalogImport) (int, error) {
+	var id int
+	err := r.db.QueryRowContext(ctx, `
+		INSERT INTO catalog_imports (file_name, store_name, imported_by_name, new_products, price_up_count, price_down_count, unchanged_count, total_value, previous_value, economic_impact_up, economic_impact_down, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING id`,
+		imp.FileName, imp.StoreName, imp.ImportedByName, imp.NewProducts, imp.PriceUpCount, imp.PriceDownCount, imp.UnchangedCount, imp.TotalValue, imp.PreviousValue, imp.EconomicImpactUp, imp.EconomicImpactDown, imp.Status).
+		Scan(&id)
+	return id, err
+}
+
+// SaveCatalogImportItems saves the items for a catalog import
+func (r *PostgresRepository) SaveCatalogImportItems(ctx context.Context, importID int, items []domain.CatalogDiffItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, item := range items {
+		var oldPrice interface{}
+		if item.OldPrice != nil {
+			oldPrice = *item.OldPrice
+		}
+		var pctChange interface{}
+		if item.PercentChange != nil {
+			pctChange = *item.PercentChange
+		}
+
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO catalog_import_items (import_id, sku, product_name, change_type, old_price, new_price, difference, percent_change, selected)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			importID, item.SKU, item.Name, item.Type, oldPrice, item.NewPrice, item.Difference, pctChange, item.Selected)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetCatalogImportHistory returns the recent import history
+func (r *PostgresRepository) GetCatalogImportHistory(ctx context.Context, limit int) ([]domain.CatalogImportHistory, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, file_name, COALESCE(imported_by_name, 'Sistema'), new_products, price_up_count + price_down_count, total_value, previous_value, status, created_at
+		FROM catalog_imports
+		ORDER BY created_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var history []domain.CatalogImportHistory
+	now := time.Now()
+	for rows.Next() {
+		var h domain.CatalogImportHistory
+		var createdAt time.Time
+		err := rows.Scan(&h.ID, &h.FileName, &h.User, &h.NewProducts, &h.PriceChanges, &h.TotalValue, &h.PreviousValue, &h.Status, &createdAt)
+		if err != nil {
+			return nil, err
+		}
+		h.Date = formatDateSpanish(createdAt)
+		h.TimeAgo = formatTimeAgo(now, createdAt)
+		history = append(history, h)
+	}
+	return history, nil
+}
+
+// GetCatalogImportByID retrieves a catalog import by ID
+func (r *PostgresRepository) GetCatalogImportByID(ctx context.Context, id int) (*domain.CatalogImport, error) {
+	var imp domain.CatalogImport
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, file_name, store_id, store_name, imported_by, imported_by_name, import_date, new_products, price_up_count, price_down_count, unchanged_count, total_value, previous_value, economic_impact_up, economic_impact_down, status, created_at, applied_at
+		FROM catalog_imports WHERE id = $1`, id).
+		Scan(&imp.ID, &imp.FileName, &imp.StoreID, &imp.StoreName, &imp.ImportedBy, &imp.ImportedByName, &imp.ImportDate, &imp.NewProducts, &imp.PriceUpCount, &imp.PriceDownCount, &imp.UnchangedCount, &imp.TotalValue, &imp.PreviousValue, &imp.EconomicImpactUp, &imp.EconomicImpactDown, &imp.Status, &imp.CreatedAt, &imp.AppliedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &imp, nil
+}
+
+// GetCatalogImportItems retrieves items for a catalog import
+func (r *PostgresRepository) GetCatalogImportItems(ctx context.Context, importID int) ([]domain.CatalogImportItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, import_id, sku, product_name, change_type, old_price, new_price, difference, percent_change, selected, applied
+		FROM catalog_import_items WHERE import_id = $1`, importID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []domain.CatalogImportItem
+	for rows.Next() {
+		var item domain.CatalogImportItem
+		err := rows.Scan(&item.ID, &item.ImportID, &item.SKU, &item.ProductName, &item.ChangeType, &item.OldPrice, &item.NewPrice, &item.Difference, &item.PercentChange, &item.Selected, &item.Applied)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+// ApplyCatalogImport applies selected changes from an import to the catalog
+func (r *PostgresRepository) ApplyCatalogImport(ctx context.Context, importID int, selectedSKUs []string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Get import items
+	rows, err := tx.QueryContext(ctx, `
+		SELECT sku, product_name, new_price FROM catalog_import_items 
+		WHERE import_id = $1 AND sku = ANY($2)`, importID, pq.Array(selectedSKUs))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sku, name string
+		var price float64
+		if err := rows.Scan(&sku, &name, &price); err != nil {
+			return err
+		}
+
+		// Upsert product
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO products (sku, name, last_price, last_updated, source)
+			VALUES ($1, $2, $3, NOW(), 'catalog_import')
+			ON CONFLICT (sku) DO UPDATE SET
+				name = EXCLUDED.name,
+				last_price = EXCLUDED.last_price,
+				last_updated = NOW(),
+				source = 'catalog_import'`,
+			sku, name, price)
+		if err != nil {
+			return err
+		}
+
+		// Mark item as applied
+		_, err = tx.ExecContext(ctx, `UPDATE catalog_import_items SET applied = true WHERE import_id = $1 AND sku = $2`, importID, sku)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Update import status
+	_, err = tx.ExecContext(ctx, `UPDATE catalog_imports SET status = 'applied', applied_at = NOW() WHERE id = $1`, importID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// RevertCatalogImport reverts an applied catalog import
+func (r *PostgresRepository) RevertCatalogImport(ctx context.Context, importID int) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Get applied items and restore old prices
+	rows, err := tx.QueryContext(ctx, `
+		SELECT sku, old_price FROM catalog_import_items 
+		WHERE import_id = $1 AND applied = true AND old_price IS NOT NULL`, importID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sku string
+		var oldPrice float64
+		if err := rows.Scan(&sku, &oldPrice); err != nil {
+			return err
+		}
+
+		// Restore old price
+		_, err = tx.ExecContext(ctx, `UPDATE products SET last_price = $2, last_updated = NOW() WHERE sku = $1`, sku, oldPrice)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Remove new products that were added
+	_, err = tx.ExecContext(ctx, `
+		DELETE FROM products WHERE sku IN (
+			SELECT sku FROM catalog_import_items WHERE import_id = $1 AND applied = true AND old_price IS NULL
+		)`, importID)
+	if err != nil {
+		return err
+	}
+
+	// Mark items as not applied
+	_, err = tx.ExecContext(ctx, `UPDATE catalog_import_items SET applied = false WHERE import_id = $1`, importID)
+	if err != nil {
+		return err
+	}
+
+	// Update import status
+	_, err = tx.ExecContext(ctx, `UPDATE catalog_imports SET status = 'reverted', applied_at = NULL WHERE id = $1`, importID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// GetLatestPendingImport returns the most recent pending import with its items
+func (r *PostgresRepository) GetLatestPendingImport(ctx context.Context) (*domain.CatalogImport, []domain.CatalogImportItem, error) {
+	// Get latest pending import
+	var imp domain.CatalogImport
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, file_name, COALESCE(store_name, ''), COALESCE(imported_by_name, 'Sistema'), 
+		       new_products, price_up_count, price_down_count, unchanged_count, 
+		       total_value, previous_value, economic_impact_up, economic_impact_down, 
+		       status, created_at
+		FROM catalog_imports 
+		WHERE status = 'pending'
+		ORDER BY created_at DESC
+		LIMIT 1`).
+		Scan(&imp.ID, &imp.FileName, &imp.StoreName, &imp.ImportedByName,
+			&imp.NewProducts, &imp.PriceUpCount, &imp.PriceDownCount, &imp.UnchangedCount,
+			&imp.TotalValue, &imp.PreviousValue, &imp.EconomicImpactUp, &imp.EconomicImpactDown,
+			&imp.Status, &imp.CreatedAt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Get items for this import
+	items, err := r.GetCatalogImportItems(ctx, imp.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &imp, items, nil
+}
+
+// formatTimeAgo formats the time difference in human-readable Spanish
+func formatTimeAgo(now, then time.Time) string {
+	diff := now.Sub(then)
+	hours := int(diff.Hours())
+	days := hours / 24
+
+	if days > 0 {
+		if days == 1 {
+			return "Hace 1 día"
+		}
+		return fmt.Sprintf("Hace %d días", days)
+	}
+	if hours > 0 {
+		if hours == 1 {
+			return "Hace 1 hora"
+		}
+		return fmt.Sprintf("Hace %d horas", hours)
+	}
+	minutes := int(diff.Minutes())
+	if minutes > 0 {
+		if minutes == 1 {
+			return "Hace 1 minuto"
+		}
+		return fmt.Sprintf("Hace %d minutos", minutes)
+	}
+	return "Hace unos segundos"
+}
+
+// formatDateSpanish formats a date with Spanish month names
+func formatDateSpanish(t time.Time) string {
+	months := []string{"", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"}
+	day := t.Day()
+	month := months[t.Month()]
+	hour := t.Hour()
+	minute := t.Minute()
+	ampm := "AM"
+	if hour >= 12 {
+		ampm = "PM"
+		if hour > 12 {
+			hour -= 12
+		}
+	}
+	if hour == 0 {
+		hour = 12
+	}
+	return fmt.Sprintf("%02d %s, %d:%02d %s", day, month, hour, minute, ampm)
 }

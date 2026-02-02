@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { STORES_DATA } from '../../data/mockData';
 import { auditApi } from '../../services/audit.api';
-import type { AuditListDTO } from '../../services/audit.api';
 
 // Format date as DD/M/YYYY (strict format per spec)
 const formatDateDDMYYYY = (dateStr: string): string => {

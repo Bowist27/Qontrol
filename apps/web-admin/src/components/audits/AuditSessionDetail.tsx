@@ -106,9 +106,9 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
     const [uploadedFile, setUploadedFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const tableContainerRef = useRef<HTMLDivElement>(null);
-    const [isLoadingStores, setIsLoadingStores] = useState(false);
+    const [isLoadingStores] = useState(false);
 
-    const [isLoadingSession, setIsLoadingSession] = useState(false);
+    const [, setIsLoadingSession] = useState(false);
 
     // Load existing audit data when opening a saved session
     useEffect(() => {
@@ -670,7 +670,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                         <BarChart3 size={48} className="text-slate-300 mb-4" />
                         <p className="text-lg font-medium text-slate-600">Esperando datos para conciliar</p>
                         <p className="text-sm text-slate-400 max-w-md mt-1">
-                            {theoretical.status !== 'loaded' && 'Sube el PDF de valuación'}{theoretical.status !== 'loaded' && physical.status !== 'active' && ' y '}{physical.status !== 'active' && 'espera los escaneos de la App de Escritorio'} para ver las diferencias.
+                            Sube el PDF de valuación{physical.status !== 'active' && ' y espera los escaneos de la App de Escritorio'} para ver las diferencias.
                         </p>
                     </div>
                 ) : (
