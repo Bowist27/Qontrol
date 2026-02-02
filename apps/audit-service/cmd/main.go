@@ -53,9 +53,11 @@ func main() {
 
 	// Service
 	auditService := services.NewAuditService(repo, s3Client, pdfParser)
+	catalogService := services.NewCatalogService(repo)
 
-	// Handler
-	handler := handlers.NewAuditHandler(auditService)
+	// Handlers
+	auditHandler := handlers.NewAuditHandler(auditService)
+	catalogHandler := handlers.NewCatalogHandler(catalogService)
 
 	// Gin router
 	router := gin.Default()
@@ -73,7 +75,8 @@ func main() {
 	})
 
 	// Register routes
-	handler.RegisterRoutes(router)
+	auditHandler.RegisterRoutes(router)
+	catalogHandler.RegisterRoutes(router)
 
 	// Health check
 	router.GET("/health", func(c *gin.Context) {

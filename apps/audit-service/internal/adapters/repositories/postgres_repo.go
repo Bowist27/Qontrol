@@ -231,3 +231,85 @@ func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.Audi
 	}
 	return sessions, nil
 }
+
+// ============ CATALOG METHODS ============
+
+// UpsertProducts inserts or updates products in bulk
+func (r *PostgresRepository) UpsertProducts(ctx context.Context, products []domain.Product, source string) (*domain.CatalogImportResult, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	result := &domain.CatalogImportResult{TotalProducts: len(products)}
+
+	for _, p := range products {
+		var exists bool
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM products WHERE sku = $1)`, p.SKU).Scan(&exists)
+		if err != nil {
+			return nil, err
+		}
+
+		if exists {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE products SET name = $2, barcode = $3, unit = $4, last_price = $5, last_updated = NOW(), source = $6
+				WHERE sku = $1`,
+				p.SKU, p.Name, p.Barcode, p.Unit, p.LastPrice, source)
+			result.UpdatedProducts++
+		} else {
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO products (sku, name, barcode, unit, last_price, source)
+				VALUES ($1, $2, $3, $4, $5, $6)`,
+				p.SKU, p.Name, p.Barcode, p.Unit, p.LastPrice, source)
+			result.NewProducts++
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return result, tx.Commit()
+}
+
+// GetAllProducts returns all products from the catalog
+func (r *PostgresRepository) GetAllProducts(ctx context.Context) ([]domain.Product, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+		FROM products ORDER BY sku`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []domain.Product
+	for rows.Next() {
+		var p domain.Product
+		if err := rows.Scan(&p.ID, &p.SKU, &p.Barcode, &p.Name, &p.Unit, &p.LastPrice, &p.LastUpdated, &p.Source, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		products = append(products, p)
+	}
+	return products, nil
+}
+
+// FindProductByBarcode finds a product by its barcode
+func (r *PostgresRepository) FindProductByBarcode(ctx context.Context, barcode string) (*domain.Product, error) {
+	var p domain.Product
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+		FROM products WHERE barcode = $1`, barcode).
+		Scan(&p.ID, &p.SKU, &p.Barcode, &p.Name, &p.Unit, &p.LastPrice, &p.LastUpdated, &p.Source, &p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// GetCatalogStats returns total count and total value
+func (r *PostgresRepository) GetCatalogStats(ctx context.Context) (int, float64, error) {
+	var count int
+	var value float64
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(last_price), 0) FROM products`).Scan(&count, &value)
+	return count, value, err
+}
