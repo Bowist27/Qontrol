@@ -54,6 +54,8 @@ func (p *ComexPDFParser) Parse(pdfData []byte) ([]domain.AuditItem, error) {
 	}
 
 	fullText := text.String()
+	// Clean non-printable chars
+	fullText = strings.ReplaceAll(fullText, "\x00", "")
 	log.Printf("DEBUG: Total text length: %d chars", len(fullText))
 	return p.extractItems(fullText), nil
 }
@@ -70,7 +72,9 @@ func (p *ComexPDFParser) extractItems(text string) []domain.AuditItem {
 	text = importeCodeSplitter.ReplaceAllString(text, "$1 $2")
 
 	// 2. Separate stuck money decimals from following numbers (e.g. "20.9916" -> "20.99 16")
-	stuckMoneyFixer := regexp.MustCompile(`(\.\d{2})(\d)`)
+	// Refined: Only split if followed by something looking like a Day (00-39).
+	// This protects 3-decimal quantities where 3rd digit is often >= 0 (but 0.105 -> 5X NOT Day).
+	stuckMoneyFixer := regexp.MustCompile(`(\.\d{2})([0-3][0-9])`)
 	text = stuckMoneyFixer.ReplaceAllString(text, "$1 $2")
 
 	// 3. Separate words from numbers, protecting single and 2-letter codes (e.g. "NYLON20" -> "NYLON 20", "LF00807" safe)
@@ -87,8 +91,10 @@ func (p *ComexPDFParser) extractItems(text string) []domain.AuditItem {
 	codeMatches := codeRegex.FindAllStringSubmatchIndex(text, -1)
 	log.Printf("DEBUG: Found %d potential product codes", len(codeMatches))
 
-	// Catches blocks of stuck numbers. Strict digits/dots/commas.
-	dirtyBlockRegex := regexp.MustCompile(`[0-9.,]+`)
+	// Catches blocks of stuck numbers. Strict digits/dots/commas/minus/slash/quote.
+	// We include / and " so that fractions "1/2" or dims "2" are captured as blocks,
+	// causing ParseFloat to FAIL, thus removing them from the stream.
+	dirtyBlockRegex := regexp.MustCompile(`-?[0-9.,/"']+|[0-9.,]+`)
 
 	for i, match := range codeMatches {
 		codeStart := match[2]
@@ -140,6 +146,11 @@ func (p *ComexPDFParser) extractItems(text string) []domain.AuditItem {
 		if !found {
 			log.Printf("DEBUG INVALID: Code=%s StreamA=%v StreamB=%v RawRow='%s' NextCodeStart=%d", code, streamA, streamB, strings.ReplaceAll(cleanRow, "\n", " "), nextCodeStart)
 		}
+
+		// DEBUG SPY for RE00001 issue (Legacy) and 0262133 (New issue)
+		if code == "RE00002" || code == "0262133" {
+			log.Printf("DEBUG SPY %s: Context: '%s'", code, text[max(0, codeStart-200):min(len(text), codeEnd+200)])
+		}
 	}
 
 	log.Printf("DEBUG: Codes=%d, Valid=%d, Total=%d", len(codeMatches), validCount, len(items))
@@ -148,6 +159,12 @@ func (p *ComexPDFParser) extractItems(text string) []domain.AuditItem {
 
 func max(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b
@@ -179,31 +196,39 @@ func findItemInStream(nums []float64, code string, context string) *domain.Audit
 			if validateMath(A, B, C) {
 				// Matched A * B = C.
 
-				// Heuristic: If previous number equals B (the Price), then A is Qty (Sandwich).
-				// e.g. Price(prev) Qty(A) Price(B) Total(C)
-				isSandwich := false
-				if j > 0 {
-					prev := nums[j-1]
-					if validateEquality(prev, B) {
-						isSandwich = true
-					}
-				}
+				// Priority:
+				// 1. Decimals vs Integer Heuristic (Cost normally looks like money)
+				// 2. Sandwich Heuristic (Price repetition)
+				// 3. Size Heuristic (fallback)
+
+				hasDecA := hasSignificantDecimals(A)
+				hasDecB := hasSignificantDecimals(B)
 
 				var qty, cost float64
-				if isSandwich {
+
+				if hasDecA && !hasDecB {
+					// A is Cost, B is Qty
+					cost = A
+					qty = B
+				} else if !hasDecA && hasDecB {
+					// A is Qty, B is Cost
 					qty = A
 					cost = B
 				} else {
-					// Use MinValue heuristic for Qty vs Cost
-					if isInteger(A) && !isInteger(B) {
+					// Both ambiguous. Try Sandwich.
+					isSandwich := false
+					if j > 0 {
+						prev := nums[j-1]
+						if validateEquality(prev, B) {
+							isSandwich = true
+						}
+					}
+
+					if isSandwich {
 						qty = A
 						cost = B
-					} else if !isInteger(A) && isInteger(B) {
-						qty = B
-						cost = A
 					} else {
-						// Both int or both float.
-						// Assume Qty is smaller unless A > B
+						// Fallback: Assume Qty is smaller unless A > B
 						if A < B {
 							qty = A
 							cost = B
@@ -214,6 +239,10 @@ func findItemInStream(nums []float64, code string, context string) *domain.Audit
 					}
 				}
 
+				if code == "0279401" {
+					log.Printf("DEBUG 0279401 RESOLVED: A=%f B=%f Qty=%f Cost=%f", A, B, qty, cost)
+				}
+
 				return createItem(code, cost, qty, context)
 			}
 		}
@@ -221,8 +250,8 @@ func findItemInStream(nums []float64, code string, context string) *domain.Audit
 	return nil
 }
 
-func isInteger(f float64) bool {
-	return f == float64(int64(f))
+func hasSignificantDecimals(f float64) bool {
+	return math.Abs(f-math.Round(f)) > 0.001
 }
 
 func validateEquality(a, b float64) bool {
