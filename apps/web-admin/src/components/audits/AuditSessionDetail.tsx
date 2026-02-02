@@ -54,6 +54,15 @@ interface AuditSessionDetailProps {
 }
 
 
+// Format large currency values: >= 1M shows as "1.92M", < 1M shows as "450k"
+const formatCurrencyCompact = (value: number): string => {
+    const absValue = Math.abs(value);
+    if (absValue >= 1000000) {
+        return `$${(absValue / 1000000).toFixed(2)}M`;
+    } else {
+        return `$${(absValue / 1000).toFixed(0)}k`;
+    }
+};
 
 const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _sessionId, storeName, onBack, isNewAudit = false }) => {
     // Store selector state for new audit
@@ -118,7 +127,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                         theoretical: item.expected_qty,
                         physical: 0, // No physical count yet
                         difference: -item.expected_qty,
-                        impact: item.unit_cost * item.expected_qty
+                        impact: -(item.unit_cost * item.expected_qty) // Negative for loss calculation
                     }));
 
                     setDiffItems(items);
@@ -128,7 +137,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                         uploadDate: new Date(data.session.created_at).toLocaleString(),
                         totalItems: items.length,
                         totalUnits: items.reduce((sum, i) => sum + i.theoretical, 0),
-                        totalValue: items.reduce((sum, i) => sum + i.impact, 0)
+                        totalValue: items.reduce((sum, i) => sum + Math.abs(i.impact), 0)
                     });
                 })
                 .catch(err => {
@@ -546,7 +555,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                                     <p className="text-[10px] text-slate-500">Unidades</p>
                                 </div>
                                 <div className="bg-emerald-50 rounded p-2 text-center">
-                                    <p className="text-lg font-bold text-emerald-700">${(theoretical.totalValue / 1000).toFixed(0)}k</p>
+                                    <p className="text-lg font-bold text-emerald-700">{formatCurrencyCompact(theoretical.totalValue)}</p>
                                     <p className="text-[10px] text-emerald-600">Valor</p>
                                 </div>
                             </div>
