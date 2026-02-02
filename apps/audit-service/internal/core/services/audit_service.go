@@ -112,6 +112,11 @@ func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []b
 	}, nil
 }
 
+// ListAudits returns all audit sessions
+func (s *AuditService) ListAudits(ctx context.Context) ([]domain.AuditListDTO, error) {
+	return s.repo.FindAllSessions(ctx)
+}
+
 // GetAuditByID retrieves an audit with its items
 func (s *AuditService) GetAuditByID(ctx context.Context, sessionID int) (*domain.AuditDTO, error) {
 	session, err := s.repo.GetSessionByID(ctx, sessionID)

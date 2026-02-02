@@ -40,6 +40,11 @@ export interface AuditDTO {
     items: AuditItem[];
 }
 
+export interface AuditListDTO {
+    session: AuditSession;
+    store_name: string;
+}
+
 // Response from parsePDF (preview only, no DB save)
 export interface ParseResult {
     items: AuditItem[];
@@ -106,5 +111,15 @@ export const auditApi = {
         const res = await fetch(`${API_BASE}/api/audits/${sessionId}`);
         if (!res.ok) throw new Error('Failed to fetch audit');
         return res.json();
+    },
+
+    /**
+     * GET /api/audits - List all audits for dashboard
+     */
+    getSessions: async (): Promise<AuditListDTO[]> => {
+        const res = await fetch(`${API_BASE}/api/audits`);
+        if (!res.ok) throw new Error('Failed to fetch sessions');
+        const data = await res.json();
+        return data.audits;
     },
 };

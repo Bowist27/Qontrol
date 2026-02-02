@@ -146,11 +146,25 @@ func (h *AuditHandler) GetAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// ListAudits handles GET /api/audits
+func (h *AuditHandler) ListAudits(c *gin.Context) {
+	audits, err := h.service.ListAudits(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "search_failed",
+			Message: "Failed to list audits",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"audits": audits})
+}
+
 // RegisterRoutes sets up the routes
 func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
 	{
 		api.GET("/stores", h.ListStores)
+		api.GET("/audits", h.ListAudits)      // Dashboard list
 		api.POST("/audits/parse", h.ParsePDF) // FASE 3: Preview only
 		api.POST("/audits", h.CreateAudit)    // FASE 5: Save after confirm
 		api.GET("/audits/:id", h.GetAudit)

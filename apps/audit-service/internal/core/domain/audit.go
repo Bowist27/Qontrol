@@ -50,6 +50,12 @@ type AuditDTO struct {
 	Items   []AuditItem  `json:"items"`
 }
 
+// AuditListDTO is for the dashboard list view
+type AuditListDTO struct {
+	Session   AuditSession `json:"session"`
+	StoreName string       `json:"store_name"`
+}
+
 // CreateAuditRequest is the request payload for creating an audit
 type CreateAuditRequest struct {
 	StoreID int `form:"store_id" binding:"required"`

@@ -99,6 +99,47 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
     const tableContainerRef = useRef<HTMLDivElement>(null);
     const [isLoadingStores, setIsLoadingStores] = useState(false);
 
+    const [isLoadingSession, setIsLoadingSession] = useState(false);
+
+    // Load existing audit data when opening a saved session
+    useEffect(() => {
+        console.log('[AuditSessionDetail] Loading check:', { isNewAudit, _sessionId });
+        if (!isNewAudit && _sessionId && _sessionId !== 'new') {
+            console.log('[AuditSessionDetail] Loading existing audit:', _sessionId);
+            setIsLoadingSession(true);
+            auditApi.getAudit(parseInt(_sessionId))
+                .then((data) => {
+                    console.log('[AuditSessionDetail] Loaded audit data:', data.items?.length, 'items');
+                    // Populate theoretical data
+                    const items: DiffItem[] = data.items.map(item => ({
+                        sku: item.product_code,
+                        name: item.product_name,
+                        unitCost: item.unit_cost,
+                        theoretical: item.expected_qty,
+                        physical: 0, // No physical count yet
+                        difference: -item.expected_qty,
+                        impact: item.unit_cost * item.expected_qty
+                    }));
+
+                    setDiffItems(items);
+                    setTheoretical({
+                        status: 'loaded',
+                        fileName: data.session.pdf_url?.split('/').pop() || 'PDF Cargado',
+                        uploadDate: new Date(data.session.created_at).toLocaleString(),
+                        totalItems: items.length,
+                        totalUnits: items.reduce((sum, i) => sum + i.theoretical, 0),
+                        totalValue: items.reduce((sum, i) => sum + i.impact, 0)
+                    });
+                })
+                .catch(err => {
+                    console.error('Failed to load audit:', err);
+                })
+                .finally(() => {
+                    setIsLoadingSession(false);
+                });
+        }
+    }, [isNewAudit, _sessionId]);
+
     // Calculate audit status
     const getAuditStatus = (): AuditStatus => {
         if (theoretical.status === 'empty' && physical.status === 'disconnected') return 'not_started';
@@ -604,7 +645,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
 
             {/* SECTION C: Reconciliation Table */}
             <div className="flex-1 bg-white rounded-xl border border-slate-200 flex flex-col overflow-hidden">
-                {theoretical.status !== 'loaded' || physical.status !== 'active' ? (
+                {theoretical.status !== 'loaded' ? (
                     /* Waiting State */
                     <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
                         <BarChart3 size={48} className="text-slate-300 mb-4" />

@@ -20,6 +20,7 @@ type AuditRepository interface {
 	SaveAuditBatchWithStatus(ctx context.Context, auditID int, items []domain.AuditItem, pdfURL string, status string) error
 	GetSessionByID(ctx context.Context, id int) (*domain.AuditSession, error)
 	GetItemsByAuditID(ctx context.Context, auditID int) ([]domain.AuditItem, error)
+	FindAllSessions(ctx context.Context) ([]domain.AuditListDTO, error)
 }
 
 // PostgresRepository implements AuditRepository
@@ -178,4 +179,39 @@ func (r *PostgresRepository) SaveAuditBatchWithStatus(ctx context.Context, audit
 	}
 
 	return tx.Commit()
+}
+
+// FindAllSessions retrieves all sessions with store names
+func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.AuditListDTO, error) {
+	query := `
+		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at
+		FROM audit_sessions s
+		JOIN stores st ON s.store_id = st.id
+		ORDER BY s.created_at DESC
+	`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []domain.AuditListDTO
+	for rows.Next() {
+		var dto domain.AuditListDTO
+		var s domain.AuditSession
+		var storeName string
+
+		err := rows.Scan(
+			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
+			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		dto.Session = s
+		dto.StoreName = storeName
+		sessions = append(sessions, dto)
+	}
+	return sessions, nil
 }

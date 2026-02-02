@@ -9,19 +9,31 @@
 import { useState, useRef, useEffect } from 'react';
 import {
     Store, TrendingDown, TrendingUp, FileText, Play, CheckCircle2, Lock, KeyRound,
-    Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle,
+    Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
     Filter, RefreshCw, ChevronLeft, X, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole
 } from 'lucide-react';
 import { STORES_DATA } from '../../data/mockData';
+import { auditApi } from '../../services/audit.api';
+import type { AuditListDTO } from '../../services/audit.api';
+
+// Format date as DD/M/YYYY (strict format per spec)
+const formatDateDDMYYYY = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    const day = date.getDate();
+    const month = date.getMonth() + 1;
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+};
 
 // Types with full lifecycle states
 export type AuditSessionStatus =
     | 'WAITING_PDF'      // Esperando PDF (falta documento)
-    | 'IN_PROGRESS'      // En Conteo (operativo)
-    | 'LOCKED_BY_STORE'  // Cerrado por tienda (pendiente 24h para archivo)
-    | 'REOPEN_REQUEST'   // Solicitud Reapertura (excepción)
-    | 'CANCELLED'        // Cancelada (soft delete)
-    | 'ARCHIVED';        // Historial (auto-archived after 24h)
+    | 'WAITING_COUNT'    // PDF subido, esperando conteo físico
+    | 'IN_PROGRESS'      // Conteo físico en progreso
+    | 'LOCKED_BY_STORE'  // Finalizada por tienda (bloqueada)
+    | 'REOPEN_REQUEST'   // Solicitud de reapertura pendiente
+    | 'ARCHIVED'         // Archivada (histórico)
+    | 'CANCELLED';       // Cancelada (soft-delete)
 
 export type FocusFilter = 'all' | 'exceptions' | 'in_progress';
 export type SortField = 'store' | 'loss' | 'progress' | 'date';
@@ -45,22 +57,7 @@ export interface AuditSession {
     scanLogsCount: number;    // For delete logic (hard vs soft)
 }
 
-const MANAGER_NAMES = [
-    'Juan Pérez', 'María García', 'Carlos López', 'Ana Martínez', 'Roberto Sánchez',
-    'Laura Hernández', 'Miguel Torres', 'Sofia Ramírez', 'Diego Flores', 'Patricia Díaz',
-    'Fernando González', 'Rosa Morales', 'Eduardo Castro', 'Carmen Ortiz', 'José Ruiz'
-];
-
-// Format date as DD/M/YYYY (strict format per spec)
-const formatDateDDMYYYY = (dateStr: string): string => {
-    const date = new Date(dateStr);
-    const day = date.getDate();
-    const month = date.getMonth() + 1;
-    const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
-};
-
-// Check if locked more than 24 hours ago (for auto-archive)
+// Helper to check 24h lock
 const isLockedOver24h = (lockedAt?: string): boolean => {
     if (!lockedAt) return false;
     const lockedDate = new Date(lockedAt);
@@ -69,141 +66,13 @@ const isLockedOver24h = (lockedAt?: string): boolean => {
     return hoursElapsed > 24;
 };
 
-// Generate mock sessions with realistic lifecycle states
-const generateMockSessions = (): AuditSession[] => {
-    const sessions: AuditSession[] = [];
-
-    STORES_DATA.forEach((store, idx) => {
-        let status: AuditSessionStatus;
-        let hasPdf = true;
-        let percentComplete = 0;
-        let scannedItems = 0;
-        let theoreticalItems = Math.floor(Math.random() * 500) + 800;
-        let finalizedBy: string | undefined;
-        let currentLoss = 0;
-        let lockedAt: string | undefined;
-        let scanLogsCount = 0;
-
-        // Random creation date in last 7 days
-        const daysAgo = Math.floor(Math.random() * 7);
-        const createdAt = new Date(Date.now() - daysAgo * 86400000).toISOString();
-
-        const stateRoll = idx % 12;
-
-        if (stateRoll < 2) {
-            // Waiting PDF - no scans yet
-            status = 'WAITING_PDF';
-            hasPdf = false;
-            percentComplete = 0;
-            scanLogsCount = 0;
-        } else if (stateRoll < 5) {
-            // In progress
-            status = 'IN_PROGRESS';
-            hasPdf = true;
-            percentComplete = Math.floor(Math.random() * 70) + 15;
-            scannedItems = Math.floor(theoreticalItems * percentComplete / 100);
-            currentLoss = Math.random() > 0.3
-                ? Math.floor(Math.random() * 40000) + 500
-                : -Math.floor(Math.random() * 2000);
-            scanLogsCount = scannedItems;
-        } else if (stateRoll < 8) {
-            // Locked by store (recently - still in Activas)
-            status = 'LOCKED_BY_STORE';
-            hasPdf = true;
-            percentComplete = 100;
-            scannedItems = theoreticalItems;
-            finalizedBy = MANAGER_NAMES[idx % MANAGER_NAMES.length];
-            lockedAt = new Date(Date.now() - Math.random() * 20 * 3600000).toISOString(); // 0-20 hours ago
-            const lossType = idx % 3;
-            if (lossType === 0) currentLoss = 0;
-            else if (lossType === 1) currentLoss = Math.floor(Math.random() * 30000) + 5000;
-            else currentLoss = -Math.floor(Math.random() * 3000);
-            scanLogsCount = theoreticalItems;
-        } else if (stateRoll < 10) {
-            // Reopen request (exception)
-            status = 'REOPEN_REQUEST';
-            hasPdf = true;
-            percentComplete = Math.floor(Math.random() * 20) + 80;
-            scannedItems = Math.floor(theoreticalItems * percentComplete / 100);
-            finalizedBy = MANAGER_NAMES[idx % MANAGER_NAMES.length];
-            currentLoss = Math.floor(Math.random() * 50000) + 10000;
-            scanLogsCount = scannedItems;
-        } else if (stateRoll === 10) {
-            // Cancelled (soft deleted)
-            status = 'CANCELLED';
-            hasPdf = true;
-            percentComplete = Math.floor(Math.random() * 50);
-            scannedItems = Math.floor(theoreticalItems * percentComplete / 100);
-            currentLoss = Math.floor(Math.random() * 10000);
-            scanLogsCount = scannedItems;
-        } else {
-            // Empty session (ready for hard delete demo)
-            status = 'IN_PROGRESS';
-            hasPdf = false;
-            percentComplete = 0;
-            scanLogsCount = 0;
-        }
-
-        sessions.push({
-            id: `session-${store.id}-active`,
-            storeId: store.id,
-            storeName: store.name,
-            managerName: MANAGER_NAMES[idx % MANAGER_NAMES.length],
-            status,
-            hasPdf,
-            createdAt,
-            lockedAt,
-            percentComplete,
-            currentLoss,
-            theoreticalItems,
-            scannedItems,
-            finalizedBy,
-            scanLogsCount,
-        });
-    });
-
-    // Historical sessions (archived)
-    for (let i = 0; i < 150; i++) {
-        const store = STORES_DATA[i % STORES_DATA.length];
-        const daysAgo = Math.floor(Math.random() * 365) + 30;
-        const theoreticalItems = Math.floor(Math.random() * 500) + 800;
-        const lossType = i % 4;
-        let currentLoss = 0;
-        if (lossType === 0) currentLoss = 0;
-        else if (lossType < 3) currentLoss = Math.floor(Math.random() * 50000);
-        else currentLoss = -Math.floor(Math.random() * 5000);
-
-        // Some cancelled in history
-        const status: AuditSessionStatus = i % 15 === 0 ? 'CANCELLED' : 'ARCHIVED';
-
-        sessions.push({
-            id: `session-${store.id}-hist-${i}`,
-            storeId: store.id,
-            storeName: store.name,
-            managerName: MANAGER_NAMES[i % MANAGER_NAMES.length],
-            status,
-            hasPdf: true,
-            createdAt: new Date(Date.now() - (daysAgo + 2) * 86400000).toISOString(),
-            completedAt: new Date(Date.now() - daysAgo * 86400000).toISOString(),
-            percentComplete: status === 'CANCELLED' ? Math.floor(Math.random() * 50) : 100,
-            currentLoss,
-            theoreticalItems,
-            scannedItems: theoreticalItems,
-            finalizedBy: MANAGER_NAMES[i % MANAGER_NAMES.length],
-            scanLogsCount: theoreticalItems,
-        });
-    }
-
-    return sessions;
-};
-
-const MOCK_SESSIONS = generateMockSessions();
-
 interface AuditHubProps {
     onSelectSession: (sessionId: string, storeName: string) => void;
 }
 
 const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
+    const [sessions, setSessions] = useState<AuditSession[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
     const [focusFilter, setFocusFilter] = useState<FocusFilter>('all');
 
@@ -247,6 +116,60 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
+    // Fetch real sessions
+    useEffect(() => {
+        const loadSessions = async () => {
+            try {
+                const data = await auditApi.getSessions();
+
+                // Map backend DTO to UI model
+                const mapped: AuditSession[] = data.map(item => {
+                    const s = item.session;
+
+                    // Map Status
+                    // IN_PROGRESS with PDF = waiting for physical count
+                    // IN_PROGRESS without PDF = waiting for PDF upload
+                    let status: AuditSessionStatus = 'IN_PROGRESS';
+                    if (s.status === 'UPLOADING' || s.status === 'REVIEW_PENDING') status = 'WAITING_PDF';
+                    else if (s.status === 'IN_PROGRESS' && !!s.pdf_url) status = 'WAITING_COUNT';
+                    else if (s.status === 'IN_PROGRESS' && !s.pdf_url) status = 'WAITING_PDF';
+                    else if (s.status === 'COUNTING') status = 'IN_PROGRESS';
+                    else if (s.status === 'COMPLETED') status = 'LOCKED_BY_STORE';
+                    else if (s.status === 'ARCHIVED') status = 'ARCHIVED';
+                    else if (s.status === 'CANCELLED') status = 'CANCELLED';
+
+                    // Calculate percent (Mock for now as backend doesn't send progress yet)
+                    // In real app, querying items count would be expensive here, 
+                    // so ideally backend list endpoint sends summary stats.
+                    // For now, assume 0% or 100% based on status
+                    const percent = status === 'LOCKED_BY_STORE' || status === 'ARCHIVED' ? 100 : 0;
+
+                    return {
+                        id: s.id.toString(),
+                        storeId: s.store_id,
+                        storeName: item.store_name, // Joined name
+                        managerName: 'Admin User', // TODO: Get from CreatedBy
+                        status: status,
+                        hasPdf: !!s.pdf_url,
+                        createdAt: s.created_at,
+                        percentComplete: percent,
+                        currentLoss: 0, // TODO: Backend summary
+                        theoreticalItems: 0,
+                        scannedItems: 0,
+                        scanLogsCount: 0
+                    };
+                });
+
+                setSessions(mapped);
+            } catch (err) {
+                console.error("Failed to load sessions", err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        loadSessions();
+    }, []);
+
     useEffect(() => {
         setCurrentPage(1);
     }, [activeTab, focusFilter, filterStore, filterDateFrom, filterDateTo, sortField, sortDir]);
@@ -255,7 +178,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
     // Active: IN_PROGRESS, WAITING_PDF, LOCKED_BY_STORE (< 24h), REOPEN_REQUEST
     // History: ARCHIVED, CANCELLED, LOCKED_BY_STORE (> 24h)
     const getActiveSessions = () => {
-        return MOCK_SESSIONS.filter(s => {
+        return sessions.filter(s => {
             if (s.status === 'ARCHIVED' || s.status === 'CANCELLED') return false;
             if (s.status === 'LOCKED_BY_STORE' && isLockedOver24h(s.lockedAt)) return false;
             return true;
@@ -263,7 +186,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
     };
 
     const getHistorySessions = () => {
-        return MOCK_SESSIONS.filter(s => {
+        return sessions.filter(s => {
             if (s.status === 'ARCHIVED' || s.status === 'CANCELLED') return true;
             if (s.status === 'LOCKED_BY_STORE' && isLockedOver24h(s.lockedAt)) return true;
             return false;
@@ -386,6 +309,15 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
             );
         }
 
+        if (session.status === 'WAITING_COUNT') {
+            return (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                    <Clock size={12} />
+                    Esperando Conteo
+                </span>
+            );
+        }
+
         if (session.status === 'IN_PROGRESS') {
             return (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
@@ -488,7 +420,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
     const handleStoreSelect = (store: typeof STORES_DATA[0]) => {
         setShowContextDropdown(false);
         setContextSearch('');
-        const session = MOCK_SESSIONS.find(s => s.storeId === store.id && s.status !== 'ARCHIVED' && s.status !== 'CANCELLED');
+        const session = sessions.find(s => s.storeId === store.id && s.status !== 'ARCHIVED' && s.status !== 'CANCELLED');
         if (session) {
             onSelectSession(session.id, session.storeName);
         }
@@ -601,7 +533,9 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                         </button>
                     </div>
 
+
                     <div className="flex items-center gap-3">
+                        {isLoading && <span className="text-xs text-slate-400">Cargando datos...</span>}
                         {activeTab === 'active' && (
                             <>
                                 {exceptionSessions.length > 0 && (
