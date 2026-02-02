@@ -33,6 +33,7 @@ const CatalogView: React.FC = () => {
   // UI state
   const [applying, setApplying] = useState(false);
   const [showDetails, setShowDetails] = useState(true);
+  const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   
   // Undo state
   const [undoState, setUndoState] = useState<UndoState>({
@@ -323,6 +324,17 @@ const CatalogView: React.FC = () => {
     }
   };
 
+  // Handle revert/restore from history - moved up to be available in all states
+  const handleRevertFromHistory = async (importId: number) => {
+    try {
+      setMenuOpenId(null);
+      await catalogApi.revertImport(importId);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al restaurar');
+    }
+  };
+
   // Loading state
   if (loading) {
     return (
@@ -380,37 +392,74 @@ const CatalogView: React.FC = () => {
               </div>
             ) : (
               <div className="space-y-2">
-                {history.map((item) => (
-                  <div
-                    key={item.id}
-                    className="p-3 rounded-lg bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div className="flex-1">
-                        <div className="text-xs text-gray-500 mb-1">{item.time_ago}</div>
-                        <div className="text-xs text-gray-700">
-                          <span className="text-blue-600">▲</span> {item.user}
+                {history.map((item, index) => {
+                  const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
+                  const isVigente = item.status === 'applied' && isFirstApplied;
+                  const canRestore = !isVigente && item.status !== 'pending';
+                  
+                  const getBadge = () => {
+                    if (isVigente) return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500 text-white">Vigente</span>;
+                    if (item.status === 'applied') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-slate-400 text-white">Anterior</span>;
+                    if (item.status === 'pending') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-500 text-white">Pendiente</span>;
+                    return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-400 text-white">Desactualizado</span>;
+                  };
+                  
+                  return (
+                    <div
+                      key={item.id}
+                      className="p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="flex-1">
+                          <div className="text-xs text-gray-500 mb-1">{item.time_ago}</div>
+                          <div className="text-xs text-gray-700">
+                            <span className="text-blue-600">▲</span> {item.user}
+                          </div>
+                          <div className="text-xs text-gray-500 truncate mt-0.5">{item.file_name}</div>
                         </div>
-                        <div className="text-xs text-gray-500 truncate mt-0.5">{item.file_name}</div>
+                        {getBadge()}
                       </div>
-                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                        item.status === 'applied' ? 'bg-green-500 text-white' :
-                        item.status === 'pending' ? 'bg-amber-500 text-white' :
-                        'bg-gray-500 text-white'
-                      }`}>
-                        {item.status === 'applied' ? 'Aplicado' : item.status === 'pending' ? 'Pendiente' : 'Revertido'}
-                      </span>
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          {item.new_products > 0 && (
+                            <span className="text-blue-600">+{item.new_products}</span>
+                          )}
+                          {item.price_changes > 0 && (
+                            <span className="text-orange-600">{item.price_changes} precios</span>
+                          )}
+                        </div>
+                        {canRestore && (
+                          <div className="relative">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMenuOpenId(menuOpenId === item.id ? null : item.id);
+                              }}
+                              className="p-1 hover:bg-gray-200 rounded transition-colors"
+                            >
+                              <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" />
+                              </svg>
+                            </button>
+                            {menuOpenId === item.id && (
+                              <div className="absolute right-0 top-6 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 min-w-[160px]">
+                                <button
+                                  onClick={() => handleRevertFromHistory(item.id)}
+                                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                                  </svg>
+                                  Restaurar versión
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 text-xs">
-                      {item.new_products > 0 && (
-                        <span className="text-blue-600">+{item.new_products}</span>
-                      )}
-                      {item.price_changes > 0 && (
-                        <span className="text-orange-600">{item.price_changes} precios</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -471,14 +520,17 @@ const CatalogView: React.FC = () => {
     ? ((summary.total_value - summary.previous_value) / summary.previous_value * 100)
     : (summary.total_value > 0 ? 100 : 0);
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, isFirst: boolean) => {
+    if (status === 'applied' && isFirst) {
+      return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500 text-white">Vigente</span>;
+    }
     switch (status) {
       case 'applied':
-        return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-500 text-white">Aplicado</span>;
+        return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-slate-400 text-white">Anterior</span>;
       case 'pending':
         return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-500 text-white">Pendiente</span>;
       case 'reverted':
-        return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-500 text-white">Revertido</span>;
+        return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-400 text-white">Desactualizado</span>;
       default:
         return null;
     }
@@ -527,35 +579,72 @@ const CatalogView: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-2">
-              {history.map((item) => (
-                <div
-                  key={item.id}
-                  className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                    summary?.id === item.id 
-                      ? 'bg-blue-50 ring-1 ring-blue-500' 
-                      : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex-1">
-                      <div className="text-xs text-gray-500 mb-1">{item.time_ago}</div>
-                      <div className="text-xs text-gray-700">
-                        <span className="text-blue-600">▲</span> {item.user}
+              {history.map((item, index) => {
+                const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
+                const isVigente = item.status === 'applied' && isFirstApplied;
+                // Mostrar menú en CUALQUIER versión que no sea la vigente ni pendiente
+                const canRestore = !isVigente && item.status !== 'pending';
+                
+                return (
+                  <div
+                    key={item.id}
+                    className={`p-3 rounded-lg transition-colors relative ${
+                      summary?.id === item.id 
+                        ? 'bg-blue-50 ring-1 ring-blue-500' 
+                        : 'bg-gray-50 hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex-1">
+                        <div className="text-xs text-gray-500 mb-1">{item.time_ago}</div>
+                        <div className="text-xs text-gray-700">
+                          <span className="text-blue-600">▲</span> {item.user}
+                        </div>
+                        <div className="text-xs text-gray-500 truncate mt-0.5">{item.file_name}</div>
                       </div>
-                      <div className="text-xs text-gray-500 truncate mt-0.5">{item.file_name}</div>
+                      {getStatusBadge(item.status, isFirstApplied)}
                     </div>
-                    {getStatusBadge(item.status)}
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        {item.new_products > 0 && (
+                          <span className="text-blue-600">+{item.new_products}</span>
+                        )}
+                        {item.price_changes > 0 && (
+                          <span className="text-orange-600">{item.price_changes} precios</span>
+                        )}
+                      </div>
+                      {canRestore && (
+                        <div className="relative">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMenuOpenId(menuOpenId === item.id ? null : item.id);
+                            }}
+                            className="p-1 hover:bg-gray-200 rounded transition-colors"
+                          >
+                            <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                              <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" />
+                            </svg>
+                          </button>
+                          {menuOpenId === item.id && (
+                            <div className="absolute right-0 top-6 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 min-w-[160px]">
+                              <button
+                                onClick={() => handleRevertFromHistory(item.id)}
+                                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                                </svg>
+                                Restaurar versión
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    {item.new_products > 0 && (
-                      <span className="text-blue-600">+{item.new_products}</span>
-                    )}
-                    {item.price_changes > 0 && (
-                      <span className="text-orange-600">{item.price_changes} precios</span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
