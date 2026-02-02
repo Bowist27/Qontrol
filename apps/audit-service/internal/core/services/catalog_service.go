@@ -24,6 +24,7 @@ type CatalogRepository interface {
 	ApplyCatalogImport(ctx context.Context, importID int, selectedSKUs []string) error
 	RevertCatalogImport(ctx context.Context, importID int) error
 	DiscardCatalogImport(ctx context.Context, importID int) error
+	RestoreCatalogImport(ctx context.Context, importID int) error
 }
 
 // CatalogService handles catalog business logic
@@ -173,6 +174,11 @@ func (s *CatalogService) RevertImport(ctx context.Context, importID int) error {
 // DiscardImport deletes a pending import without applying it
 func (s *CatalogService) DiscardImport(ctx context.Context, importID int) error {
 	return s.repo.DiscardCatalogImport(ctx, importID)
+}
+
+// RestoreImport restores a previous version as the current active version
+func (s *CatalogService) RestoreImport(ctx context.Context, importID int) error {
+	return s.repo.RestoreCatalogImport(ctx, importID)
 }
 
 // GetLatestPendingValuation returns the latest pending import with its items

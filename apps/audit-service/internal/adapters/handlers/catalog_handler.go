@@ -305,6 +305,33 @@ func (h *CatalogHandler) DiscardImport(c *gin.Context) {
 	})
 }
 
+// RestoreImport handles POST /api/catalog/imports/:id/restore
+// Restores a previous version as the current active version
+func (h *CatalogHandler) RestoreImport(c *gin.Context) {
+	importID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid import ID",
+		})
+		return
+	}
+
+	err = h.service.RestoreImport(c.Request.Context(), importID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "restore_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Version restored successfully",
+		"import_id": importID,
+	})
+}
+
 // GetImportHistory handles GET /api/catalog/imports
 func (h *CatalogHandler) GetImportHistory(c *gin.Context) {
 	limit := 20
@@ -343,6 +370,7 @@ func (h *CatalogHandler) RegisterRoutes(router *gin.Engine) {
 		api.GET("/catalog/valuation/latest", h.GetLatestValuation)
 		api.POST("/catalog/imports/:id/commit", h.CommitImport)
 		api.POST("/catalog/imports/:id/revert", h.RevertImport)
+		api.POST("/catalog/imports/:id/restore", h.RestoreImport)
 		api.DELETE("/catalog/imports/:id", h.DiscardImport)
 	}
 }

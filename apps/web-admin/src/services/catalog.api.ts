@@ -223,6 +223,19 @@ export const catalogApi = {
     },
 
     /**
+     * POST /api/catalog/imports/:id/restore - Restore a previous version
+     */
+    restoreImport: async (importId: number): Promise<void> => {
+        const res = await fetch(`${API_BASE}/api/catalog/imports/${importId}/restore`, {
+            method: 'POST',
+        });
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.message || 'Failed to restore version');
+        }
+    },
+
+    /**
      * GET /api/catalog/valuation/latest - Get latest pending valuation
      */
     getLatestValuationSummary: async (): Promise<ValuationSummary> => {

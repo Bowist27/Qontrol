@@ -328,7 +328,7 @@ const CatalogView: React.FC = () => {
   const handleRevertFromHistory = async (importId: number) => {
     try {
       setMenuOpenId(null);
-      await catalogApi.revertImport(importId);
+      await catalogApi.restoreImport(importId);
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al restaurar');
