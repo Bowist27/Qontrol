@@ -122,4 +122,14 @@ export const auditApi = {
         const data = await res.json();
         return data.audits;
     },
+
+    /**
+     * DELETE /api/audits/:id - Cancel/Delete an audit
+     */
+    deleteAudit: async (sessionId: number): Promise<void> => {
+        const res = await fetch(`${API_BASE}/api/audits/${sessionId}`, {
+            method: 'DELETE',
+        });
+        if (!res.ok) throw new Error('Failed to delete audit');
+    },
 };

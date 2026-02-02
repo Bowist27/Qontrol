@@ -140,11 +140,27 @@ func (r *PostgresRepository) GetItemsByAuditID(ctx context.Context, auditID int)
 	return items, nil
 }
 
-// DeleteSession removes a session (for rollback on S3/parse failure)
+// DeleteSession removes a session and its related items (cascade)
 func (r *PostgresRepository) DeleteSession(ctx context.Context, id int) error {
-	query := `DELETE FROM audit_sessions WHERE id = $1`
-	_, err := r.db.ExecContext(ctx, query, id)
-	return err
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Delete items first (foreign key constraint)
+	_, err = tx.ExecContext(ctx, `DELETE FROM audit_theoretical WHERE audit_id = $1`, id)
+	if err != nil {
+		return err
+	}
+
+	// Delete session
+	_, err = tx.ExecContext(ctx, `DELETE FROM audit_sessions WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // SaveAuditBatchWithStatus inserts all items and updates session with custom status in a single transaction

@@ -134,3 +134,8 @@ func (s *AuditService) GetAuditByID(ctx context.Context, sessionID int) (*domain
 		Items:   items,
 	}, nil
 }
+
+// DeleteAudit removes an audit session and its items
+func (s *AuditService) DeleteAudit(ctx context.Context, sessionID int) error {
+	return s.repo.DeleteSession(ctx, sessionID)
+}

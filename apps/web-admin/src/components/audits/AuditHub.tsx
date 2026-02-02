@@ -280,13 +280,16 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         setOpenMenuId(null);
     };
 
-    const handleCancelSession = (session: AuditSession) => {
-        const hasData = session.scanLogsCount > 0;
-        const action = hasData ? 'SOFT DELETE (Marcar como CANCELADA)' : 'HARD DELETE (Borrar permanentemente)';
-
-        if (confirm(`¿Cancelar auditoría de ${session.storeName}?\n\nAcción: ${action}\nScans registrados: ${session.scanLogsCount}`)) {
-            // TODO: API call
-            alert(`Auditoría cancelada.\nAcción ejecutada: ${action}`);
+    const handleCancelSession = async (session: AuditSession) => {
+        if (confirm(`¿Estás seguro de cancelar la auditoría de ${session.storeName}?\n\nEsto eliminará permanentemente todos los datos asociados.`)) {
+            try {
+                await auditApi.deleteAudit(parseInt(session.id));
+                // Remove from local state
+                setSessions(prev => prev.filter(s => s.id !== session.id));
+                alert('Auditoría cancelada exitosamente');
+            } catch (err) {
+                alert('Error al cancelar: ' + (err instanceof Error ? err.message : 'Error desconocido'));
+            }
         }
         setOpenMenuId(null);
     };

@@ -159,6 +159,30 @@ func (h *AuditHandler) ListAudits(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"audits": audits})
 }
 
+// DeleteAudit handles DELETE /api/audits/:id
+func (h *AuditHandler) DeleteAudit(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	err = h.service.DeleteAudit(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "delete_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Audit deleted successfully"})
+}
+
 // RegisterRoutes sets up the routes
 func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
@@ -168,5 +192,6 @@ func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 		api.POST("/audits/parse", h.ParsePDF) // FASE 3: Preview only
 		api.POST("/audits", h.CreateAudit)    // FASE 5: Save after confirm
 		api.GET("/audits/:id", h.GetAudit)
+		api.DELETE("/audits/:id", h.DeleteAudit) // Cancel/Delete audit
 	}
 }
