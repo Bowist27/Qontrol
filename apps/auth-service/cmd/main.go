@@ -55,6 +55,7 @@ func main() {
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
 	userHandler := handlers.NewUserHandler(userRepo)
+	productHandler := handlers.NewProductHandler(db)
 
 	// Setup Gin router
 	r := gin.Default()
@@ -83,6 +84,10 @@ func main() {
 
 	// Stores route
 	r.GET("/stores", userHandler.ListStores)
+
+	// Products routes (for POS sync)
+	r.GET("/products/sync", productHandler.SyncProducts)
+	r.GET("/products", productHandler.ListProducts)
 
 	// Roles management routes
 	r.GET("/roles", userHandler.ListRoles)

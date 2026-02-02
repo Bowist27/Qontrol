@@ -25,7 +25,7 @@ const CatalogView: React.FC = () => {
   
   // Filter state
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, _setSearchTerm] = useState('');
   
   // Selection state
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set());

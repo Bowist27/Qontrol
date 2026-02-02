@@ -12,7 +12,7 @@ import {
     Activity, AlertCircle, BarChart3, History, MapPin, Calendar, User,
     ChevronDown, Store, Save, Loader2
 } from 'lucide-react';
-import { auditApi, type Store as StoreType } from '../../services/audit.api';
+import { auditApi, type Store as StoreType, type PhysicalScan } from '../../services/audit.api';
 
 // Types
 type AuditStatus = 'not_started' | 'partial' | 'in_progress' | 'reconciled' | 'locked';
@@ -30,6 +30,9 @@ interface TheoreticalData {
 interface PhysicalData {
     status: 'disconnected' | 'active';
     scannedItems: number;
+    totalQuantity: number;
+    uniqueProducts: number;
+    unknownItems: number;
     activeUsers: string[];
     lastSync?: string;
 }
@@ -90,7 +93,15 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
 
     // In future: fetch session data based on sessionId
     const [theoretical, setTheoretical] = useState<TheoreticalData>({ status: 'empty', totalItems: 0, totalUnits: 0, totalValue: 0 });
-    const [physical, setPhysical] = useState<PhysicalData>({ status: 'disconnected', scannedItems: 0, activeUsers: [] });
+    const [physical, setPhysical] = useState<PhysicalData>({ 
+        status: 'disconnected', 
+        scannedItems: 0, 
+        totalQuantity: 0,
+        uniqueProducts: 0,
+        unknownItems: 0,
+        activeUsers: [] 
+    });
+    const [physicalScans, setPhysicalScans] = useState<PhysicalScan[]>([]);
     const [diffItems, setDiffItems] = useState<DiffItem[]>([]);
     const [activeTab, setActiveTab] = useState<'all' | 'differences' | 'extras'>('differences'); // Default to discrepancies
     const [searchQuery, setSearchQuery] = useState('');
@@ -109,6 +120,76 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
     const [isLoadingStores] = useState(false);
 
     const [, setIsLoadingSession] = useState(false);
+
+    // ========== PHYSICAL SCAN POLLING ==========
+    // Poll for physical scans when viewing an existing audit
+    useEffect(() => {
+        if (isNewAudit || !_sessionId || _sessionId === 'new') return;
+
+        const auditId = parseInt(_sessionId);
+        if (isNaN(auditId)) return;
+
+        const fetchPhysicalData = async () => {
+            try {
+                const [scans, summary] = await Promise.all([
+                    auditApi.getPhysicalScans(auditId),
+                    auditApi.getPhysicalScanSummary(auditId)
+                ]);
+
+                setPhysicalScans(scans);
+
+                // Extract unique device IDs as "users"
+                const devices = [...new Set(scans.map(s => s.device_id).filter(Boolean))];
+                
+                setPhysical({
+                    status: summary.total_scans > 0 ? 'active' : 'disconnected',
+                    scannedItems: summary.total_scans,
+                    totalQuantity: summary.total_quantity,
+                    uniqueProducts: summary.unique_products,
+                    unknownItems: summary.unknown_items,
+                    activeUsers: devices as string[],
+                    lastSync: summary.last_scan_at 
+                        ? `Hace ${Math.round((Date.now() - new Date(summary.last_scan_at).getTime()) / 1000)}s`
+                        : undefined
+                });
+
+                // Update diffItems with physical counts
+                if (scans.length > 0) {
+                    setDiffItems(prev => {
+                        // Create a map of SKU -> total physical quantity
+                        const physicalMap = new Map<string, number>();
+                        scans.forEach(scan => {
+                            if (scan.sku) {
+                                const current = physicalMap.get(scan.sku) || 0;
+                                physicalMap.set(scan.sku, current + scan.quantity);
+                            }
+                        });
+
+                        // Update each item with physical count
+                        return prev.map(item => {
+                            const physicalQty = physicalMap.get(item.sku) || 0;
+                            return {
+                                ...item,
+                                physical: physicalQty,
+                                difference: physicalQty - item.theoretical,
+                                impact: (physicalQty - item.theoretical) * item.unitCost
+                            };
+                        });
+                    });
+                }
+            } catch (err) {
+                console.error('Failed to fetch physical scans:', err);
+            }
+        };
+
+        // Initial fetch
+        fetchPhysicalData();
+
+        // Poll every 3 seconds
+        const pollInterval = setInterval(fetchPhysicalData, 3000);
+
+        return () => clearInterval(pollInterval);
+    }, [isNewAudit, _sessionId]);
 
     // Load existing audit data when opening a saved session
     useEffect(() => {
@@ -233,10 +314,13 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
 
             setDiffItems(mappedItems);
 
-            // Prepare Physical card (empty/waiting)
+            // Prepare Physical card (empty/waiting for scans)
             setPhysical({
                 status: 'active',
                 scannedItems: 0,
+                totalQuantity: 0,
+                uniqueProducts: 0,
+                unknownItems: 0,
                 activeUsers: ['Esperando App...'],
                 lastSync: 'Pendiente'
             });
@@ -636,14 +720,14 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                                     <div className="flex items-center justify-between text-[10px] mb-0.5">
                                         <span className="text-slate-500">Progreso</span>
                                         <span className="font-medium text-slate-700">
-                                            {physical.scannedItems} / {theoretical.totalItems} ({Math.round((physical.scannedItems / theoretical.totalItems) * 100)}%)
+                                            {physical.uniqueProducts} / {theoretical.totalItems} SKUs ({Math.round((physical.uniqueProducts / theoretical.totalItems) * 100)}%)
                                         </span>
                                     </div>
                                     <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
                                         <div
                                             className="h-full rounded-full transition-all duration-500"
                                             style={{
-                                                width: `${(physical.scannedItems / theoretical.totalItems) * 100}%`,
+                                                width: `${Math.min((physical.uniqueProducts / theoretical.totalItems) * 100, 100)}%`,
                                                 backgroundColor: '#06aef0'
                                             }}
                                         ></div>
@@ -651,8 +735,43 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                                 </div>
                             )}
 
+                            {/* Summary Stats */}
+                            <div className="grid grid-cols-3 gap-1 mt-2 text-center">
+                                <div className="bg-blue-50 rounded px-2 py-1">
+                                    <p className="text-sm font-bold text-blue-700">{physical.totalQuantity}</p>
+                                    <p className="text-[9px] text-blue-600">Unidades</p>
+                                </div>
+                                <div className="bg-emerald-50 rounded px-2 py-1">
+                                    <p className="text-sm font-bold text-emerald-700">{physical.uniqueProducts}</p>
+                                    <p className="text-[9px] text-emerald-600">Productos</p>
+                                </div>
+                                <div className={`rounded px-2 py-1 ${physical.unknownItems > 0 ? 'bg-amber-50' : 'bg-slate-50'}`}>
+                                    <p className={`text-sm font-bold ${physical.unknownItems > 0 ? 'text-amber-700' : 'text-slate-500'}`}>{physical.unknownItems}</p>
+                                    <p className={`text-[9px] ${physical.unknownItems > 0 ? 'text-amber-600' : 'text-slate-400'}`}>No catalog</p>
+                                </div>
+                            </div>
+
+                            {/* Recent Scans List */}
+                            {physicalScans.length > 0 && (
+                                <div className="mt-2 border-t border-slate-100 pt-2">
+                                    <p className="text-[10px] text-slate-500 mb-1">Últimos escaneos:</p>
+                                    <div className="max-h-24 overflow-y-auto space-y-1">
+                                        {physicalScans.slice(0, 5).map((scan) => (
+                                            <div key={scan.id} className={`flex items-center justify-between text-[10px] px-2 py-1 rounded ${scan.is_unknown ? 'bg-amber-50' : 'bg-slate-50'}`}>
+                                                <div className="flex-1 truncate">
+                                                    <span className={`font-medium ${scan.is_unknown ? 'text-amber-700' : 'text-slate-700'}`}>
+                                                        {scan.product_name || scan.barcode}
+                                                    </span>
+                                                </div>
+                                                <span className="text-blue-600 font-bold ml-2">×{scan.quantity}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="mt-2 flex items-center gap-1">
-                                <span className="text-[10px] text-slate-500">Contando:</span>
+                                <span className="text-[10px] text-slate-500">Dispositivos:</span>
                                 {physical.activeUsers.map((user, i) => (
                                     <span key={i} className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">{user}</span>
                                 ))}

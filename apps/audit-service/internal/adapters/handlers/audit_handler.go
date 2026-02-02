@@ -193,5 +193,139 @@ func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 		api.POST("/audits", h.CreateAudit)    // FASE 5: Save after confirm
 		api.GET("/audits/:id", h.GetAudit)
 		api.DELETE("/audits/:id", h.DeleteAudit) // Cancel/Delete audit
+
+		// Physical Scan endpoints (for POS app)
+		api.GET("/audits/active", h.ListActiveAudits)         // Audits available for POS
+		api.POST("/audits/:id/scans", h.AddScan)              // Add scan from POS
+		api.GET("/audits/:id/scans", h.GetScans)              // Get all scans
+		api.GET("/audits/:id/scans/summary", h.GetScanSummary) // Get summary
+		api.DELETE("/audits/:id/scans/last", h.UndoLastScan)  // Undo last scan
 	}
+}
+
+// ListActiveAudits returns audits available for POS app to connect
+func (h *AuditHandler) ListActiveAudits(c *gin.Context) {
+	audits, err := h.service.ListActiveAuditsForPOS(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "list_failed",
+			Message: "Failed to list active audits",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"audits": audits})
+}
+
+// AddScan handles POST /api/audits/:id/scans
+func (h *AuditHandler) AddScan(c *gin.Context) {
+	idStr := c.Param("id")
+	auditID, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	var req domain.AddScanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: err.Error(),
+		})
+		return
+	}
+	req.AuditID = auditID
+
+	// Default quantity to 1 if not specified
+	if req.Quantity == 0 {
+		req.Quantity = 1
+	}
+
+	scan, err := h.service.AddPhysicalScan(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "scan_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"scan":    scan,
+	})
+}
+
+// GetScans handles GET /api/audits/:id/scans
+func (h *AuditHandler) GetScans(c *gin.Context) {
+	idStr := c.Param("id")
+	auditID, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	scans, err := h.service.GetPhysicalScans(c.Request.Context(), auditID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "fetch_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"scans": scans})
+}
+
+// GetScanSummary handles GET /api/audits/:id/scans/summary
+func (h *AuditHandler) GetScanSummary(c *gin.Context) {
+	idStr := c.Param("id")
+	auditID, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	summary, err := h.service.GetPhysicalScanSummary(c.Request.Context(), auditID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "fetch_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, summary)
+}
+
+// UndoLastScan handles DELETE /api/audits/:id/scans/last
+func (h *AuditHandler) UndoLastScan(c *gin.Context) {
+	idStr := c.Param("id")
+	auditID, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	err = h.service.UndoLastScan(c.Request.Context(), auditID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "undo_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

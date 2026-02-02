@@ -139,3 +139,30 @@ func (s *AuditService) GetAuditByID(ctx context.Context, sessionID int) (*domain
 func (s *AuditService) DeleteAudit(ctx context.Context, sessionID int) error {
 	return s.repo.DeleteSession(ctx, sessionID)
 }
+
+// ===== Physical Scan Methods for POS App =====
+
+// ListActiveAuditsForPOS returns audits that the POS app can connect to
+func (s *AuditService) ListActiveAuditsForPOS(ctx context.Context) ([]domain.AuditListDTO, error) {
+	return s.repo.GetActiveAuditsForPOS(ctx)
+}
+
+// AddPhysicalScan adds a scan from the POS app
+func (s *AuditService) AddPhysicalScan(ctx context.Context, req *domain.AddScanRequest) (*domain.PhysicalScan, error) {
+	return s.repo.InsertPhysicalScan(ctx, req)
+}
+
+// GetPhysicalScans returns all scans for an audit
+func (s *AuditService) GetPhysicalScans(ctx context.Context, auditID int) ([]domain.PhysicalScan, error) {
+	return s.repo.GetPhysicalScans(ctx, auditID)
+}
+
+// GetPhysicalScanSummary returns summary stats for physical scans
+func (s *AuditService) GetPhysicalScanSummary(ctx context.Context, auditID int) (*domain.AuditPhysicalSummary, error) {
+	return s.repo.GetPhysicalScanSummary(ctx, auditID)
+}
+
+// UndoLastScan deletes the last scan for an audit
+func (s *AuditService) UndoLastScan(ctx context.Context, auditID int) error {
+	return s.repo.DeleteLastPhysicalScan(ctx, auditID)
+}

@@ -16,9 +16,14 @@ const electron_1 = require("electron");
 const path_1 = __importDefault(require("path"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const SQLiteUserRepo_1 = require("./local-core/adapters/sqlite/SQLiteUserRepo");
+const SQLiteProductRepo_1 = require("./local-core/adapters/sqlite/SQLiteProductRepo");
+const SQLiteAuditRepo_1 = require("./local-core/adapters/sqlite/SQLiteAuditRepo");
 const CloudAuthAdapter_1 = require("./local-core/adapters/api/CloudAuthAdapter");
+const CloudProductAdapter_1 = require("./local-core/adapters/api/CloudProductAdapter");
 const LoginUseCase_1 = require("./local-core/application/LoginUseCase");
 const SyncUsers_1 = require("./local-core/application/SyncUsers");
+const SyncProducts_1 = require("./local-core/application/SyncProducts");
+const AuditUseCase_1 = require("./local-core/application/AuditUseCase");
 // Load env vars from root of monorepo (2 levels up from apps/app-pos-electron)
 // apps/app-pos-electron -> apps -> Base (root)
 // Note: __dirname is dist-electron/
@@ -26,6 +31,7 @@ const envPath = path_1.default.resolve(__dirname, '../../../.env');
 console.log('Loading .env from:', envPath);
 dotenv_1.default.config({ path: envPath });
 let mainWindow = null;
+let currentUser = null; // Store current logged-in user
 const isDev = !electron_1.app.isPackaged;
 function createWindow() {
     mainWindow = new electron_1.BrowserWindow({
@@ -60,29 +66,93 @@ electron_1.app.on('ready', () => __awaiter(void 0, void 0, void 0, function* () 
             console.warn('WARNING: SYNC_SECRET_KEY is empty in Electron environment!');
         // 2. Adapters & Repo
         const userRepo = new SQLiteUserRepo_1.SQLiteUserRepo();
+        const productRepo = new SQLiteProductRepo_1.SQLiteProductRepo();
+        const auditRepo = new SQLiteAuditRepo_1.SQLiteAuditRepo();
         const cloudAdapter = new CloudAuthAdapter_1.CloudAuthAdapter(API_URL, SYNC_KEY);
+        const cloudProductAdapter = new CloudProductAdapter_1.CloudProductAdapter(API_URL, SYNC_KEY);
         // 3. Use Cases
         const loginUseCase = new LoginUseCase_1.LoginUseCase(userRepo);
         const syncUseCase = new SyncUsers_1.SyncUsersUseCase(cloudAdapter, userRepo);
+        const syncProductsUseCase = new SyncProducts_1.SyncProductsUseCase(cloudProductAdapter, productRepo);
+        const auditUseCase = new AuditUseCase_1.AuditUseCase(auditRepo, productRepo);
         // --- Auto Sync on Startup ---
-        // We run this without blocking the window creation, just fire and forget (or log)
-        syncUseCase.execute().then((res) => {
-            console.log('Startup Sync Result:', res);
-            if (mainWindow && !res.success) {
-                // Optional: send error to UI
-                // mainWindow.webContents.send('sync:error', res.error);
-            }
+        // Sync users and products in parallel
+        Promise.all([
+            syncUseCase.execute(),
+            syncProductsUseCase.execute()
+        ]).then(([userRes, productRes]) => {
+            console.log('Startup User Sync Result:', userRes);
+            console.log('Startup Product Sync Result:', productRes);
         });
         // --- IPC Handlers ---
         electron_1.ipcMain.handle('auth:login', (_event_1, _a) => __awaiter(void 0, [_event_1, _a], void 0, function* (_event, { email, password }) {
             console.log(`IPC: auth:login for ${email}`);
             const result = yield loginUseCase.execute(email, password);
+            // Store user in memory if login successful
+            if (result.success && result.user) {
+                currentUser = result.user;
+                console.log(`User logged in: ${currentUser.email} (${currentUser.role_name})`);
+                console.log(`Permissions: ${currentUser.permissions.join(', ')}`);
+            }
             return result;
+        }));
+        electron_1.ipcMain.handle('auth:logout', (_event) => __awaiter(void 0, void 0, void 0, function* () {
+            console.log(`IPC: auth:logout for ${(currentUser === null || currentUser === void 0 ? void 0 : currentUser.email) || 'unknown'}`);
+            currentUser = null;
+            return { success: true };
+        }));
+        electron_1.ipcMain.handle('auth:getCurrentUser', (_event) => __awaiter(void 0, void 0, void 0, function* () {
+            return currentUser;
         }));
         electron_1.ipcMain.handle('auth:sync', (_event) => __awaiter(void 0, void 0, void 0, function* () {
             console.log('IPC: auth:sync manual request');
             const result = yield syncUseCase.execute();
             return result;
+        }));
+        // --- Product Sync IPC ---
+        electron_1.ipcMain.handle('products:sync', (_event) => __awaiter(void 0, void 0, void 0, function* () {
+            console.log('IPC: products:sync manual request');
+            const result = yield syncProductsUseCase.execute();
+            return result;
+        }));
+        electron_1.ipcMain.handle('products:search', (_event, query) => __awaiter(void 0, void 0, void 0, function* () {
+            return productRepo.search(query);
+        }));
+        electron_1.ipcMain.handle('products:count', (_event) => __awaiter(void 0, void 0, void 0, function* () {
+            return productRepo.count();
+        }));
+        // --- Audit IPC Handlers ---
+        electron_1.ipcMain.handle('audit:createSession', (_event_1, _a) => __awaiter(void 0, [_event_1, _a], void 0, function* (_event, { storeId, storeName }) {
+            if (!currentUser) {
+                return { success: false, error: 'No user logged in' };
+            }
+            const session = auditUseCase.createSession(storeId, storeName, currentUser.id, `${currentUser.first_name} ${currentUser.last_name}`);
+            return { success: true, session };
+        }));
+        electron_1.ipcMain.handle('audit:getActiveSessions', (_event) => __awaiter(void 0, void 0, void 0, function* () {
+            return auditUseCase.getActiveSessions();
+        }));
+        electron_1.ipcMain.handle('audit:getSession', (_event, sessionId) => __awaiter(void 0, void 0, void 0, function* () {
+            return auditUseCase.getSession(sessionId);
+        }));
+        electron_1.ipcMain.handle('audit:scan', (_event_1, _a) => __awaiter(void 0, [_event_1, _a], void 0, function* (_event, { sessionId, barcode, quantity }) {
+            return auditUseCase.scanBarcode(sessionId, barcode, quantity || 1);
+        }));
+        electron_1.ipcMain.handle('audit:getItems', (_event, sessionId) => __awaiter(void 0, void 0, void 0, function* () {
+            return auditUseCase.getSessionItems(sessionId);
+        }));
+        electron_1.ipcMain.handle('audit:getSummary', (_event, sessionId) => __awaiter(void 0, void 0, void 0, function* () {
+            return auditUseCase.getSessionSummary(sessionId);
+        }));
+        electron_1.ipcMain.handle('audit:undo', (_event, sessionId) => __awaiter(void 0, void 0, void 0, function* () {
+            return auditUseCase.undoLastScan(sessionId);
+        }));
+        electron_1.ipcMain.handle('audit:updateQuantity', (_event_1, _a) => __awaiter(void 0, [_event_1, _a], void 0, function* (_event, { sessionId, quantity }) {
+            return auditUseCase.updateLastItemQuantity(sessionId, quantity);
+        }));
+        electron_1.ipcMain.handle('audit:complete', (_event, sessionId) => __awaiter(void 0, void 0, void 0, function* () {
+            auditUseCase.completeSession(sessionId);
+            return { success: true };
         }));
         console.log('Core Initialization Complete: Handlers Registered');
     }

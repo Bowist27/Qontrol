@@ -217,4 +217,47 @@ export const auditApi = {
         if (!res.ok) throw new Error('Failed to fetch history');
         return res.json();
     },
+
+    // ============ PHYSICAL SCAN APIs (POS Integration) ============
+
+    /**
+     * GET /api/audits/:id/scans - Get physical scans for an audit
+     */
+    getPhysicalScans: async (auditId: number): Promise<PhysicalScan[]> => {
+        const res = await fetch(`${API_BASE}/api/audits/${auditId}/scans`);
+        if (!res.ok) throw new Error('Failed to fetch scans');
+        const data = await res.json();
+        return data.scans || [];
+    },
+
+    /**
+     * GET /api/audits/:id/scans/summary - Get summary stats for physical scans
+     */
+    getPhysicalScanSummary: async (auditId: number): Promise<PhysicalScanSummary> => {
+        const res = await fetch(`${API_BASE}/api/audits/${auditId}/scans/summary`);
+        if (!res.ok) throw new Error('Failed to fetch scan summary');
+        return res.json();
+    },
 };
+
+// Physical Scan Types
+export interface PhysicalScan {
+    id: number;
+    audit_id: number;
+    barcode: string;
+    sku?: string;
+    product_name?: string;
+    quantity: number;
+    scanned_by?: string;
+    device_id?: string;
+    scanned_at: string;
+    is_unknown: boolean;
+}
+
+export interface PhysicalScanSummary {
+    total_scans: number;
+    total_quantity: number;
+    unique_products: number;
+    unknown_items: number;
+    last_scan_at?: string;
+}

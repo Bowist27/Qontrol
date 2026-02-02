@@ -1,10 +1,10 @@
 /**
  * Login Page - Electron Desktop App
- * Matches the web-admin design with offline-first capabilities
+ * Uses AuthContext for authentication management
  */
 
-import React, { useState } from 'react';
-import { useAuth } from '../hooks/useAuth';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 import Logo from '../components/ui/Logo';
 import InputField from '../components/ui/InputField';
 import Button from '../components/ui/Button';
@@ -33,29 +33,44 @@ const SyncIcon: React.FC = () => (
     </svg>
 );
 
-export const Login: React.FC = () => {
+interface LoginProps {
+    onLoginSuccess: () => void;
+}
+
+export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const { login, manualSync, loading, error } = useAuth();
     const [msg, setMsg] = useState('');
     const [syncing, setSyncing] = useState(false);
+    
+    const { login, sync, isLoading, error, clearError } = useAuth();
+
+    // Clear error when user types
+    useEffect(() => {
+        if (error && (email || password)) {
+            clearError();
+        }
+    }, [email, password, error, clearError]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setMsg('');
+        
         const success = await login(email, password);
         if (success) {
-            setMsg('¡Login exitoso! Redirigiendo...');
-            // In a real app, redirect to dashboard
+            setMsg('¡Login exitoso! Cargando...');
+            setTimeout(() => {
+                onLoginSuccess();
+            }, 500);
         }
     };
 
     const handleSync = async () => {
         setSyncing(true);
         setMsg('');
-        const success = await manualSync();
-        if (success) {
-            setMsg('Usuarios sincronizados correctamente ✅');
+        const result = await sync();
+        if (result.success) {
+            setMsg(`✅ ${result.added || 0} usuarios sincronizados. Total: ${result.total || 0}`);
         }
         setSyncing(false);
     };
@@ -138,7 +153,7 @@ export const Login: React.FC = () => {
                             type="submit"
                             variant="primary"
                             fullWidth
-                            loading={loading}
+                            loading={isLoading && !syncing}
                         >
                             Iniciar Sesión
                         </Button>

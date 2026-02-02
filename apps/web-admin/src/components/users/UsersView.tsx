@@ -519,7 +519,7 @@ interface NewUserFormProps {
     onSave: (data: CreateUserRequest) => Promise<void>;
 }
 
-function NewUserForm({ roles, stores, onCancel, onSave }: NewUserFormProps) {
+function NewUserForm({ roles, stores: _stores, onCancel, onSave }: NewUserFormProps) {
     const [formData, setFormData] = useState({
         email: '',
         password: '',

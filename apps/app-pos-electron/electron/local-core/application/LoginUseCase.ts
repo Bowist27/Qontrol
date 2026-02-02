@@ -1,10 +1,10 @@
 import argon2 from 'argon2';
 import { UserRepository } from '../ports/UserRepository';
-import { User } from '../domain/User';
+import { SafeUser } from '../domain/User';
 
 export interface LoginResult {
     success: boolean;
-    user?: Omit<User, 'password_hash'>;
+    user?: SafeUser;
     error?: string;
     isOfflineLogin: boolean;
 }
@@ -26,16 +26,31 @@ export class LoginUseCase {
             return { success: false, error: 'Credenciales inválidas.', isOfflineLogin: true };
         }
 
-        // 3. Verify Password Hash
+        // 3. Check if user is active
+        if (!user.is_active) {
+            return { success: false, error: 'Usuario desactivado. Contacte al administrador.', isOfflineLogin: true };
+        }
+
+        // 4. Verify Password Hash
         try {
             const valid = await argon2.verify(user.password_hash, password);
             if (!valid) {
                 return { success: false, error: 'Credenciales inválidas.', isOfflineLogin: true };
             }
 
-            // 4. Return success (without hash)
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { password_hash: _ph, ...safeUser } = user;
+            // 5. Return success with safe user data (no password_hash)
+            const safeUser: SafeUser = {
+                id: user.id,
+                email: user.email,
+                first_name: user.first_name,
+                last_name: user.last_name,
+                role_id: user.role_id,
+                role_name: user.role_name,
+                is_active: user.is_active,
+                permissions: user.permissions || [],
+                store_ids: user.store_ids || [],
+            };
+
             return { success: true, user: safeUser, isOfflineLogin: true };
 
         } catch (err) {

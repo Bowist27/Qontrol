@@ -67,3 +67,46 @@ type ErrorResponse struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 }
+
+// PhysicalScan represents a physical scan item from the POS app
+type PhysicalScan struct {
+	ID          int       `json:"id"`
+	AuditID     int       `json:"audit_id"`
+	Barcode     string    `json:"barcode"`
+	SKU         *string   `json:"sku,omitempty"`
+	ProductName *string   `json:"product_name,omitempty"`
+	Quantity    float64   `json:"quantity"`
+	ScannedBy   *string   `json:"scanned_by,omitempty"`
+	DeviceID    *string   `json:"device_id,omitempty"`
+	ScannedAt   time.Time `json:"scanned_at"`
+	IsUnknown   bool      `json:"is_unknown"`
+}
+
+// AddScanRequest is the request from POS app to add a scan
+type AddScanRequest struct {
+	AuditID     int     `json:"audit_id"`
+	Barcode     string  `json:"barcode" binding:"required"`
+	SKU         string  `json:"sku,omitempty"`
+	ProductName string  `json:"product_name,omitempty"`
+	Quantity    float64 `json:"quantity"`
+	ScannedBy   string  `json:"scanned_by,omitempty"`
+	DeviceID    string  `json:"device_id,omitempty"`
+	IsUnknown   bool    `json:"is_unknown"`
+}
+
+// AuditPhysicalSummary is the summary of physical scans
+type AuditPhysicalSummary struct {
+	TotalScans      int     `json:"total_scans"`
+	TotalQuantity   float64 `json:"total_quantity"`
+	UniqueProducts  int     `json:"unique_products"`
+	UnknownItems    int     `json:"unknown_items"`
+	LastScanAt      *string `json:"last_scan_at,omitempty"`
+}
+
+// ConnectedDevice represents a POS device connected to an audit
+type ConnectedDevice struct {
+	DeviceID      string    `json:"device_id"`
+	UserName      string    `json:"user_name"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	LastActivityAt time.Time `json:"last_activity_at"`
+}

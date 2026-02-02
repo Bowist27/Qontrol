@@ -22,6 +22,12 @@ type AuditRepository interface {
 	GetSessionByID(ctx context.Context, id int) (*domain.AuditSession, error)
 	GetItemsByAuditID(ctx context.Context, auditID int) ([]domain.AuditItem, error)
 	FindAllSessions(ctx context.Context) ([]domain.AuditListDTO, error)
+	// Physical Scan methods for POS
+	InsertPhysicalScan(ctx context.Context, req *domain.AddScanRequest) (*domain.PhysicalScan, error)
+	GetPhysicalScans(ctx context.Context, auditID int) ([]domain.PhysicalScan, error)
+	GetPhysicalScanSummary(ctx context.Context, auditID int) (*domain.AuditPhysicalSummary, error)
+	DeleteLastPhysicalScan(ctx context.Context, auditID int) error
+	GetActiveAuditsForPOS(ctx context.Context) ([]domain.AuditListDTO, error)
 }
 
 // PostgresRepository implements AuditRepository
@@ -790,4 +796,200 @@ func formatDateSpanish(t time.Time) string {
 		hour = 12
 	}
 	return fmt.Sprintf("%02d %s, %d:%02d %s", day, month, hour, minute, ampm)
+}
+
+// ============ PHYSICAL SCAN METHODS (POS APP) ============
+
+// InsertPhysicalScan adds a new scan from the POS app
+func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain.AddScanRequest) (*domain.PhysicalScan, error) {
+	scannedAt := time.Now()
+	query := `
+		INSERT INTO audit_physical (audit_id, barcode, quantity, scanned_by, device_id, scanned_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id
+	`
+	
+	// Handle empty scanned_by (it's a UUID in DB, pass NULL if empty)
+	var scannedByParam interface{}
+	if req.ScannedBy == "" {
+		scannedByParam = nil
+	} else {
+		scannedByParam = req.ScannedBy
+	}
+	
+	// Handle empty device_id
+	var deviceIDParam interface{}
+	if req.DeviceID == "" {
+		deviceIDParam = nil
+	} else {
+		deviceIDParam = req.DeviceID
+	}
+	
+	var id int
+	err := r.db.QueryRowContext(ctx, query,
+		req.AuditID, req.Barcode, req.Quantity, scannedByParam, deviceIDParam, scannedAt,
+	).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Lookup product info from catalog (search by barcode first, then by SKU)
+	var sku, productName sql.NullString
+	productQuery := `SELECT sku, name FROM products WHERE barcode = $1 LIMIT 1`
+	err = r.db.QueryRowContext(ctx, productQuery, req.Barcode).Scan(&sku, &productName)
+	
+	// If not found by barcode, try searching by SKU
+	if err == sql.ErrNoRows || !sku.Valid {
+		productQuery = `SELECT sku, name FROM products WHERE sku = $1 LIMIT 1`
+		_ = r.db.QueryRowContext(ctx, productQuery, req.Barcode).Scan(&sku, &productName)
+	}
+
+	scan := &domain.PhysicalScan{
+		ID:          id,
+		AuditID:     req.AuditID,
+		Barcode:     req.Barcode,
+		Quantity:    req.Quantity,
+		ScannedBy:   stringPtr(req.ScannedBy),
+		DeviceID:    stringPtr(req.DeviceID),
+		ScannedAt:   scannedAt,
+		IsUnknown:   !sku.Valid,
+	}
+	if sku.Valid {
+		scan.SKU = &sku.String
+	}
+	if productName.Valid {
+		scan.ProductName = &productName.String
+	}
+	return scan, nil
+}
+
+// stringPtr returns a pointer to the string if not empty, otherwise nil
+func stringPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// GetPhysicalScans retrieves all scans for an audit (with product info from catalog)
+func (r *PostgresRepository) GetPhysicalScans(ctx context.Context, auditID int) ([]domain.PhysicalScan, error) {
+	query := `
+		SELECT 
+			ap.id, ap.audit_id, ap.barcode, 
+			COALESCE(p.sku, p2.sku) as sku, 
+			COALESCE(p.name, p2.name) as name, 
+			ap.quantity, 
+			ap.scanned_by, ap.device_id, ap.scanned_at,
+			CASE WHEN p.id IS NULL AND p2.id IS NULL THEN true ELSE false END as is_unknown
+		FROM audit_physical ap
+		LEFT JOIN products p ON ap.barcode = p.barcode
+		LEFT JOIN products p2 ON ap.barcode = p2.sku AND p.id IS NULL
+		WHERE ap.audit_id = $1
+		ORDER BY ap.scanned_at DESC
+	`
+	rows, err := r.db.QueryContext(ctx, query, auditID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var scans []domain.PhysicalScan
+	for rows.Next() {
+		var s domain.PhysicalScan
+		var sku, productName, scannedBy, deviceID sql.NullString
+		err := rows.Scan(&s.ID, &s.AuditID, &s.Barcode, &sku, &productName, &s.Quantity,
+			&scannedBy, &deviceID, &s.ScannedAt, &s.IsUnknown)
+		if err != nil {
+			return nil, err
+		}
+		if sku.Valid {
+			s.SKU = &sku.String
+		}
+		if productName.Valid {
+			s.ProductName = &productName.String
+		}
+		if scannedBy.Valid {
+			s.ScannedBy = &scannedBy.String
+		}
+		if deviceID.Valid {
+			s.DeviceID = &deviceID.String
+		}
+		scans = append(scans, s)
+	}
+	return scans, nil
+}
+
+// GetPhysicalScanSummary returns summary stats for physical scans
+func (r *PostgresRepository) GetPhysicalScanSummary(ctx context.Context, auditID int) (*domain.AuditPhysicalSummary, error) {
+	query := `
+		SELECT 
+			COUNT(*) as total_scans,
+			COALESCE(SUM(ap.quantity), 0) as total_quantity,
+			COUNT(DISTINCT COALESCE(p.sku, p2.sku)) as unique_products,
+			COUNT(CASE WHEN p.id IS NULL AND p2.id IS NULL THEN 1 END) as unknown_items,
+			MAX(ap.scanned_at) as last_scan_at
+		FROM audit_physical ap
+		LEFT JOIN products p ON ap.barcode = p.barcode
+		LEFT JOIN products p2 ON ap.barcode = p2.sku AND p.id IS NULL
+		WHERE ap.audit_id = $1
+	`
+	var s domain.AuditPhysicalSummary
+	var lastScan sql.NullTime
+	err := r.db.QueryRowContext(ctx, query, auditID).Scan(
+		&s.TotalScans, &s.TotalQuantity, &s.UniqueProducts, &s.UnknownItems, &lastScan,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if lastScan.Valid {
+		t := lastScan.Time.Format(time.RFC3339)
+		s.LastScanAt = &t
+	}
+	return &s, nil
+}
+
+// DeleteLastPhysicalScan removes the last scan for an audit (undo)
+func (r *PostgresRepository) DeleteLastPhysicalScan(ctx context.Context, auditID int) error {
+	query := `
+		DELETE FROM audit_physical 
+		WHERE id = (
+			SELECT id FROM audit_physical 
+			WHERE audit_id = $1 
+			ORDER BY scanned_at DESC 
+			LIMIT 1
+		)
+	`
+	_, err := r.db.ExecContext(ctx, query, auditID)
+	return err
+}
+
+// GetActiveAuditsForPOS returns audits available for the POS app to connect
+func (r *PostgresRepository) GetActiveAuditsForPOS(ctx context.Context) ([]domain.AuditListDTO, error) {
+	query := `
+		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at
+		FROM audit_sessions s
+		JOIN stores st ON s.store_id = st.id
+		WHERE s.status IN ('IN_PROGRESS', 'REVIEW_PENDING', 'COUNTING')
+		ORDER BY s.created_at DESC
+	`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []domain.AuditListDTO
+	for rows.Next() {
+		var dto domain.AuditListDTO
+		var s domain.AuditSession
+		var storeName string
+		err := rows.Scan(&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status, &s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt)
+		if err != nil {
+			return nil, err
+		}
+		dto.Session = s
+		dto.StoreName = storeName
+		sessions = append(sessions, dto)
+	}
+	return sessions, nil
 }

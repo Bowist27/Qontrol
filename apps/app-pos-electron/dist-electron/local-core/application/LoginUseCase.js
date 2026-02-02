@@ -8,17 +8,6 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-var __rest = (this && this.__rest) || function (s, e) {
-    var t = {};
-    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
-        t[p] = s[p];
-    if (s != null && typeof Object.getOwnPropertySymbols === "function")
-        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
-            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
-                t[p[i]] = s[p[i]];
-        }
-    return t;
-};
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -42,15 +31,28 @@ class LoginUseCase {
                 }
                 return { success: false, error: 'Credenciales inválidas.', isOfflineLogin: true };
             }
-            // 3. Verify Password Hash
+            // 3. Check if user is active
+            if (!user.is_active) {
+                return { success: false, error: 'Usuario desactivado. Contacte al administrador.', isOfflineLogin: true };
+            }
+            // 4. Verify Password Hash
             try {
                 const valid = yield argon2_1.default.verify(user.password_hash, password);
                 if (!valid) {
                     return { success: false, error: 'Credenciales inválidas.', isOfflineLogin: true };
                 }
-                // 4. Return success (without hash)
-                // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                const { password_hash: _ph } = user, safeUser = __rest(user, ["password_hash"]);
+                // 5. Return success with safe user data (no password_hash)
+                const safeUser = {
+                    id: user.id,
+                    email: user.email,
+                    first_name: user.first_name,
+                    last_name: user.last_name,
+                    role_id: user.role_id,
+                    role_name: user.role_name,
+                    is_active: user.is_active,
+                    permissions: user.permissions || [],
+                    store_ids: user.store_ids || [],
+                };
                 return { success: true, user: safeUser, isOfflineLogin: true };
             }
             catch (err) {
