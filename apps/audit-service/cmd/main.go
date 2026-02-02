@@ -15,6 +15,7 @@ import (
 )
 
 func main() {
+	log.Println("Starting Audit Service 2.0 force rebuild...")
 	// Database connection
 	db, err := database.NewPostgresConnection()
 	if err != nil {

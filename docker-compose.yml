@@ -59,7 +59,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8081:8081"
+      - "8085:8081"
 
   nginx:
     image: nginx:alpine

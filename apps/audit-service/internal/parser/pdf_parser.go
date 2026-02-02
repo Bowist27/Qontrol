@@ -49,185 +49,250 @@ func (p *ComexPDFParser) Parse(pdfData []byte) ([]domain.AuditItem, error) {
 			log.Printf("DEBUG: Error reading page %d: %v", pageNum, err)
 			continue
 		}
-		log.Printf("DEBUG: Page %d extracted %d chars", pageNum, len(content))
 		text.WriteString(content)
-		text.WriteString("\n") // Add newline between pages
+		text.WriteString("\n")
 	}
 
 	fullText := text.String()
 	log.Printf("DEBUG: Total text length: %d chars", len(fullText))
-
-	// Log first 500 chars for debugging
-	if len(fullText) > 500 {
-		log.Printf("DEBUG: First 500 chars:\n%s", fullText[:500])
-	} else {
-		log.Printf("DEBUG: Full text:\n%s", fullText)
-	}
-
 	return p.extractItems(fullText), nil
 }
 
-// extractItems uses DATE as anchor - each date = one product row
+// extractItems uses a math-based brute force parsing strategy
 func (p *ComexPDFParser) extractItems(text string) []domain.AuditItem {
 	var items []domain.AuditItem
-	var validCount, invalidCount int
+	var validCount int
 
-	// STRATEGY: Use DATE as anchor (DD-MMM-YYYY)
-	// For each date found:
-	// 1. Expand context (120 chars before, 80 after)
-	// 2. Extract fields from that row
-	// 3. Validate: IMPORTE ≈ EXISTENCIA × COSTO_COMPRA
+	// STRATEGY: Math Brute Force
 
+	// Pre-process full text to detach codes from previous lines' stuck cents
+	// e.g. "1,267.960200300" -> "1,267.96 0200300"
+	// Also separate .XX from Alphanumeric codes if stuck
+	importeCodeSplitter := regexp.MustCompile(`(\.\d{2})(\d{7}|[A-Z]\d{6}|[A-Z]{2}\d{5})`)
+	text = importeCodeSplitter.ReplaceAllString(text, "$1 $2")
+
+	codeRegex := regexp.MustCompile(`(?:^|[^\d])(\d{7}|[A-Z]\d{6}|[A-Z]{2}\d{5})`)
+	codeMatches := codeRegex.FindAllStringSubmatchIndex(text, -1)
+	log.Printf("DEBUG: Found %d potential product codes", len(codeMatches))
+
+	// Regex tools
 	dateRegex := regexp.MustCompile(`\d{2}-[A-Z]{3}-\d{4}`)
-	dateMatches := dateRegex.FindAllStringIndex(text, -1)
+	// Separate letters from numbers to avoid pollution (e.g. V11,340 -> V 11,340)
+	alphaNumRegex1 := regexp.MustCompile(`([A-Z])([0-9])`)
+	alphaNumRegex2 := regexp.MustCompile(`([0-9])([A-Z])`)
 
-	log.Printf("DEBUG: Found %d dates (potential rows)", len(dateMatches))
+	// Catches blocks of stuck numbers. Strict digits/dots/commas.
+	dirtyBlockRegex := regexp.MustCompile(`[0-9.,]+`)
 
-	// Regex for extracting numbers
-	numWithComma := regexp.MustCompile(`[\d,]+\.\d{2}`) // Costo/Importe (.XX)
-	numExistencia := regexp.MustCompile(`-?\d+\.\d{3}`) // Existencia (.XXX)
-	codeRegex := regexp.MustCompile(`(\d{7}|[A-Z]\d{6}|[A-Z]{2}\d{5})`)
+	for i, match := range codeMatches {
+		codeStart := match[2]
+		codeEnd := match[3]
+		code := text[codeStart:codeEnd]
 
-	for i, dateMatch := range dateMatches {
-		// Expand context around the date
-		start := dateMatch[0] - 120
-		if start < 0 {
-			start = 0
+		rowEnd := len(text)
+		if i+1 < len(codeMatches) {
+			rowEnd = codeMatches[i+1][2]
 		}
-		end := dateMatch[1] + 80
-		if end > len(text) {
-			end = len(text)
-		}
-
-		rowText := text[start:end]
-
-		// Split row into BEFORE date and AFTER date
-		dateInRow := dateMatch[0] - start
-		beforeDate := rowText[:dateInRow]
-		afterDate := rowText[dateInRow+11:] // 11 = len("DD-MMM-YYYY")
-
-		// === EXTRACT FROM AFTER DATE ===
-		// Pattern: EXISTENCIA(.XXX) + COSTO_COMPRA(.XX) + IMPORTE(.XX)
-
-		existMatch := numExistencia.FindString(afterDate)
-		if existMatch == "" {
-			continue
+		if rowEnd-codeEnd > 400 {
+			rowEnd = codeEnd + 400
 		}
 
-		// After existencia, find the next two .XX numbers
-		existIdx := strings.Index(afterDate, existMatch)
-		afterExist := afterDate[existIdx+len(existMatch):]
-		afterNums := numWithComma.FindAllString(afterExist, 2)
+		rawRow := text[codeEnd:rowEnd]
+		cleanRow := dateRegex.ReplaceAllString(rawRow, "           ")
+		// Clean sticky alphanumerics
+		cleanRow = alphaNumRegex1.ReplaceAllString(cleanRow, "$1 $2")
+		cleanRow = alphaNumRegex2.ReplaceAllString(cleanRow, "$1 $2")
 
-		if len(afterNums) < 2 {
-			continue
+		// Find dirty blocks of numbers
+		blocks := dirtyBlockRegex.FindAllString(cleanRow, -1)
+
+		var streamA []float64 // 2-dec split
+		var streamB []float64 // 3-dec split
+
+		for _, block := range blocks {
+			streamA = append(streamA, splitByDecimals(block, 2)...)
+			streamB = append(streamB, splitByDecimals(block, 3)...)
 		}
 
-		costoCompraStr := afterNums[0]
-		importeStr := afterNums[1]
+		var found bool
 
-		// Parse numbers
-		existencia, _ := strconv.ParseFloat(strings.ReplaceAll(existMatch, ",", ""), 64)
-		costoCompra, _ := strconv.ParseFloat(strings.ReplaceAll(costoCompraStr, ",", ""), 64)
-		importe, _ := strconv.ParseFloat(strings.ReplaceAll(importeStr, ",", ""), 64)
-
-		// === MATHEMATICAL VALIDATION ===
-		expectedImporte := existencia * costoCompra
-		tolerance := math.Max(0.01*math.Abs(expectedImporte), 0.1)
-
-		if math.Abs(importe-expectedImporte) > tolerance {
-			invalidCount++
-			continue
-		}
-
-		// === EXTRACT FROM BEFORE DATE ===
-		// Pattern: CODE + DESCRIPCION + COSTO(.XX)
-
-		costoNums := numWithComma.FindAllString(beforeDate, -1)
-		if len(costoNums) == 0 {
-			continue
-		}
-		costoStr := costoNums[len(costoNums)-1] // Last number before date is COSTO
-		costo, _ := strconv.ParseFloat(strings.ReplaceAll(costoStr, ",", ""), 64)
-
-		if costo <= 0 {
-			continue
-		}
-
-		// Find CODE
-		codeMatches := codeRegex.FindAllStringIndex(beforeDate, -1)
-		if len(codeMatches) == 0 {
-			continue
-		}
-
-		// Get the last code (closest to this row's data)
-		lastCode := codeMatches[len(codeMatches)-1]
-		code := beforeDate[lastCode[0]:lastCode[1]]
-
-		// DESCRIPCION is between code and costo
-		costoIdx := strings.LastIndex(beforeDate, costoStr)
-		if costoIdx <= lastCode[1] {
-			continue
-		}
-
-		description := strings.TrimSpace(beforeDate[lastCode[1]:costoIdx])
-		if len(description) < 2 {
-			continue
-		}
-
-		// Debug first few
-		if i < 3 {
-			log.Printf("DEBUG ROW[%d]: code=%s, desc=%s, costo=%.2f, exist=%.3f",
-				i, code, description[:min(30, len(description))], costo, existencia)
-		}
-
-		// Check for duplicate
-		isDuplicate := false
-		for _, existing := range items {
-			if existing.ProductCode == code {
-				isDuplicate = true
-				break
+		// Check Stream A
+		if item := findItemInStream(streamA, code, cleanRow); item != nil {
+			checkAndAdd(item, &items, &validCount)
+			found = true
+			if i < 5 {
+				log.Printf("DEBUG SUCCESS[A]: Code=%s Qty=%.3f Cost=%.2f", code, item.ExpectedQty, item.UnitCost)
+			}
+		} else if item := findItemInStream(streamB, code, cleanRow); item != nil {
+			// Check Stream B
+			checkAndAdd(item, &items, &validCount)
+			found = true
+			if i < 5 {
+				log.Printf("DEBUG SUCCESS[B]: Code=%s Qty=%.3f Cost=%.2f", code, item.ExpectedQty, item.UnitCost)
 			}
 		}
-		if isDuplicate {
-			continue
-		}
 
-		item := domain.AuditItem{
-			ProductCode: code,
-			ProductName: description,
-			UnitCost:    costo,
-			ExpectedQty: existencia,
+		if !found && i < 10 {
+			log.Printf("DEBUG INVALID[%d]: %s. StreamA: %v", i, code, streamA)
 		}
-		items = append(items, item)
-		validCount++
 	}
 
-	log.Printf("DEBUG: Dates=%d, Valid=%d, Invalid=%d, Extracted=%d",
-		len(dateMatches), validCount, invalidCount, len(items))
+	log.Printf("DEBUG: Codes=%d, Valid=%d, Total=%d", len(codeMatches), validCount, len(items))
 	return items
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
+func checkAndAdd(item *domain.AuditItem, items *[]domain.AuditItem, count *int) {
+	for _, ex := range *items {
+		if ex.ProductCode == item.ProductCode {
+			return
+		}
 	}
-	return b
+	*items = append(*items, *item)
+	*count++
 }
 
-// MockPDFParser for testing without real PDFs
+func findItemInStream(nums []float64, code string, context string) *domain.AuditItem {
+	if len(nums) < 2 {
+		return nil
+	}
+
+	for j := 0; j < len(nums)-1; j++ {
+		// Try Pair A*B approx C?
+		// We verify triplet A, B, C (A*B=C)
+		if j+2 < len(nums) {
+			A := nums[j]
+			B := nums[j+1]
+			C := nums[j+2]
+
+			if validateMath(A, B, C) {
+				// Matched A * B = C.
+
+				// Heuristic: If previous number equals B (the Price), then A is Qty (Sandwich).
+				// e.g. Price(prev) Qty(A) Price(B) Total(C)
+				isSandwich := false
+				if j > 0 {
+					prev := nums[j-1]
+					if validateEquality(prev, B) {
+						isSandwich = true
+					}
+				}
+
+				var qty, cost float64
+				if isSandwich {
+					qty = A
+					cost = B
+				} else {
+					// Use MinValue heuristic for Qty vs Cost
+					if isInteger(A) && !isInteger(B) {
+						qty = A
+						cost = B
+					} else if !isInteger(A) && isInteger(B) {
+						qty = B
+						cost = A
+					} else {
+						// Both int or both float.
+						// Assume Qty is smaller unless A > B
+						if A < B {
+							qty = A
+							cost = B
+						} else {
+							qty = B
+							cost = A
+						}
+					}
+				}
+
+				return createItem(code, cost, qty, context)
+			}
+		}
+	}
+	return nil
+}
+
+func isInteger(f float64) bool {
+	return f == float64(int64(f))
+}
+
+func validateEquality(a, b float64) bool {
+	return math.Abs(a-b) < 0.01
+}
+
+func createItem(code string, cost float64, qty float64, context string) *domain.AuditItem {
+	costStr := strconv.FormatFloat(cost, 'f', 2, 64)
+	contextClean := strings.ReplaceAll(context, ",", "")
+	idx := strings.Index(contextClean, costStr)
+	desc := "Producto " + code
+	if idx > 0 {
+		rawDesc := contextClean[:idx]
+		rawDesc = strings.TrimSpace(rawDesc)
+		rawDesc = strings.ReplaceAll(rawDesc, "\n", " ")
+		rawDesc = strings.Join(strings.Fields(rawDesc), " ")
+		rawDesc = strings.TrimRight(rawDesc, "0123456789.- ")
+		if len(rawDesc) > 2 {
+			desc = rawDesc
+		}
+	}
+	return &domain.AuditItem{
+		ProductCode: code,
+		ProductName: desc,
+		UnitCost:    cost,
+		ExpectedQty: qty,
+	}
+}
+
+func validateMath(a, b, c float64) bool {
+	if a == 0 || b == 0 {
+		return false
+	}
+	expected := a * b
+	tolerance := math.Max(0.05*math.Abs(expected), 0.5)
+	return math.Abs(c-expected) <= tolerance
+}
+
+func splitByDecimals(block string, decimals int) []float64 {
+	var nums []float64
+	current := block
+	step := decimals + 1
+
+	for {
+		if len(current) == 0 {
+			break
+		}
+		dot := strings.Index(current, ".")
+		if dot == -1 {
+			// No dot means integer or garbage.
+			if f, err := strconv.ParseFloat(strings.ReplaceAll(current, ",", ""), 64); err == nil {
+				nums = append(nums, f)
+			}
+			break
+		}
+
+		endIdx := dot + step
+		if endIdx <= len(current) {
+			valStr := current[:endIdx]
+			if f, err := strconv.ParseFloat(strings.ReplaceAll(valStr, ",", ""), 64); err == nil {
+				nums = append(nums, f)
+				current = current[endIdx:]
+				continue
+			}
+		} else {
+			// Fallback: Try parsing the rest as a number
+			if f, err := strconv.ParseFloat(strings.ReplaceAll(current, ",", ""), 64); err == nil {
+				nums = append(nums, f)
+			}
+			break
+		}
+
+		if len(current) > 0 {
+			current = current[1:]
+		}
+	}
+	return nums
+}
+
 type MockPDFParser struct{}
 
-// NewMockPDFParser creates a mock parser
-func NewMockPDFParser() *MockPDFParser {
-	return &MockPDFParser{}
-}
-
-// Parse returns dummy data for testing
+func NewMockPDFParser() *MockPDFParser { return &MockPDFParser{} }
 func (p *MockPDFParser) Parse(pdfData []byte) ([]domain.AuditItem, error) {
-	return []domain.AuditItem{
-		{ProductCode: "0081200", ProductName: "INTER TOP ANCHO", UnitCost: 150.50, ExpectedQty: 25},
-		{ProductCode: "0094521", ProductName: "VINIMEX TOTAL 4L", UnitCost: 890.00, ExpectedQty: 12},
-		{ProductCode: "0078340", ProductName: "COMEX 100 BLANCO", UnitCost: 245.75, ExpectedQty: 8},
-	}, nil
+	return []domain.AuditItem{}, nil
 }
