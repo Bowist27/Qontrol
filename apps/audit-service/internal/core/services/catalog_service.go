@@ -23,6 +23,7 @@ type CatalogRepository interface {
 	GetLatestPendingImport(ctx context.Context) (*domain.CatalogImport, []domain.CatalogImportItem, error)
 	ApplyCatalogImport(ctx context.Context, importID int, selectedSKUs []string) error
 	RevertCatalogImport(ctx context.Context, importID int) error
+	DiscardCatalogImport(ctx context.Context, importID int) error
 }
 
 // CatalogService handles catalog business logic
@@ -167,6 +168,11 @@ func (s *CatalogService) CommitImport(ctx context.Context, importID int, selecte
 // RevertImport reverts an applied import
 func (s *CatalogService) RevertImport(ctx context.Context, importID int) error {
 	return s.repo.RevertCatalogImport(ctx, importID)
+}
+
+// DiscardImport deletes a pending import without applying it
+func (s *CatalogService) DiscardImport(ctx context.Context, importID int) error {
+	return s.repo.DiscardCatalogImport(ctx, importID)
 }
 
 // GetLatestPendingValuation returns the latest pending import with its items

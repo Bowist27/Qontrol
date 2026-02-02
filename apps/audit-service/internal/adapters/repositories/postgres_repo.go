@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"audit-service/internal/core/domain"
-
-	"github.com/lib/pq"
 )
 
 // AuditRepository defines the interface for audit data access
@@ -476,20 +474,16 @@ func (r *PostgresRepository) ApplyCatalogImport(ctx context.Context, importID in
 	}
 	defer tx.Rollback()
 
-	// Get import items
-	rows, err := tx.QueryContext(ctx, `
-		SELECT sku, product_name, new_price FROM catalog_import_items 
-		WHERE import_id = $1 AND sku = ANY($2)`, importID, pq.Array(selectedSKUs))
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var sku, name string
+	// Process each SKU individually to avoid pq.Array issues
+	for _, sku := range selectedSKUs {
+		var name string
 		var price float64
-		if err := rows.Scan(&sku, &name, &price); err != nil {
-			return err
+		
+		err := tx.QueryRowContext(ctx, `
+			SELECT product_name, new_price FROM catalog_import_items 
+			WHERE import_id = $1 AND sku = $2`, importID, sku).Scan(&name, &price)
+		if err != nil {
+			continue // Skip if not found
 		}
 
 		// Upsert product
@@ -570,6 +564,29 @@ func (r *PostgresRepository) RevertCatalogImport(ctx context.Context, importID i
 
 	// Update import status
 	_, err = tx.ExecContext(ctx, `UPDATE catalog_imports SET status = 'reverted', applied_at = NULL WHERE id = $1`, importID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// DiscardCatalogImport deletes a pending catalog import and its items
+func (r *PostgresRepository) DiscardCatalogImport(ctx context.Context, importID int) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Delete import items first
+	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_import_items WHERE import_id = $1`, importID)
+	if err != nil {
+		return err
+	}
+
+	// Delete import
+	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_imports WHERE id = $1 AND status = 'pending'`, importID)
 	if err != nil {
 		return err
 	}

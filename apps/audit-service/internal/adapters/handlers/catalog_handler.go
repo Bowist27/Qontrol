@@ -278,6 +278,33 @@ func (h *CatalogHandler) RevertImport(c *gin.Context) {
 	})
 }
 
+// DiscardImport handles DELETE /api/catalog/imports/:id
+// Deletes a pending import without applying it
+func (h *CatalogHandler) DiscardImport(c *gin.Context) {
+	importID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid import ID",
+		})
+		return
+	}
+
+	err = h.service.DiscardImport(c.Request.Context(), importID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "discard_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Import discarded successfully",
+		"import_id": importID,
+	})
+}
+
 // GetImportHistory handles GET /api/catalog/imports
 func (h *CatalogHandler) GetImportHistory(c *gin.Context) {
 	limit := 20
@@ -316,6 +343,7 @@ func (h *CatalogHandler) RegisterRoutes(router *gin.Engine) {
 		api.GET("/catalog/valuation/latest", h.GetLatestValuation)
 		api.POST("/catalog/imports/:id/commit", h.CommitImport)
 		api.POST("/catalog/imports/:id/revert", h.RevertImport)
+		api.DELETE("/catalog/imports/:id", h.DiscardImport)
 	}
 }
 

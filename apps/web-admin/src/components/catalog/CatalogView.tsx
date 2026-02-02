@@ -18,6 +18,11 @@ const CatalogView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
+  // Drag & Drop state
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   // Filter state
   const [activeFilter, setActiveFilter] = useState<FilterType>('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -49,24 +54,91 @@ const CatalogView: React.FC = () => {
       setLoading(true);
       setError(null);
       
-      const [summaryData, productsData, historyData] = await Promise.all([
-        catalogApi.getLatestValuationSummary(),
-        catalogApi.getLatestValuationProducts(),
-        catalogApi.getImportHistory(10)
-      ]);
-      
-      setSummary(summaryData);
-      setProducts(productsData);
+      // First load history (this should always work)
+      const historyData = await catalogApi.getImportHistory(10);
       setHistory(historyData);
       
-      // Auto-select all products
-      const allSkus = new Set(productsData.map(p => p.sku));
-      setSelectedProducts(allSkus);
+      // Try to get pending valuation - if none exists, that's OK
+      try {
+        const [summaryData, productsData] = await Promise.all([
+          catalogApi.getLatestValuationSummary(),
+          catalogApi.getLatestValuationProducts(),
+        ]);
+        
+        setSummary(summaryData);
+        setProducts(productsData);
+        
+        // Auto-select all products
+        const allSkus = new Set(productsData.map(p => p.sku));
+        setSelectedProducts(allSkus);
+      } catch {
+        // No pending valuation - that's fine, show drag & drop
+        setSummary(null);
+        setProducts([]);
+        setSelectedProducts(new Set());
+      }
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error loading catalog data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Drag & Drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    const pdfFile = files.find(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+    
+    if (pdfFile) {
+      await handleFileUpload(pdfFile);
+    }
+  }, []);
+
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await handleFileUpload(file);
+    }
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleFileUpload = async (file: File) => {
+    try {
+      setUploadingFile(true);
+      setError(null);
+      
+      // 1. Analyze the file
+      const result = await catalogApi.analyzeReport(file);
+      
+      // 2. Save the analysis as a pending valuation
+      await catalogApi.saveAnalysis(result, 'Administrador');
+      
+      // 3. Reload data to show the new valuation
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al procesar el archivo');
+    } finally {
+      setUploadingFile(false);
     }
   };
 
@@ -182,6 +254,20 @@ const CatalogView: React.FC = () => {
     }
   };
 
+  // Handle discard (X button)
+  const handleDiscard = async () => {
+    if (!summary) return;
+    
+    try {
+      await catalogApi.discardImport(summary.id);
+      setSummary(null);
+      setProducts([]);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al descartar la valuación');
+    }
+  };
+
   // Format helpers
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('es-MX', {
@@ -272,18 +358,109 @@ const CatalogView: React.FC = () => {
     );
   }
 
-  // No data state
+  // No data state - Show big drag & drop
   if (!summary) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-50">
-        <div className="bg-white border border-yellow-200 rounded-xl p-8 max-w-md text-center shadow-sm">
-          <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+      <div className="h-screen bg-gray-100 flex overflow-hidden">
+        {/* ===== LEFT SIDEBAR - HISTORIAL ===== */}
+        <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
+          {/* Sidebar Header */}
+          <div className="p-4 border-b border-gray-200 flex items-center gap-2">
+            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
+            <h2 className="font-semibold text-gray-900">Historial</h2>
           </div>
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">Sin datos</h3>
-          <p className="text-gray-600">No hay valuaciones disponibles para analizar.</p>
+
+          {/* History List */}
+          <div className="flex-1 overflow-y-auto p-2">
+            {history.length === 0 ? (
+              <div className="p-4 text-center text-gray-500 text-sm">
+                No hay historial
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {history.map((item) => (
+                  <div
+                    key={item.id}
+                    className="p-3 rounded-lg bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex-1">
+                        <div className="text-xs text-gray-500 mb-1">{item.time_ago}</div>
+                        <div className="text-xs text-gray-700">
+                          <span className="text-blue-600">▲</span> {item.user}
+                        </div>
+                        <div className="text-xs text-gray-500 truncate mt-0.5">{item.file_name}</div>
+                      </div>
+                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                        item.status === 'applied' ? 'bg-green-500 text-white' :
+                        item.status === 'pending' ? 'bg-amber-500 text-white' :
+                        'bg-gray-500 text-white'
+                      }`}>
+                        {item.status === 'applied' ? 'Aplicado' : item.status === 'pending' ? 'Pendiente' : 'Revertido'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      {item.new_products > 0 && (
+                        <span className="text-blue-600">+{item.new_products}</span>
+                      )}
+                      {item.price_changes > 0 && (
+                        <span className="text-orange-600">{item.price_changes} precios</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ===== MAIN CONTENT - BIG DROP ZONE ===== */}
+        <div className="flex-1 flex flex-col overflow-hidden p-6">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            onChange={handleFileInputChange}
+            className="hidden"
+          />
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`flex-1 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-all ${
+              isDragging 
+                ? 'border-blue-500 bg-blue-50' 
+                : 'border-gray-300 bg-white hover:border-blue-400 hover:bg-gray-50'
+            } ${uploadingFile ? 'opacity-50 pointer-events-none' : ''}`}
+          >
+            {uploadingFile ? (
+              <div className="flex flex-col items-center gap-4">
+                <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600"></div>
+                <p className="text-lg text-gray-600">Procesando reporte de valuación...</p>
+              </div>
+            ) : (
+              <>
+                <div className={`w-24 h-24 rounded-full flex items-center justify-center mb-6 ${
+                  isDragging ? 'bg-blue-100' : 'bg-gray-100'
+                }`}>
+                  <svg className={`w-12 h-12 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <h2 className="text-2xl font-semibold text-gray-800 mb-2">Sube tu Reporte de Valuación</h2>
+                <p className="text-gray-500 mb-6">Arrastra un archivo PDF aquí o haz clic para seleccionar</p>
+                <div className="flex items-center gap-2 text-sm text-gray-400">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Solo archivos PDF de reportes de valuación</span>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -406,7 +583,11 @@ const CatalogView: React.FC = () => {
               {Math.abs(percentChange).toFixed(0)}%
             </div>
           </div>
-          <button className="p-2 hover:bg-slate-800 rounded-lg transition-colors ml-4">
+          <button 
+            onClick={handleDiscard}
+            className="p-2 hover:bg-slate-800 rounded-lg transition-colors ml-4"
+            title="Descartar valuación"
+          >
             <svg className="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
