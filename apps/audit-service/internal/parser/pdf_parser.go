@@ -63,23 +63,29 @@ func (p *ComexPDFParser) extractItems(text string) []domain.AuditItem {
 	var items []domain.AuditItem
 	var validCount int
 
-	// STRATEGY: Math Brute Force
+	// STRATEGY: Global Pre-processing to prevent false Anchors
 
-	// Pre-process full text to detach codes from previous lines' stuck cents
-	// e.g. "1,267.960200300" -> "1,267.96 0200300"
-	// Also separate .XX from Alphanumeric codes if stuck
+	// 1. Separate stuck Importe from Code (e.g. ".960200300" -> ".96 0200300")
 	importeCodeSplitter := regexp.MustCompile(`(\.\d{2})(\d{7}|[A-Z]\d{6}|[A-Z]{2}\d{5})`)
 	text = importeCodeSplitter.ReplaceAllString(text, "$1 $2")
 
+	// 2. Separate stuck money decimals from following numbers (e.g. "20.9916" -> "20.99 16")
+	stuckMoneyFixer := regexp.MustCompile(`(\.\d{2})(\d)`)
+	text = stuckMoneyFixer.ReplaceAllString(text, "$1 $2")
+
+	// 3. Separate words from numbers, protecting single and 2-letter codes (e.g. "NYLON20" -> "NYLON 20", "LF00807" safe)
+	multiLetterAlphaNum := regexp.MustCompile(`([A-Z]{3,})([0-9])`)
+	text = multiLetterAlphaNum.ReplaceAllString(text, "$1 $2")
+
+	// 4. Remove Dates GLOBALLY to prevent years (e.g. 2025...) being detected as fake Product Codes
+	// Improved Date Regex: allow spaces, optional parts handling
+	dateRegex := regexp.MustCompile(`(\d{1,2})\s?[-/]\s?([A-Z]{3})\s?[-/]\s?(\d{2,4})`)
+	text = dateRegex.ReplaceAllString(text, "           ")
+
+	// Now find anchors on clean text
 	codeRegex := regexp.MustCompile(`(?:^|[^\d])(\d{7}|[A-Z]\d{6}|[A-Z]{2}\d{5})`)
 	codeMatches := codeRegex.FindAllStringSubmatchIndex(text, -1)
 	log.Printf("DEBUG: Found %d potential product codes", len(codeMatches))
-
-	// Regex tools
-	dateRegex := regexp.MustCompile(`\d{2}-[A-Z]{3}-\d{4}`)
-	// Separate letters from numbers to avoid pollution (e.g. V11,340 -> V 11,340)
-	alphaNumRegex1 := regexp.MustCompile(`([A-Z])([0-9])`)
-	alphaNumRegex2 := regexp.MustCompile(`([0-9])([A-Z])`)
 
 	// Catches blocks of stuck numbers. Strict digits/dots/commas.
 	dirtyBlockRegex := regexp.MustCompile(`[0-9.,]+`)
@@ -89,19 +95,18 @@ func (p *ComexPDFParser) extractItems(text string) []domain.AuditItem {
 		codeEnd := match[3]
 		code := text[codeStart:codeEnd]
 
-		rowEnd := len(text)
+		var nextCodeStart int = len(text)
 		if i+1 < len(codeMatches) {
-			rowEnd = codeMatches[i+1][2]
-		}
-		if rowEnd-codeEnd > 400 {
-			rowEnd = codeEnd + 400
+			nextCodeStart = codeMatches[i+1][2]
 		}
 
-		rawRow := text[codeEnd:rowEnd]
-		cleanRow := dateRegex.ReplaceAllString(rawRow, "           ")
-		// Clean sticky alphanumerics
-		cleanRow = alphaNumRegex1.ReplaceAllString(cleanRow, "$1 $2")
-		cleanRow = alphaNumRegex2.ReplaceAllString(cleanRow, "$1 $2")
+		rowEnd := nextCodeStart
+		if rowEnd-codeEnd > 600 {
+			rowEnd = codeEnd + 600
+		}
+
+		// Text is already clean globally
+		cleanRow := text[codeEnd:rowEnd]
 
 		// Find dirty blocks of numbers
 		blocks := dirtyBlockRegex.FindAllString(cleanRow, -1)
@@ -132,13 +137,20 @@ func (p *ComexPDFParser) extractItems(text string) []domain.AuditItem {
 			}
 		}
 
-		if !found && i < 10 {
-			log.Printf("DEBUG INVALID[%d]: %s. StreamA: %v", i, code, streamA)
+		if !found {
+			log.Printf("DEBUG INVALID: Code=%s StreamA=%v StreamB=%v RawRow='%s' NextCodeStart=%d", code, streamA, streamB, strings.ReplaceAll(cleanRow, "\n", " "), nextCodeStart)
 		}
 	}
 
 	log.Printf("DEBUG: Codes=%d, Valid=%d, Total=%d", len(codeMatches), validCount, len(items))
 	return items
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func checkAndAdd(item *domain.AuditItem, items *[]domain.AuditItem, count *int) {
@@ -227,7 +239,8 @@ func createItem(code string, cost float64, qty float64, context string) *domain.
 		rawDesc = strings.TrimSpace(rawDesc)
 		rawDesc = strings.ReplaceAll(rawDesc, "\n", " ")
 		rawDesc = strings.Join(strings.Fields(rawDesc), " ")
-		rawDesc = strings.TrimRight(rawDesc, "0123456789.- ")
+		// Corrected: REMOVED digits from TrimRight to support names like "V1", "5X1"
+		rawDesc = strings.TrimRight(rawDesc, ".- ")
 		if len(rawDesc) > 2 {
 			desc = rawDesc
 		}
@@ -241,10 +254,11 @@ func createItem(code string, cost float64, qty float64, context string) *domain.
 }
 
 func validateMath(a, b, c float64) bool {
-	if a == 0 || b == 0 {
-		return false
-	}
 	expected := a * b
+	// Allow zero results (e.g. Cost * 0Qty = 0Total)
+	if expected == 0 {
+		return math.Abs(c) < 0.01
+	}
 	tolerance := math.Max(0.05*math.Abs(expected), 0.5)
 	return math.Abs(c-expected) <= tolerance
 }
