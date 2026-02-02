@@ -115,3 +115,9 @@ func (h *Argon2Hasher) Hash(password string) (string, error) {
 	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
 		h.memory, h.iterations, h.parallelism, saltB64, hashB64), nil
 }
+
+// HashPassword is a convenience function that creates a new hash using default settings
+func HashPassword(password string) (string, error) {
+	hasher := NewArgon2Hasher()
+	return hasher.Hash(password)
+}

@@ -1,58 +1,40 @@
--- Crear tabla de usuarios
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(50) NOT NULL DEFAULT 'admin',
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP
-    WITH
-        TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP
-    WITH
-        TIME ZONE DEFAULT CURRENT_TIMESTAMP
+-- =====================================================
+-- QONTROL DATABASE SCHEMA
+-- Version 2.1 - With IAM + Custom Roles
+-- =====================================================
+
+-- =====================================================
+-- ROLES (Roles Personalizables) - Must be created first
+-- =====================================================
+CREATE TABLE IF NOT EXISTS roles (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) UNIQUE NOT NULL,
+    description VARCHAR(255),
+    permissions TEXT[] DEFAULT '{}',
+    is_system BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Crear índice para búsquedas por email
-CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
-
 -- =====================================================
--- USUARIOS DE PRUEBA
+-- USERS (Usuarios)
 -- =====================================================
--- Salt: qontrolsalt12345 (16 bytes)
--- Hashes generados con Argon2id: m=65536, t=3, p=4, keyLen=32
--- Usuario Admin: jose.admin@gmail.com / Admin123!
-INSERT INTO
-    users (email, password_hash, role, is_active)
-VALUES
-    (
-        'jose.admin@gmail.com',
-        '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$nbTtxV/jtxikvwgKIVDxWIIszfPPL/ZBvtNU5AiaTH4',
-        'admin',
-        true
-    ) ON CONFLICT (email) DO NOTHING;
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    role_id INT REFERENCES roles(id),
+    is_active BOOLEAN DEFAULT true,
+    banned_at TIMESTAMP WITH TIME ZONE,
+    banned_reason VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
 
--- Usuario Regular: test.user@hotmail.com / Test1234!
-INSERT INTO
-    users (email, password_hash, role, is_active)
-VALUES
-    (
-        'test.user@hotmail.com',
-        '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$8OKPOMEHMpMjbT0ADTgZ9i23sxdvLJLZYGV0X5kj08Y',
-        'user',
-        true
-    ) ON CONFLICT (email) DO NOTHING;
-
--- Usuario Inactivo: inactive@gmail.com / Inactive123!
-INSERT INTO
-    users (email, password_hash, role, is_active)
-VALUES
-    (
-        'inactive@gmail.com',
-        '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$DPGehdPjWaWK2+lR2HAbQ7wp/GoRwh/caZQrbTtxV/g',
-        'admin',
-        false
-    ) ON CONFLICT (email) DO NOTHING;
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role_id);
 
 -- =====================================================
 -- STORES (Tiendas)
@@ -61,80 +43,39 @@ CREATE TABLE IF NOT EXISTS stores (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     status BOOLEAN DEFAULT true,
-    created_at TIMESTAMP
-    WITH
-        TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO
-    stores (name, status)
-VALUES
-    ('Celaya Centro', true),
-    ('Dolores Hidalgo', true),
-    ('San Miguel de Allende', true),
-    ('Salamanca', true),
-    ('Salvatierra', false),
-    ('Irapuato Norte', true),
-    ('León Centro', true) ON CONFLICT DO NOTHING;
-
 -- =====================================================
--- AUDIT SESSIONS (Sesiones de Auditoría)
+-- USER STORES (Asignación de Tiendas a Usuarios)
 -- =====================================================
-CREATE TABLE IF NOT EXISTS audit_sessions (
+CREATE TABLE IF NOT EXISTS user_stores (
     id SERIAL PRIMARY KEY,
-    store_id INT NOT NULL REFERENCES stores (id),
-    created_by UUID REFERENCES users (id),
-    status VARCHAR(20) DEFAULT 'UPLOADING',
-    reference_date DATE,
-    pdf_url VARCHAR(500),
-    created_at TIMESTAMP
-    WITH
-        TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        closed_at TIMESTAMP
-    WITH
-        TIME ZONE
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    store_id INT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, store_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_audit_sessions_store ON audit_sessions (store_id);
-
-CREATE INDEX IF NOT EXISTS idx_audit_sessions_status ON audit_sessions (status);
+CREATE INDEX IF NOT EXISTS idx_user_stores_user ON user_stores(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_stores_store ON user_stores(store_id);
 
 -- =====================================================
--- AUDIT THEORETICAL (Items del PDF)
+-- USER PERMISSIONS (Permisos de Módulos/Servicios)
+-- Override de permisos individuales (adicionales al rol)
+-- Permisos disponibles:
+--   Web: 'web:dashboard', 'web:inventories', 'web:audits', 'web:catalog', 'web:users'
+--   POS: 'pos:sales', 'pos:inventory', 'pos:reports'
 -- =====================================================
-CREATE TABLE IF NOT EXISTS audit_theoretical (
+CREATE TABLE IF NOT EXISTS user_permissions (
     id SERIAL PRIMARY KEY,
-    audit_id INT NOT NULL REFERENCES audit_sessions (id) ON DELETE CASCADE,
-    product_code VARCHAR(50) NOT NULL,
-    product_name VARCHAR(255),
-    unit_cost DECIMAL(10, 2),
-    last_purchase DATE,
-    expected_qty DECIMAL(10, 3) NOT NULL,
-    created_at TIMESTAMP
-    WITH
-        TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    permission VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, permission)
 );
 
-CREATE INDEX IF NOT EXISTS idx_audit_theoretical_audit ON audit_theoretical (audit_id);
-
-CREATE INDEX IF NOT EXISTS idx_audit_theoretical_code ON audit_theoretical (product_code);
-
--- =====================================================
--- AUDIT PHYSICAL (Escaneos desde App - para futuro)
--- =====================================================
-CREATE TABLE IF NOT EXISTS audit_physical (
-    id SERIAL PRIMARY KEY,
-    audit_id INT NOT NULL REFERENCES audit_sessions (id) ON DELETE CASCADE,
-    barcode VARCHAR(50) NOT NULL,
-    quantity DECIMAL(10, 3) DEFAULT 1,
-    scanned_by UUID REFERENCES users (id),
-    device_id VARCHAR(100),
-    scanned_at TIMESTAMP
-    WITH
-        TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_audit_physical_audit ON audit_physical (audit_id);
+CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
 
 -- =====================================================
 -- PRODUCTS (Catálogo Maestro de Productos)
@@ -151,8 +92,8 @@ CREATE TABLE IF NOT EXISTS products (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_products_sku ON products (sku);
-CREATE INDEX IF NOT EXISTS idx_products_barcode ON products (barcode);
+CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
+CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
 
 -- =====================================================
 -- CATALOG IMPORTS (Historial de Importaciones)
@@ -178,8 +119,8 @@ CREATE TABLE IF NOT EXISTS catalog_imports (
     applied_at TIMESTAMP WITH TIME ZONE
 );
 
-CREATE INDEX IF NOT EXISTS idx_catalog_imports_store ON catalog_imports (store_id);
-CREATE INDEX IF NOT EXISTS idx_catalog_imports_date ON catalog_imports (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_catalog_imports_store ON catalog_imports(store_id);
+CREATE INDEX IF NOT EXISTS idx_catalog_imports_date ON catalog_imports(created_at DESC);
 
 -- =====================================================
 -- CATALOG IMPORT ITEMS (Detalle de Cambios)
@@ -189,7 +130,7 @@ CREATE TABLE IF NOT EXISTS catalog_import_items (
     import_id INT NOT NULL REFERENCES catalog_imports(id) ON DELETE CASCADE,
     sku VARCHAR(50) NOT NULL,
     product_name VARCHAR(255),
-    change_type VARCHAR(20) NOT NULL, -- 'new', 'price_up', 'price_down'
+    change_type VARCHAR(20) NOT NULL,
     old_price DECIMAL(10, 2),
     new_price DECIMAL(10, 2) NOT NULL,
     difference DECIMAL(10, 2) NOT NULL,
@@ -199,13 +140,177 @@ CREATE TABLE IF NOT EXISTS catalog_import_items (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_catalog_import_items_import ON catalog_import_items (import_id);
-CREATE INDEX IF NOT EXISTS idx_catalog_import_items_sku ON catalog_import_items (sku);
+CREATE INDEX IF NOT EXISTS idx_catalog_import_items_import ON catalog_import_items(import_id);
+CREATE INDEX IF NOT EXISTS idx_catalog_import_items_sku ON catalog_import_items(sku);
 
 -- =====================================================
--- INITIAL CATALOG DATA (Datos Base del Catálogo)
+-- AUDIT SESSIONS (Sesiones de Auditoría)
 -- =====================================================
--- Productos iniciales del catálogo maestro (simulando LISTADF inicial)
+CREATE TABLE IF NOT EXISTS audit_sessions (
+    id SERIAL PRIMARY KEY,
+    store_id INT NOT NULL REFERENCES stores(id),
+    created_by UUID REFERENCES users(id),
+    status VARCHAR(20) DEFAULT 'UPLOADING',
+    reference_date DATE,
+    pdf_url VARCHAR(500),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_sessions_store ON audit_sessions(store_id);
+CREATE INDEX IF NOT EXISTS idx_audit_sessions_status ON audit_sessions(status);
+
+-- =====================================================
+-- AUDIT THEORETICAL (Items del PDF)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS audit_theoretical (
+    id SERIAL PRIMARY KEY,
+    audit_id INT NOT NULL REFERENCES audit_sessions(id) ON DELETE CASCADE,
+    product_code VARCHAR(50) NOT NULL,
+    product_name VARCHAR(255),
+    unit_cost DECIMAL(10, 2),
+    last_purchase DATE,
+    expected_qty DECIMAL(10, 3) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_theoretical_audit ON audit_theoretical(audit_id);
+CREATE INDEX IF NOT EXISTS idx_audit_theoretical_code ON audit_theoretical(product_code);
+
+-- =====================================================
+-- AUDIT PHYSICAL (Escaneos desde App)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS audit_physical (
+    id SERIAL PRIMARY KEY,
+    audit_id INT NOT NULL REFERENCES audit_sessions(id) ON DELETE CASCADE,
+    barcode VARCHAR(50) NOT NULL,
+    quantity DECIMAL(10, 3) DEFAULT 1,
+    scanned_by UUID REFERENCES users(id),
+    device_id VARCHAR(100),
+    scanned_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_physical_audit ON audit_physical(audit_id);
+
+-- =====================================================
+-- SEED DATA: STORES
+-- =====================================================
+INSERT INTO stores (name, status) VALUES
+    ('Celaya Centro', true),
+    ('Dolores Hidalgo', true),
+    ('San Miguel de Allende', true),
+    ('Salamanca', true),
+    ('Salvatierra', false),
+    ('Irapuato Norte', true),
+    ('León Centro', true)
+ON CONFLICT DO NOTHING;
+
+-- =====================================================
+-- SEED DATA: ROLES
+-- =====================================================
+INSERT INTO roles (name, description, permissions, is_system) VALUES
+    ('Administrador', 'Acceso total al sistema', ARRAY['web:dashboard', 'web:inventories', 'web:audits', 'web:catalog', 'web:users', 'pos:sales', 'pos:inventory', 'pos:reports'], true),
+    ('Gerente', 'Gestión de tiendas y reportes', ARRAY['web:dashboard', 'web:inventories', 'web:audits', 'web:catalog', 'pos:sales', 'pos:inventory', 'pos:reports'], true),
+    ('Vendedor', 'Operaciones de venta en POS', ARRAY['pos:sales', 'pos:inventory'], true),
+    ('Auditor', 'Auditorías e inventarios', ARRAY['web:dashboard', 'web:inventories', 'web:audits'], true),
+    ('Solo Lectura', 'Solo visualización de dashboard', ARRAY['web:dashboard'], false),
+    ('Sin Acceso', 'Acceso denegado temporalmente', ARRAY[]::TEXT[], false)
+ON CONFLICT (name) DO NOTHING;
+
+-- =====================================================
+-- SEED DATA: USERS
+-- Salt: qontrolsalt12345 (16 bytes)
+-- Hashes generados con Argon2id: m=65536, t=3, p=4, keyLen=32
+-- role_id: 1=Administrador, 2=Gerente, 3=Vendedor, 4=Auditor, 5=Solo Lectura, 6=Sin Acceso
+-- =====================================================
+
+-- Admin: admin@qontrol.com / Admin123!
+INSERT INTO users (id, email, password_hash, first_name, last_name, role_id, is_active)
+VALUES (
+    'a0000000-0000-0000-0000-000000000001',
+    'admin@qontrol.com',
+    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$nbTtxV/jtxikvwgKIVDxWIIszfPPL/ZBvtNU5AiaTH4',
+    'Administrador',
+    'Global',
+    1,
+    true
+) ON CONFLICT (email) DO NOTHING;
+
+-- Gerente: gerente@qontrol.com / Test1234!
+INSERT INTO users (id, email, password_hash, first_name, last_name, role_id, is_active)
+VALUES (
+    'a0000000-0000-0000-0000-000000000002',
+    'gerente@qontrol.com',
+    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$8OKPOMEHMpMjbT0ADTgZ9i23sxdvLJLZYGV0X5kj08Y',
+    'Juan',
+    'García',
+    2,
+    true
+) ON CONFLICT (email) DO NOTHING;
+
+-- Vendedor: vendedor@qontrol.com / Test1234!
+INSERT INTO users (id, email, password_hash, first_name, last_name, role_id, is_active)
+VALUES (
+    'a0000000-0000-0000-0000-000000000003',
+    'vendedor@qontrol.com',
+    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$8OKPOMEHMpMjbT0ADTgZ9i23sxdvLJLZYGV0X5kj08Y',
+    'María',
+    'López',
+    3,
+    true
+) ON CONFLICT (email) DO NOTHING;
+
+-- Usuario Baneado: baneado@qontrol.com / Inactive123!
+INSERT INTO users (id, email, password_hash, first_name, last_name, role_id, is_active, banned_at, banned_reason)
+VALUES (
+    'a0000000-0000-0000-0000-000000000004',
+    'baneado@qontrol.com',
+    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$DPGehdPjWaWK2+lR2HAbQ7wp/GoRwh/caZQrbTtxV/g',
+    'Pedro',
+    'Martínez',
+    3,
+    false,
+    '2026-01-20 10:00:00',
+    'Violación de políticas de la empresa'
+) ON CONFLICT (email) DO NOTHING;
+
+-- =====================================================
+-- SEED DATA: USER STORES
+-- =====================================================
+-- Gerente tiene acceso a Celaya y Dolores
+INSERT INTO user_stores (user_id, store_id) VALUES 
+    ('a0000000-0000-0000-0000-000000000002', 1),
+    ('a0000000-0000-0000-0000-000000000002', 2)
+ON CONFLICT DO NOTHING;
+
+-- Vendedor solo tiene acceso a Celaya
+INSERT INTO user_stores (user_id, store_id) VALUES 
+    ('a0000000-0000-0000-0000-000000000003', 1)
+ON CONFLICT DO NOTHING;
+
+-- =====================================================
+-- SEED DATA: USER PERMISSIONS
+-- =====================================================
+-- Gerente: web completo excepto usuarios, POS completo
+INSERT INTO user_permissions (user_id, permission) VALUES 
+    ('a0000000-0000-0000-0000-000000000002', 'web:dashboard'),
+    ('a0000000-0000-0000-0000-000000000002', 'web:inventories'),
+    ('a0000000-0000-0000-0000-000000000002', 'web:audits'),
+    ('a0000000-0000-0000-0000-000000000002', 'web:catalog'),
+    ('a0000000-0000-0000-0000-000000000002', 'pos:sales'),
+    ('a0000000-0000-0000-0000-000000000002', 'pos:inventory'),
+    ('a0000000-0000-0000-0000-000000000002', 'pos:reports')
+ON CONFLICT DO NOTHING;
+
+-- Vendedor: solo POS ventas e inventario
+INSERT INTO user_permissions (user_id, permission) VALUES 
+    ('a0000000-0000-0000-0000-000000000003', 'pos:sales'),
+    ('a0000000-0000-0000-0000-000000000003', 'pos:inventory')
+ON CONFLICT DO NOTHING;
+
+-- =====================================================
+-- SEED DATA: PRODUCTS (Catálogo Inicial)
+-- =====================================================
 INSERT INTO products (sku, barcode, name, unit, last_price, source) VALUES
     ('001', '7501234567890', 'ACEITE VEGETAL 1L', 'pz', 45.50, 'LISTADF_INICIAL'),
     ('002', '7501234567891', 'ARROZ GRANO LARGO 1KG', 'kg', 28.00, 'LISTADF_INICIAL'),
@@ -229,7 +334,9 @@ INSERT INTO products (sku, barcode, name, unit, last_price, source) VALUES
     ('020', '7501234567909', 'CEREAL HOJUELAS 500G', 'pz', 68.00, 'LISTADF_INICIAL')
 ON CONFLICT (sku) DO NOTHING;
 
--- Registro de la importación inicial
+-- =====================================================
+-- SEED DATA: Initial Catalog Import Record
+-- =====================================================
 INSERT INTO catalog_imports (
     file_name, 
     store_name, 

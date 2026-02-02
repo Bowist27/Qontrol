@@ -128,7 +128,11 @@ func (s *AuthService) Authenticate(ctx context.Context, email, password, clientI
 	// We don't have Unblock method, but block key expires.
 
 	// Step 7: Generate JWT Token
-	token, err := s.tokenMgr.Generate(user.ID, user.Email, user.Role)
+	roleName := "unknown"
+	if user.Role != nil {
+		roleName = user.Role.Name
+	}
+	token, err := s.tokenMgr.Generate(user.ID, user.Email, roleName)
 	if err != nil {
 		log.Printf("Failed to generate JWT: %v", err)
 		return nil, err
@@ -139,7 +143,7 @@ func (s *AuthService) Authenticate(ctx context.Context, email, password, clientI
 		log.Printf("Warning: Failed to store session: %v", err)
 	}
 
-	log.Printf("✅ Successful login for user: %s (role: %s)", email, user.Role)
+	log.Printf("✅ Successful login for user: %s (role: %s)", email, roleName)
 
 	// Return { token, user, role }
 	return &domain.LoginResponse{
@@ -202,12 +206,22 @@ func (s *AuthService) GetAllActiveUsers(ctx context.Context) ([]domain.UserSyncD
 
 	var syncUsers []domain.UserSyncDTO
 	for _, user := range users {
+		roleName := ""
+		var permissions []string
+		if user.Role != nil {
+			roleName = user.Role.Name
+			permissions = user.Role.Permissions
+		}
 		syncUsers = append(syncUsers, domain.UserSyncDTO{
 			ID:           user.ID,
 			Email:        user.Email,
 			PasswordHash: user.PasswordHash,
-			Role:         user.Role,
+			FirstName:    user.FirstName,
+			LastName:     user.LastName,
+			RoleID:       user.RoleID,
+			RoleName:     roleName,
 			IsActive:     user.IsActive,
+			Permissions:  permissions,
 		})
 	}
 

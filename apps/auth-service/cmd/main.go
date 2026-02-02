@@ -54,6 +54,7 @@ func main() {
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
+	userHandler := handlers.NewUserHandler(userRepo)
 
 	// Setup Gin router
 	r := gin.Default()
@@ -67,10 +68,28 @@ func main() {
 	})
 
 	// Auth routes
-	// Auth routes
 	r.POST("/login", authHandler.Login)
 	r.POST("/logout", authHandler.Logout)
 	r.GET("/users/sync", authHandler.SyncUsers)
+
+	// User management routes (IAM)
+	r.GET("/users", userHandler.ListUsers)
+	r.GET("/users/:id", userHandler.GetUser)
+	r.POST("/users", userHandler.CreateUser)
+	r.PUT("/users/:id", userHandler.UpdateUser)
+	r.DELETE("/users/:id", userHandler.DeleteUser)
+	r.POST("/users/:id/ban", userHandler.BanUser)
+	r.POST("/users/:id/unban", userHandler.UnbanUser)
+
+	// Stores route
+	r.GET("/stores", userHandler.ListStores)
+
+	// Roles management routes
+	r.GET("/roles", userHandler.ListRoles)
+	r.GET("/roles/:id", userHandler.GetRole)
+	r.POST("/roles", userHandler.CreateRole)
+	r.PUT("/roles/:id", userHandler.UpdateRole)
+	r.DELETE("/roles/:id", userHandler.DeleteRole)
 
 	port := getEnv("PORT", "8080")
 	log.Println("🚀 Auth service starting on :" + port)
