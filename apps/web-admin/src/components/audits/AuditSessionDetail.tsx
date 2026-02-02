@@ -5,11 +5,11 @@
  * Receives sessionId from parent (AuditsView orchestrator) to load specific session data.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     FileText, Upload, Wifi, WifiOff, Clock, Users, AlertTriangle,
     CheckCircle2, RefreshCw, Search, FileSpreadsheet, X, ArrowLeft,
-    Activity, AlertCircle, Package, BarChart3, History, MapPin, Calendar, User,
+    Activity, AlertCircle, BarChart3, History, MapPin, Calendar, User,
     ChevronDown, Store, Save, Loader2
 } from 'lucide-react';
 import { auditApi, type Store as StoreType } from '../../services/audit.api';
@@ -53,42 +53,7 @@ interface AuditSessionDetailProps {
     isNewAudit?: boolean;  // Flag for create mode
 }
 
-// Mock Data
-const MOCK_THEORETICAL: TheoreticalData = {
-    status: 'loaded',
-    fileName: 'valuacion_enero_2026.pdf',
-    uploadDate: '24 Ene 2026, 10:30 AM',
-    totalItems: 1250,
-    totalUnits: 45300,
-    totalValue: 450000,
-};
 
-const MOCK_PHYSICAL: PhysicalData = {
-    status: 'active',
-    scannedItems: 840,
-    activeUsers: ['Juan M.', 'Pedro G.'],
-    lastSync: 'Hace 5 segundos',
-};
-
-const MOCK_DIFF_ITEMS: DiffItem[] = [
-    { sku: '0200300', name: 'PRO 1000 PLUS BLANCO 19L', unitCost: 1423.32, theoretical: 25, physical: 23, difference: -2, impact: -2846.64 },
-    { sku: '0200310', name: 'PRO 1000 PLUS HUESO 19L', unitCost: 1410.50, theoretical: 18, physical: 18, difference: 0, impact: 0 },
-    { sku: '0081200', name: 'VINIMEX TOTAL BLANCO 19L', unitCost: 1850, theoretical: 40, physical: 35, difference: -5, impact: -9250 },
-    { sku: 'VIN-003', name: 'VINIMEX TOTAL ROJO 4L', unitCost: 520, theoretical: 30, physical: 32, difference: 2, impact: 1040 },
-    { sku: 'ESM-001', name: 'ESMALTE COMEX NEGRO 1L', unitCost: 285, theoretical: 50, physical: 48, difference: -2, impact: -570 },
-    { sku: 'ESM-002', name: 'ESMALTE COMEX BLANCO MATE 4L', unitCost: 680, theoretical: 35, physical: 35, difference: 0, impact: 0 },
-    { sku: 'IMP-001', name: 'IMPERMEABILIZANTE 5 AÑOS TERRACOTA 19L', unitCost: 2450, theoretical: 22, physical: 20, difference: -2, impact: -4900 },
-    { sku: 'IMP-002', name: 'IMPERMEABILIZANTE 10 AÑOS BLANCO 19L', unitCost: 3200, theoretical: 15, physical: 15, difference: 0, impact: 0 },
-    { sku: 'ACC-001', name: 'BROCHA PROFESIONAL 2"', unitCost: 85, theoretical: 120, physical: 118, difference: -2, impact: -170 },
-    { sku: 'ACC-002', name: 'RODILLO ANTIGOTA 9"', unitCost: 125, theoretical: 80, physical: 82, difference: 2, impact: 250 },
-    { sku: 'SEL-001', name: 'SELLADOR 5X1 TRANSPARENTE 19L', unitCost: 1280, theoretical: 28, physical: 25, difference: -3, impact: -3840 },
-    { sku: 'VIN-004', name: 'VINIMEX ANTIBACTERIAL BLANCO 4L', unitCost: 620, theoretical: 45, physical: 45, difference: 0, impact: 0 },
-    { sku: 'VIN-005', name: 'VINIMEX ANTIBACTERIAL AZUL CIELO 4L', unitCost: 650, theoretical: 25, physical: 23, difference: -2, impact: -1300 },
-    { sku: 'PRE-001', name: 'PRIMER ANTICORROSIVO GRIS 4L', unitCost: 480, theoretical: 32, physical: 32, difference: 0, impact: 0 },
-    { sku: 'PRE-002', name: 'PRIMER SELLADOR BLANCO 19L', unitCost: 1150, theoretical: 18, physical: 16, difference: -2, impact: -2300 },
-    { sku: 'NEW-SCAN', name: 'PRODUCTO NO LISTADO EN PDF', unitCost: 0, theoretical: 0, physical: 8, difference: 8, impact: 0 },
-    { sku: 'NEW-002', name: 'ARTICULO DESCONOCIDO ESCANEADO', unitCost: 0, theoretical: 0, physical: 5, difference: 5, impact: 0 },
-];
 
 const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _sessionId, storeName, onBack, isNewAudit = false }) => {
     // Store selector state for new audit
@@ -129,6 +94,10 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
     // Modal and save states
     const [showCancelModal, setShowCancelModal] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const tableContainerRef = useRef<HTMLDivElement>(null);
+    const [isLoadingStores, setIsLoadingStores] = useState(false);
 
     // Calculate audit status
     const getAuditStatus = (): AuditStatus => {
@@ -158,24 +127,91 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
-        simulateUpload();
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            processFile(e.dataTransfer.files[0]);
+        }
     };
 
-    const simulateUpload = () => {
+    // Handle File Input
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files && e.target.files[0]) {
+            processFile(e.target.files[0]);
+        }
+    };
+
+    // Scroll to top on page change
+    useEffect(() => {
+        if (tableContainerRef.current) {
+            tableContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    }, [currentPage]);
+
+    // FASE 3: Parse PDF (Preview)
+    const processFile = async (file: File) => {
+        if (!selectedStoreId) {
+            alert('Por favor selecciona una tienda primero');
+            return;
+        }
+
         setIsUploading(true);
-        setTimeout(() => {
+        setUploadedFile(file);
+
+        try {
+            // Call API to parse PDF (No save)
+            const result = await auditApi.parsePDF(file);
+
+            // Map API items to Frontend DiffItems
+            const mappedItems: DiffItem[] = result.items.map(item => ({
+                sku: item.product_code,
+                name: item.product_name,
+                unitCost: item.unit_cost,      // Keep original sign
+                theoretical: item.expected_qty,   // Keep original sign
+                physical: 0,
+                difference: -item.expected_qty,   // Initial diff is full negative if physical is 0
+                impact: -(item.expected_qty * item.unit_cost)
+            }));
+
+            // Update UI with preview data
+            setTheoretical({
+                status: 'loaded',
+                fileName: file.name,
+                uploadDate: new Date().toLocaleString(),
+                totalItems: result.total_items,
+                totalUnits: result.total_units,
+                totalValue: result.total_value,
+            });
+
+            setDiffItems(mappedItems);
+
+            // Prepare Physical card (empty/waiting)
+            setPhysical({
+                status: 'active',
+                scannedItems: 0,
+                activeUsers: ['Esperando App...'],
+                lastSync: 'Pendiente'
+            });
+
+            // Auto-select 'All' tab for preview
+            setActiveTab('all');
+
+        } catch (error) {
+            console.error('Parse error:', error);
+            setTheoretical({
+                status: 'error',
+                totalItems: 0, totalUnits: 0, totalValue: 0,
+                errorMessage: error instanceof Error ? error.message : 'Error al procesar el archivo'
+            });
+            setUploadedFile(null);
+        } finally {
             setIsUploading(false);
-            setTheoretical(MOCK_THEORETICAL);
-            setPhysical(MOCK_PHYSICAL); // Simulate that physical data also exists
-            setDiffItems(MOCK_DIFF_ITEMS);
-        }, 2000);
+        }
     };
 
     const handleReplaceFile = () => {
-        if (confirm('¿Deseas reemplazar el archivo actual? Esto recalculará todas las diferencias.')) {
-            setTheoretical({ status: 'empty', totalItems: 0, totalUnits: 0, totalValue: 0 });
-            setDiffItems([]);
-        }
+        setTheoretical({ status: 'empty', totalItems: 0, totalUnits: 0, totalValue: 0 });
+        setDiffItems([]);
+        setUploadedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     // Filter diff items based on active tab
@@ -236,9 +272,10 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                                 <span className="font-medium">
                                     {selectedStoreId
                                         ? stores.find(s => s.id === selectedStoreId)?.name
-                                        : 'Selecciona una Tienda'}
+                                        : isLoadingStores ? 'Cargando...' : 'Selecciona una Tienda'}
                                 </span>
-                                {theoretical.status !== 'loaded' && <ChevronDown size={16} className={`transition-transform ${showStoreDropdown ? 'rotate-180' : ''}`} />}
+                                {theoretical.status !== 'loaded' && !isLoadingStores && <ChevronDown size={16} className={`transition-transform ${showStoreDropdown ? 'rotate-180' : ''}`} />}
+                                {isLoadingStores && <Loader2 size={16} className="animate-spin text-slate-400" />}
                             </button>
 
                             {showStoreDropdown && theoretical.status !== 'loaded' && (
@@ -263,28 +300,25 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                                                         setSelectedStoreId(store.id);
                                                         setShowStoreDropdown(false);
                                                         setStoreSearch('');
-                                                        // TODO: POST /api/sessions to create session
                                                     }}
                                                     className={`w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50 transition-colors ${selectedStoreId === store.id ? 'bg-blue-50' : ''
                                                         }`}
                                                 >
-                                                    <Store size={14} className={selectedStoreId === store.id ? 'text-blue-600' : 'text-slate-400'} />
-                                                    <span className={`text-sm font-medium ${selectedStoreId === store.id ? 'text-blue-700' : 'text-slate-700'}`}>
-                                                        {store.name}
-                                                    </span>
-                                                    {selectedStoreId === store.id && (
-                                                        <CheckCircle2 size={14} className="ml-auto text-blue-600" />
-                                                    )}
+                                                    <div className={`w-2 h-2 rounded-full ${store.status ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                                                    <span className="text-slate-700 font-medium">{store.name}</span>
                                                 </button>
                                             ))}
+                                        {stores.length === 0 && !isLoadingStores && (
+                                            <div className="p-4 text-center text-slate-500 text-xs">No hay tiendas disponibles</div>
+                                        )}
                                     </div>
                                 </div>
                             )}
                         </div>
                     ) : (
-                        <div className="flex items-center gap-2 px-4 py-2 bg-slate-100 rounded-lg">
-                            <Package size={16} className="text-slate-500" />
-                            <span className="font-medium text-slate-700">{storeName}</span>
+                        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-md border border-slate-200">
+                            <Store size={14} className="text-slate-500" />
+                            <span className="text-sm font-medium text-slate-700">{storeName}</span>
                         </div>
                     )}
 
@@ -332,14 +366,19 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
 
                             {/* Save button - enabled when store selected and PDF loaded */}
                             <button
-                                onClick={() => {
+                                onClick={async () => {
+                                    if (!selectedStoreId || !uploadedFile) return;
                                     setIsSaving(true);
-                                    // Simulate API call
-                                    setTimeout(() => {
-                                        setIsSaving(false);
-                                        alert('Auditoría guardada correctamente');
+                                    try {
+                                        // Call API to Create Audit (Saves to DB)
+                                        await auditApi.createAudit(selectedStoreId, uploadedFile);
+                                        alert('Auditoría creada exitosamente');
                                         onBack();
-                                    }, 2000);
+                                    } catch (err) {
+                                        alert('Error al guardar: ' + (err instanceof Error ? err.message : 'Unknown error'));
+                                    } finally {
+                                        setIsSaving(false);
+                                    }
                                 }}
                                 disabled={!selectedStoreId || theoretical.status !== 'loaded' || isSaving}
                                 className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
@@ -406,12 +445,20 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                     ) : theoretical.status === 'empty' ? (
                         /* Empty State - Dropzone */
                         <div
-                            className="p-4 flex flex-col items-center justify-center min-h-[120px] cursor-pointer"
+                            className={`p-6 flex flex-col items-center justify-center border-2 border-dashed rounded-lg m-3 transition-colors cursor-pointer min-h-[120px] ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-blue-400 hover:bg-slate-50'
+                                }`}
                             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                             onDragLeave={() => setIsDragging(false)}
                             onDrop={handleDrop}
-                            onClick={simulateUpload}
+                            onClick={() => fileInputRef.current?.click()}
                         >
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                className="hidden"
+                                accept=".pdf"
+                                onChange={handleFileSelect}
+                            />
                             {isUploading ? (
                                 <div className="text-center">
                                     <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
@@ -648,7 +695,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                         </div>
 
                         {/* Data Grid - Enterprise Style */}
-                        <div className="flex-1 overflow-auto">
+                        <div className="flex-1 overflow-auto" ref={tableContainerRef}>
                             <table className="w-full text-sm border-collapse">
                                 <thead className="sticky top-0 z-10">
                                     {/* Group Headers */}
