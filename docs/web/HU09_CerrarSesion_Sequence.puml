@@ -15,8 +15,8 @@ box "Infrastructure\ndocker/" #EFEFEF
 end box
 
 box "Backend (Auth Service)\napps/auth-service/" #Honeydew
-    control "auth_handler.go" as Handler << Handler >>
-    control "auth_service.go" as Service << Service >>
+    control "internal/adapters/handlers/auth_handler.go" as Handler << Handler >>
+    control "internal/core/services/auth_service.go" as Service << Service >>
     database "Redis (Blacklist)" as Redis << Cache >>
 end box
 
