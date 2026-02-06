@@ -1,0 +1,92 @@
+@startuml
+title HU09 - Cerrar Sesión (Web Admin)
+
+actor Admin as User
+
+box "Frontend (React)\napps/web-admin/src/" #WhiteSmoke
+    boundary "pages/Dashboard.tsx" as Page << Page >>
+    control "context/AuthContext.tsx" as Context << React Context >>
+    control "core/application/usecases/LoginUseCase.ts" as UseCase << Core Logic >>
+    control "core/infrastructure/adapters/AuthApiAdapter.ts" as Gateway << Axios >>
+end box
+
+box "Infrastructure\ndocker/" #EFEFEF
+    boundary "nginx/nginx.conf" as Nginx << API Gateway >>
+end box
+
+box "Backend (Auth Service)\napps/auth-service/" #Honeydew
+    control "auth_handler.go" as Handler << Handler >>
+    control "auth_service.go" as Service << Service >>
+    database "Redis (Blacklist)" as Redis << Cache >>
+end box
+
+== Solicitud de Cierre ==
+
+User -> Page: Clic "Cerrar Sesión" (Topbar)
+activate Page
+
+    note right of Page #Pink
+        **ERROR ACTUAL:**
+        El código actual solo
+        muestra un alert()
+        y no llama al Contexto.
+    end note
+
+    Page -> Page: handleLogout() 
+    
+    group "Implementación Faltante (Lo que debería pasar)"
+        Page ->> Context: logout()
+        activate Context
+            
+            Context ->> UseCase: logout(token)
+            activate UseCase
+                
+                note right of UseCase #Pink
+                    **FALTANTE:**
+                    LoginUseCase no tiene método
+                    para llamar al API, solo
+                    limpia el localStorage.
+                end note
+
+                UseCase ->> Gateway: logout(token)
+                activate Gateway
+                
+                    Gateway ->> Nginx: POST /api/auth/logout
+                    activate Nginx
+                        
+                        Nginx ->> Handler: Forward Request
+                        activate Handler
+                        
+                            Handler ->> Service: Logout(token)
+                            activate Service
+                                Service ->> Redis: AddToBlacklist(token)
+                                Redis -->> Service: OK
+                            Service -->> Handler: Success
+                            deactivate Service
+                            
+                        Handler -->> Nginx: 200 OK
+                        deactivate Handler
+                        
+                    Nginx -->> Gateway: 200 OK
+                    deactivate Nginx
+                    
+                Gateway -->> UseCase: void
+                deactivate Gateway
+                
+                UseCase -> UseCase: clearSession()
+                note right of UseCase: Borra localStorage\n(token, user)
+                
+            UseCase -->> Context: void
+            deactivate UseCase
+            
+            Context -> Context: setUser(null)
+            
+        Context -->> Page: void
+        deactivate Context
+        
+        Page -> Page: navigate('/login')
+    end group
+
+deactivate Page
+
+@enduml
