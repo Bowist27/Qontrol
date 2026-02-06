@@ -48,6 +48,7 @@ export interface AuditSession {
     hasPdf: boolean;
     createdAt: string;        // Fecha de inicio (DD/M/YYYY)
     lockedAt?: string;        // When store locked it
+    closedAt?: string;        // When audit was closed
     completedAt?: string;
     finalizedBy?: string;
     percentComplete: number;
@@ -142,6 +143,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
             status: status,
             hasPdf: !!s.pdf_url,
             createdAt: s.created_at,
+            closedAt: s.closed_at || undefined,
             percentComplete: percent,
             currentLoss: 0,
             theoreticalItems: 0,
@@ -154,13 +156,23 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         setCurrentPage(1);
     }, [activeTab, focusFilter, filterStore, filterDateFrom, filterDateTo, sortField, sortDir]);
 
+    // Helper to check if closed more than 24h ago
+    const isClosedOver24h = (closedAt?: string): boolean => {
+        if (!closedAt) return false;
+        const closedDate = new Date(closedAt);
+        const now = new Date();
+        const hoursElapsed = (now.getTime() - closedDate.getTime()) / (1000 * 60 * 60);
+        return hoursElapsed > 24;
+    };
+
     // Session categorization with auto-archive logic
-    // Active: IN_PROGRESS, WAITING_PDF, LOCKED_BY_STORE (< 24h), REOPEN_REQUEST
-    // History: ARCHIVED, CANCELLED, LOCKED_BY_STORE (> 24h)
+    // Active: IN_PROGRESS, WAITING_PDF, WAITING_COUNT, LOCKED_BY_STORE (< 24h), REOPEN_REQUEST
+    // History: ARCHIVED, CANCELLED, LOCKED_BY_STORE (> 24h closed)
     const getActiveSessions = () => {
         return sessions.filter(s => {
             if (s.status === 'ARCHIVED' || s.status === 'CANCELLED') return false;
             if (s.status === 'LOCKED_BY_STORE' && isLockedOver24h(s.lockedAt)) return false;
+            if (s.status === 'LOCKED_BY_STORE' && isClosedOver24h(s.closedAt)) return false;
             return true;
         });
     };
@@ -169,6 +181,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         return sessions.filter(s => {
             if (s.status === 'ARCHIVED' || s.status === 'CANCELLED') return true;
             if (s.status === 'LOCKED_BY_STORE' && isLockedOver24h(s.lockedAt)) return true;
+            if (s.status === 'LOCKED_BY_STORE' && isClosedOver24h(s.closedAt)) return true;
             return false;
         });
     };
@@ -568,15 +581,6 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                     <span className="font-bold tabular-nums">{inProgressSessions.length}</span>
                                     <span className="text-blue-600">En Curso</span>
                                 </button>
-
-                                <div className="h-6 w-px bg-slate-200"></div>
-
-                                <div className={`flex items-center gap-1.5 font-bold ${totalLoss > 0 ? 'text-red-700' : 'text-emerald-600'}`}>
-                                    {totalLoss > 0 ? <TrendingDown size={16} /> : <TrendingUp size={16} />}
-                                    <span className="tabular-nums">
-                                        {totalLoss > 0 ? '-' : '+'}${Math.abs(totalLoss / 1000).toFixed(0)}k
-                                    </span>
-                                </div>
                             </>
                         )}
 
@@ -666,24 +670,31 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                         <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
                             <tr className="text-slate-500 text-xs uppercase tracking-wide">
                                 <th className="px-4 py-3 text-left font-medium">
-                                    <SortHeader field="store" label="Tienda" />
+                                    <SortHeader field="store" label="TIENDA" />
                                 </th>
-                                <th className="px-4 py-3 text-left font-medium">Estado</th>
+                                <th className="px-4 py-3 text-left font-medium">ESTADO</th>
+                                {/* Activas: AVANCE primero, luego FECHA INICIO */}
+                                {activeTab !== 'history' && (
+                                    <th className="px-4 py-3 text-left font-medium">
+                                        <SortHeader field="progress" label="AVANCE" />
+                                    </th>
+                                )}
                                 <th className="px-4 py-3 text-left font-medium">
-                                    <SortHeader field="progress" label="Avance" />
+                                    <SortHeader field="date" label="FECHA INICIO" />
                                 </th>
+                                {/* Historial: FECHA CIERRE después de FECHA INICIO */}
+                                {activeTab === 'history' && (
+                                    <th className="px-4 py-3 text-left font-medium">FECHA CIERRE</th>
+                                )}
                                 <th className="px-4 py-3 text-right font-medium">
                                     <div className="flex items-center justify-end">
-                                        <SortHeader field="loss" label="Riesgo ($)" />
+                                        <SortHeader field="loss" label="DISCREPANCIA" />
                                     </div>
                                 </th>
-                                <th className="px-4 py-3 text-left font-medium">
-                                    <SortHeader field="date" label="Fecha Inicio" />
-                                </th>
                                 {activeTab === 'history' && (
-                                    <th className="px-4 py-3 text-center font-medium">Reporte</th>
+                                    <th className="px-4 py-3 text-center font-medium">REPORTE</th>
                                 )}
-                                <th className="px-4 py-3 w-12 text-center font-medium">Acciones</th>
+                                <th className="px-4 py-3 w-12 text-center font-medium">ACCIONES</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -730,15 +741,12 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                             {renderStatusBadge(session)}
                                         </td>
 
-                                        {/* AVANCE */}
-                                        <td className="px-4 py-3">
-                                            {renderProgressBar(session)}
-                                        </td>
-
-                                        {/* RIESGO */}
-                                        <td className="px-4 py-3 text-right">
-                                            {renderLossColumn(session.currentLoss)}
-                                        </td>
+                                        {/* AVANCE (active only - antes de FECHA INICIO) */}
+                                        {activeTab !== 'history' && (
+                                            <td className="px-4 py-3">
+                                                {renderProgressBar(session)}
+                                            </td>
+                                        )}
 
                                         {/* FECHA INICIO (DD/M/YYYY) */}
                                         <td className="px-4 py-3">
@@ -748,7 +756,22 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                             </div>
                                         </td>
 
-                                        {/* HISTORY: Reporte Button */}
+                                        {/* FECHA CIERRE (history only - después de FECHA INICIO) */}
+                                        {activeTab === 'history' && (
+                                            <td className="px-4 py-3">
+                                                <div className="flex items-center gap-1.5 text-slate-600 text-sm">
+                                                    <Calendar size={14} className="text-slate-400" />
+                                                    {session.closedAt ? formatDateDDMYYYY(session.closedAt) : '-'}
+                                                </div>
+                                            </td>
+                                        )}
+
+                                        {/* DISCREPANCIA */}
+                                        <td className="px-4 py-3 text-right">
+                                            {renderLossColumn(session.currentLoss)}
+                                        </td>
+
+                                        {/* REPORTE (history only) */}
                                         {activeTab === 'history' && (
                                             <td className="px-4 py-3 text-center">
                                                 <button

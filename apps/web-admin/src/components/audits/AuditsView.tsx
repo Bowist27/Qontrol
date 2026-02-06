@@ -31,6 +31,7 @@ const AuditsView: React.FC = () => {
 
     const handleBack = () => {
         setSelectedSession(null);
+        loadAudits(); // Refresh audit list when returning to hub
     };
 
     // Hub & Spoke Pattern: Show Hub or Detail based on selection
