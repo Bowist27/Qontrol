@@ -6,7 +6,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { User } from '../core/domain/entities/User';
-import { LoginUseCase } from '../core/application/usecases/LoginUseCase';
+import { LoginUseCase, loginUseCase } from '../core/application/usecases/LoginUseCase';
 
 interface AuthContextType {
     user: User | null;
@@ -39,8 +39,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setUser(userData);
     };
 
-    const logout = () => {
-        LoginUseCase.clearSession();
+    const logout = async () => {
+        await loginUseCase.logout();
         setUser(null);
     };
 

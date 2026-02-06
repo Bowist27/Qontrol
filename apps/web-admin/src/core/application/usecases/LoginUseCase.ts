@@ -124,6 +124,20 @@ export class LoginUseCase {
     }
 
     /**
+     * Logout
+     * Flow:
+     * 1. Call API to invalidate token (blacklist)
+     * 2. Clear local storage
+     */
+    async logout(): Promise<void> {
+        const token = localStorage.getItem('token');
+        if (token) {
+            await this.gateway.logout(token);
+        }
+        LoginUseCase.clearSession();
+    }
+
+    /**
      * Clear session data (logout)
      */
     static clearSession(): void {
