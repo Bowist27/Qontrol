@@ -1,0 +1,28 @@
+===================================================================
+ COMO EJECUTAR LAS PRUEBAS AUTOMATIZADAS
+===================================================================
+
+REQUISITOS:
+- Tener Node.js instalado (comando 'node' disponible).
+- Tener el backend (auth-service) corriendo en localhost:8080.
+
+-------------------------------------------------------------------
+ OPCIÓN 1: EJECUTAR LA PRUEBA DE LOGOUT (ESPECÍFICA)
+-------------------------------------------------------------------
+Para probar específicamente la HU09 (Logout Seguro), ejecuta:
+
+    node docs/pruebas/test_hu09_logout.js
+
+-------------------------------------------------------------------
+ OPCIÓN 2: EJECUTAR TODAS LAS PRUEBAS DE LA CARPETA (MASIVO)
+-------------------------------------------------------------------
+Si agregas más archivos de prueba en el futuro y quieres correrlos 
+todos de una vez, copia y pega este comando en tu PowerShell:
+
+    Get-ChildItem docs/pruebas/test_*.js | ForEach-Object { 
+        Write-Host "Ejecutando: $($_.Name)" -ForegroundColor Cyan
+        node $_.FullName 
+    }
+
+Este comando buscará todos los archivos que empiecen con "test_" 
+en esta carpeta y los ejecutará uno por uno.
