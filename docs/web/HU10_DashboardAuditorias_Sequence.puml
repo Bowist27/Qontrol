@@ -1,0 +1,110 @@
+@startuml
+title HU10 - Dashboard Auditorías (Web Admin)
+
+actor Admin as User
+
+box "Frontend (React)\napps/web-admin/src/" #WhiteSmoke
+    boundary "pages/Dashboard.tsx" as Page << Page >>
+    control "context/AuditContext.tsx" as Context << React Context >>
+    control "core/application/usecases/AuditUseCase.ts" as UseCase << Core Logic >>
+    control "core/infrastructure/adapters/AuditApiAdapter.ts" as Gateway << Axios >>
+end box
+
+box "Infrastructure\ndocker/" #EFEFEF
+    boundary "nginx/nginx.conf" as Nginx << API Gateway >>
+end box
+
+box "Backend (Audit Service)\napps/audit-service/" #Honeydew
+    control "cmd/main.go" as Router << Gin Router >>
+    control "internal/adapters/middleware/auth_middleware.go" as Middleware << Middleware >>
+    control "internal/adapters/handlers/audit_handler.go" as Handler << AuditHandler >>
+    control "internal/core/services/audit_service.go" as Service << AuditService >>
+end box
+
+box "Data Persistence" #LightYellow
+    control "internal/adapters/repositories/postgres_audit_repo.go" as Repo << PostgresAuditRepo >>
+    database "PostgreSQL\ndocker/postgres/init.sql" as DB << Database >>
+end box
+
+== Solicitud de Auditorías (Carga Inicial) ==
+
+User -> Page: Clic en "Auditorías" (Sidebar)
+activate Page
+
+    Page ->> Context: loadAudits()
+    activate Context
+        
+        Context ->> UseCase: getAudits()
+        activate UseCase
+
+            UseCase ->> Gateway: getAudits()
+            activate Gateway
+            
+                Gateway ->> Nginx: GET /api/audits
+                activate Nginx
+                    
+                    Nginx ->> Router: Forward to audit-service
+                    activate Router
+
+                        Router ->> Middleware: Use(RequireAuth)
+                        activate Middleware
+                            Middleware -> Middleware: Validate JWT
+                            alt Token Invalid
+                                Middleware -->> Router: 401 Unauthorized
+                                Router -->> Nginx: 401 Unauthorized
+                                Nginx -->> Gateway: 401 Unauthorized
+                                Gateway -->> UseCase: Throw Error
+                            else Token Valid
+                                Middleware ->> Handler: ListAudits(ctx)
+                                activate Handler
+                                    
+                                    Handler ->> Service: GetAudits(ctx)
+                                    activate Service
+                                        
+                                        note right of Service
+                                            Regla de Negocio:
+                                            - Scope Global
+                                            - Status: Waiting Count OR Waiting Valuation
+                                            - OR Closed < 24h
+                                        end note
+                                        
+                                        Service ->> Repo: FindAll(criteria)
+                                        activate Repo
+                                            Repo ->> DB: SELECT * FROM audits WHERE ...
+                                            activate DB
+                                            DB -->> Repo: Rows
+                                            deactivate DB
+                                            
+                                            Repo -->> Service: []AuditEntity
+                                        deactivate Repo
+                                        
+                                        Service -->> Handler: []AuditDTO
+                                    deactivate Service
+                                    
+                                    Handler -->> Router: 200 JSON
+                                deactivate Handler
+                            end
+                        deactivate Middleware
+                        
+                    Router -->> Nginx: 200 JSON
+                    deactivate Router
+                    
+                Nginx -->> Gateway: 200 JSON
+                deactivate Nginx
+                
+            Gateway -->> UseCase: Audit[]
+            deactivate Gateway
+            
+        UseCase -->> Context: Return Audit[]
+        deactivate UseCase
+        
+        Context -> Context: setAudits(data)
+        
+    Context -->> Page: void
+    deactivate Context
+    
+    Page -> Page: Render List & Status Chips
+    
+deactivate Page
+
+@enduml
