@@ -191,9 +191,24 @@ func (s *AuthService) calculateBlockDuration(attempts int) time.Duration {
 	return 15 * time.Minute
 }
 
-// Logout invalidates the user session
-func (s *AuthService) Logout(ctx context.Context, email string) error {
-	return s.cache.DeleteSession(ctx, email)
+// Logout invalidates the user session by adding the token to the blacklist
+// This prevents the token from being used again until it naturally expires
+func (s *AuthService) Logout(ctx context.Context, token string) error {
+	// Key for blacklist: "blacklist:{token}"
+	key := "blacklist:" + token
+
+	// We blacklist it for the duration of the session TTL (e.g. 24h)
+	// This covers the remaining validity of the token.
+	// A more precise approach would be parsing the token to find exact 'exp',
+	// but using sessionTTL is a safe and simple upper bound.
+	return s.cache.SetBlock(ctx, key, s.sessionTTL)
+}
+
+// IsTokenBlacklisted checks if the token is in the blacklist
+func (s *AuthService) IsTokenBlacklisted(ctx context.Context, token string) (bool, error) {
+	key := "blacklist:" + token
+	blocked, _, err := s.cache.IsBlocked(ctx, key)
+	return blocked, err
 }
 
 // GetAllActiveUsers retrieves all active users and returns their sync DTOs

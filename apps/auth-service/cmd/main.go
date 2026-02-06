@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/comex/auth-service/internal/adapters/handlers"
+	"github.com/comex/auth-service/internal/adapters/middleware"
 	"github.com/comex/auth-service/internal/adapters/repositories"
 	"github.com/comex/auth-service/internal/core/services"
 	"github.com/comex/auth-service/internal/infrastructure/cache"
@@ -54,6 +55,7 @@ func main() {
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
+	authMiddleware := middleware.NewAuthMiddleware(authService, jwtManager)
 	userHandler := handlers.NewUserHandler(userRepo)
 	productHandler := handlers.NewProductHandler(db)
 
@@ -68,33 +70,39 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok", "service": "auth-service"})
 	})
 
-	// Auth routes
+	// Auth routes (Public)
 	r.POST("/login", authHandler.Login)
-	r.POST("/logout", authHandler.Logout)
-	r.GET("/users/sync", authHandler.SyncUsers)
+	r.POST("/logout", authHandler.Logout) // Logout requires token but handles it inside
 
-	// User management routes (IAM)
-	r.GET("/users", userHandler.ListUsers)
-	r.GET("/users/:id", userHandler.GetUser)
-	r.POST("/users", userHandler.CreateUser)
-	r.PUT("/users/:id", userHandler.UpdateUser)
-	r.DELETE("/users/:id", userHandler.DeleteUser)
-	r.POST("/users/:id/ban", userHandler.BanUser)
-	r.POST("/users/:id/unban", userHandler.UnbanUser)
+	// Protected Routes
+	protected := r.Group("/")
+	protected.Use(authMiddleware.RequireAuth())
+	{
+		r.GET("/users/sync", authHandler.SyncUsers)
 
-	// Stores route
-	r.GET("/stores", userHandler.ListStores)
+		// User management routes (IAM)
+		protected.GET("/users", userHandler.ListUsers)
+		protected.GET("/users/:id", userHandler.GetUser)
+		protected.POST("/users", userHandler.CreateUser)
+		protected.PUT("/users/:id", userHandler.UpdateUser)
+		protected.DELETE("/users/:id", userHandler.DeleteUser)
+		protected.POST("/users/:id/ban", userHandler.BanUser)
+		protected.POST("/users/:id/unban", userHandler.UnbanUser)
 
-	// Products routes (for POS sync)
-	r.GET("/products/sync", productHandler.SyncProducts)
-	r.GET("/products", productHandler.ListProducts)
+		// Stores route
+		protected.GET("/stores", userHandler.ListStores)
 
-	// Roles management routes
-	r.GET("/roles", userHandler.ListRoles)
-	r.GET("/roles/:id", userHandler.GetRole)
-	r.POST("/roles", userHandler.CreateRole)
-	r.PUT("/roles/:id", userHandler.UpdateRole)
-	r.DELETE("/roles/:id", userHandler.DeleteRole)
+		// Products routes (for POS sync)
+		protected.GET("/products/sync", productHandler.SyncProducts)
+		protected.GET("/products", productHandler.ListProducts)
+
+		// Roles management routes
+		protected.GET("/roles", userHandler.ListRoles)
+		protected.GET("/roles/:id", userHandler.GetRole)
+		protected.POST("/roles", userHandler.CreateRole)
+		protected.PUT("/roles/:id", userHandler.UpdateRole)
+		protected.DELETE("/roles/:id", userHandler.DeleteRole)
+	}
 
 	port := getEnv("PORT", "8080")
 	log.Println("🚀 Auth service starting on :" + port)

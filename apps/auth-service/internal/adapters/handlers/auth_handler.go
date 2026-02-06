@@ -86,9 +86,30 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 // Logout handles POST /logout requests
+// Logout handles POST /logout requests
 func (h *AuthHandler) Logout(c *gin.Context) {
-	// For now, just acknowledge logout
-	// In production, you'd extract email from JWT and invalidate session
+	// 1. Get token from header
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "missing_token",
+			Message: "Token requerido",
+		})
+		return
+	}
+
+	// Remove "Bearer " prefix if present
+	tokenString := authHeader
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		tokenString = authHeader[7:]
+	}
+
+	// 2. Call Service to invalidate token
+	if err := h.authService.Logout(c.Request.Context(), tokenString); err != nil {
+		log.Printf("Error invalidating token: %v", err)
+		// We still return 200 to client to allow them to clear local session
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Sesión cerrada exitosamente",
 	})
