@@ -3,12 +3,11 @@
  * Collapsible navigation for the admin dashboard
  */
 
+import { NavLink } from 'react-router-dom';
 import { BarChart3, Package, ClipboardList, FileSpreadsheet, Users, LogOut, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
-import type { ViewType, SystemHealth } from '../../types';
+import type { SystemHealth } from '../../types';
 
 interface SidebarProps {
-    currentView: ViewType;
-    onViewChange: (view: ViewType) => void;
     systemHealth: SystemHealth;
     onShowSystemStatus: () => void;
     onLogout: () => void;
@@ -17,8 +16,6 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
-    currentView,
-    onViewChange,
     systemHealth,
     onShowSystemStatus,
     onLogout,
@@ -26,14 +23,14 @@ const Sidebar: React.FC<SidebarProps> = ({
     onToggleCollapse,
 }) => {
     const navItems = [
-        { id: 'dashboard' as ViewType, label: 'Dashboard', icon: BarChart3 },
-        { id: 'inventory_detail' as ViewType, label: 'Inventarios', icon: Package },
-        { id: 'audits' as ViewType, label: 'Auditorías', icon: ClipboardList },
+        { path: '/dashboard/overview', label: 'Dashboard', icon: BarChart3 },
+        { path: '/dashboard/inventory', label: 'Inventarios', icon: Package },
+        { path: '/dashboard/audits', label: 'Auditorías', icon: ClipboardList },
     ];
 
     const configItems = [
-        { id: 'catalog' as ViewType, label: 'Catálogo Maestro', icon: FileSpreadsheet },
-        { id: 'users' as ViewType, label: 'Usuarios (IAM)', icon: Users },
+        { path: '/dashboard/catalog', label: 'Catálogo Maestro', icon: FileSpreadsheet },
+        { path: '/dashboard/users', label: 'Usuarios (IAM)', icon: Users },
     ];
 
     return (
@@ -54,18 +51,17 @@ const Sidebar: React.FC<SidebarProps> = ({
             <nav className="flex-1 py-6 px-2 space-y-1">
                 {navItems.map((item) => {
                     const Icon = item.icon;
-                    const isActive = currentView === item.id;
                     return (
-                        <button
-                            key={item.id}
-                            onClick={() => onViewChange(item.id)}
-                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'
+                        <NavLink
+                            key={item.path}
+                            to={item.path}
+                            className={({ isActive }) => `w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-blue-600 text-white' : 'hover:bg-slate-800'
                                 } ${isCollapsed ? 'justify-center' : ''}`}
                             title={isCollapsed ? item.label : undefined}
                         >
                             <Icon size={20} />
                             {!isCollapsed && <span>{item.label}</span>}
-                        </button>
+                        </NavLink>
                     );
                 })}
 
@@ -75,18 +71,17 @@ const Sidebar: React.FC<SidebarProps> = ({
 
                 {configItems.map((item) => {
                     const Icon = item.icon;
-                    const isActive = currentView === item.id;
                     return (
-                        <button
-                            key={item.id}
-                            onClick={() => onViewChange(item.id)}
-                            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-slate-800 text-white' : 'hover:bg-slate-800'
+                        <NavLink
+                            key={item.path}
+                            to={item.path}
+                            className={({ isActive }) => `w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive ? 'bg-slate-800 text-white' : 'hover:bg-slate-800'
                                 } ${isCollapsed ? 'justify-center' : ''}`}
                             title={isCollapsed ? item.label : undefined}
                         >
                             <Icon size={20} />
                             {!isCollapsed && <span>{item.label}</span>}
-                        </button>
+                        </NavLink>
                     );
                 })}
             </nav>

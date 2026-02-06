@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
     FileText, Upload, Wifi, WifiOff, Clock, Users, AlertTriangle,
     CheckCircle2, RefreshCw, Search, FileSpreadsheet, X, ArrowLeft,
@@ -48,14 +49,7 @@ interface DiffItem {
     justification?: string;
 }
 
-// Props interface for Hub & Spoke pattern
-interface AuditSessionDetailProps {
-    sessionId: string;  // 'new' for creating new audit
-    storeName: string;  // Empty string when creating new
-    onBack: () => void;
-    isNewAudit?: boolean;  // Flag for create mode
-}
-
+// Props interface removed
 
 // Format large currency values: >= 1M shows as "1.92M", < 1M shows as "450k"
 const formatCurrencyCompact = (value: number): string => {
@@ -67,39 +61,52 @@ const formatCurrencyCompact = (value: number): string => {
     }
 };
 
-const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _sessionId, storeName, onBack, isNewAudit = false }) => {
+
+
+const AuditSessionDetail: React.FC = () => {
+    const { id } = useParams<{ id: string }>();
+    const navigate = useNavigate();
+    const location = useLocation();
+    const isNewAudit = id === 'new';
+    const _sessionId = id; // Mapping to existing logic variable legacy name
+
+    // Legacy mapping functions
+    const onBack = () => navigate('/dashboard/audits');
+
+    // Store name state for existing audits (fetched from API or passed via state)
+    const [existingStoreName, setExistingStoreName] = useState(location.state?.storeName || '');
     // Store selector state for new audit
     const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
     const [showStoreDropdown, setShowStoreDropdown] = useState(false);
     const [storeSearch, setStoreSearch] = useState('');
     const [stores, setStores] = useState<StoreType[]>([]);
 
-    // Fetch stores from API on mount
+    // Fetch stores from API on mount (always, to ensure we can resolve store name if state is missing)
     useEffect(() => {
-        if (isNewAudit) {
-            auditApi.getStores()
-                .then(setStores)
-                .catch(err => console.error('Failed to load stores:', err));
-        }
-    }, [isNewAudit]);
+        auditApi.getStores()
+            .then(setStores)
+            .catch(err => console.error('Failed to load stores:', err));
+    }, []);
 
     // Get the effective store name (used when creating new audit vs viewing existing)
+    // If not passed in state, try to find in loaded stores list by matching store_id (if we had it available easily here, but we fetch it in getAudit)
+    // We'll update existingStoreName in the getAudit effect if needed
     const effectiveStoreName = isNewAudit && selectedStoreId
         ? stores.find(s => s.id === selectedStoreId)?.name || ''
-        : storeName;
+        : existingStoreName;
 
     // Log for debugging - will be used for API calls in future
     console.debug('[AuditSession] Store:', effectiveStoreName || 'Not selected');
 
     // In future: fetch session data based on sessionId
     const [theoretical, setTheoretical] = useState<TheoreticalData>({ status: 'empty', totalItems: 0, totalUnits: 0, totalValue: 0 });
-    const [physical, setPhysical] = useState<PhysicalData>({ 
-        status: 'disconnected', 
-        scannedItems: 0, 
+    const [physical, setPhysical] = useState<PhysicalData>({
+        status: 'disconnected',
+        scannedItems: 0,
         totalQuantity: 0,
         uniqueProducts: 0,
         unknownItems: 0,
-        activeUsers: [] 
+        activeUsers: []
     });
     const [physicalScans, setPhysicalScans] = useState<PhysicalScan[]>([]);
     const [diffItems, setDiffItems] = useState<DiffItem[]>([]);
@@ -140,7 +147,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
 
                 // Extract unique device IDs as "users"
                 const devices = [...new Set(scans.map(s => s.device_id).filter(Boolean))];
-                
+
                 setPhysical({
                     status: summary.total_scans > 0 ? 'active' : 'disconnected',
                     scannedItems: summary.total_scans,
@@ -148,7 +155,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                     uniqueProducts: summary.unique_products,
                     unknownItems: summary.unknown_items,
                     activeUsers: devices as string[],
-                    lastSync: summary.last_scan_at 
+                    lastSync: summary.last_scan_at
                         ? `Hace ${Math.round((Date.now() - new Date(summary.last_scan_at).getTime()) / 1000)}s`
                         : undefined
                 });
@@ -200,6 +207,19 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
             auditApi.getAudit(parseInt(_sessionId))
                 .then((data) => {
                     console.log('[AuditSessionDetail] Loaded audit data:', data.items?.length, 'items');
+                    // If no store name from state, try to find it in the stores list using store_id
+                    // If no store name from state, try to find it in the stores list using store_id
+                    if (!existingStoreName && stores.length > 0) {
+                        const foundStore = stores.find(s => s.id === data.session.store_id);
+                        if (foundStore) setExistingStoreName(foundStore.name);
+                    } else if (!existingStoreName) {
+                        // Fallback: fetch just this store if we can't find it in the list (or wait for list to load)
+                        auditApi.getStores().then(fetchedStores => {
+                            const found = fetchedStores.find(s => s.id === data.session.store_id);
+                            if (found) setExistingStoreName(found.name);
+                        });
+                    }
+
                     // Populate theoretical data
                     const items: DiffItem[] = data.items.map(item => ({
                         sku: item.product_code,
@@ -228,7 +248,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                     setIsLoadingSession(false);
                 });
         }
-    }, [isNewAudit, _sessionId]);
+    }, [isNewAudit, _sessionId, existingStoreName, stores]);
 
     // Calculate audit status
     const getAuditStatus = (): AuditStatus => {
@@ -452,7 +472,7 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                     ) : (
                         <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-md border border-slate-200">
                             <Store size={14} className="text-slate-500" />
-                            <span className="text-sm font-medium text-slate-700">{storeName}</span>
+                            <span className="text-sm font-medium text-slate-700">{effectiveStoreName}</span>
                         </div>
                     )}
 
@@ -533,13 +553,16 @@ const AuditSessionDetail: React.FC<AuditSessionDetailProps> = ({ sessionId: _ses
                     ) : (
                         /* Cancel/Delete button for existing audits */
                         <button
+                            type="button"
                             onClick={async () => {
+                                if (!_sessionId) return;
                                 if (confirm('¿Estás seguro de que deseas cancelar esta auditoría? Esto eliminará todos los datos asociados.')) {
                                     try {
                                         await auditApi.deleteAudit(parseInt(_sessionId));
                                         alert('Auditoría cancelada exitosamente');
                                         onBack();
                                     } catch (err) {
+                                        console.error(err);
                                         alert('Error al cancelar: ' + (err instanceof Error ? err.message : 'Unknown error'));
                                     }
                                 }

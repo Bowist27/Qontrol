@@ -7,6 +7,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     Store, TrendingDown, TrendingUp, FileText, Play, CheckCircle2, Lock, KeyRound,
     Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
@@ -67,11 +68,10 @@ const isLockedOver24h = (lockedAt?: string): boolean => {
     return hoursElapsed > 24;
 };
 
-interface AuditHubProps {
-    onSelectSession: (sessionId: string, storeName: string) => void;
-}
+// interface AuditHubProps removed
 
-const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
+const AuditHub: React.FC = () => {
+    const navigate = useNavigate();
     // Use context instead of local state (HU10)
     const { audits, loading: isLoading } = useAudit();
 
@@ -301,7 +301,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
     };
 
     const handleViewDetail = (session: AuditSession) => {
-        onSelectSession(session.id, session.storeName);
+        navigate(session.id.toString(), { state: { storeName: session.storeName } });
         setOpenMenuId(null);
     };
 
@@ -444,7 +444,8 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         setFilterDateTo('');
     };
 
-    const SortHeader = ({ field, label }: { field: SortField; label: string }) => (
+    // SortHeader removed from here, will be defined outside or inlined
+    const renderSortHeader = (field: SortField, label: string) => (
         <button
             onClick={() => handleSort(field)}
             className="flex items-center gap-1 hover:text-slate-700 transition-colors"
@@ -518,7 +519,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                 </div>
 
                 <button
-                    onClick={() => onSelectSession('new', '')}
+                    onClick={() => navigate('new')}
                     className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-sm"
                 >
                     <Plus size={18} />
@@ -670,17 +671,17 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                         <thead className="sticky top-0 bg-slate-50 border-b border-slate-200">
                             <tr className="text-slate-500 text-xs uppercase tracking-wide">
                                 <th className="px-4 py-3 text-left font-medium">
-                                    <SortHeader field="store" label="TIENDA" />
+                                    {renderSortHeader('store', 'TIENDA')}
                                 </th>
                                 <th className="px-4 py-3 text-left font-medium">ESTADO</th>
                                 {/* Activas: AVANCE primero, luego FECHA INICIO */}
                                 {activeTab !== 'history' && (
                                     <th className="px-4 py-3 text-left font-medium">
-                                        <SortHeader field="progress" label="AVANCE" />
+                                        {renderSortHeader('progress', 'AVANCE')}
                                     </th>
                                 )}
                                 <th className="px-4 py-3 text-left font-medium">
-                                    <SortHeader field="date" label="FECHA INICIO" />
+                                    {renderSortHeader('date', 'FECHA INICIO')}
                                 </th>
                                 {/* Historial: FECHA CIERRE después de FECHA INICIO */}
                                 {activeTab === 'history' && (
@@ -688,7 +689,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                 )}
                                 <th className="px-4 py-3 text-right font-medium">
                                     <div className="flex items-center justify-end">
-                                        <SortHeader field="loss" label="DISCREPANCIA" />
+                                        {renderSortHeader('loss', 'DISCREPANCIA')}
                                     </div>
                                 </th>
                                 {activeTab === 'history' && (
@@ -710,7 +711,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                 displayedSessions.map((session, idx) => (
                                     <tr
                                         key={session.id}
-                                        onClick={() => onSelectSession(session.id, session.storeName)}
+                                        onClick={() => navigate(session.id.toString(), { state: { storeName: session.storeName } })}
                                         className={`border-b border-slate-100 cursor-pointer transition-colors ${session.status === 'REOPEN_REQUEST' ? 'bg-orange-50/60' :
                                             session.status === 'CANCELLED' ? 'bg-slate-50' :
                                                 (idx % 2 === 1 ? 'bg-slate-50/40' : '')

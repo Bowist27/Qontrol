@@ -4,25 +4,34 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { ChevronDown, User, Settings, LogOut, Shield, Store, Clock } from 'lucide-react';
-import type { ViewType } from '../../types';
+
 
 interface TopbarProps {
-    currentView: ViewType;
     onLogout: () => void;
 }
 
-const VIEW_TITLES: Record<ViewType, string> = {
-    dashboard: 'Dashboard General',
-    inventory_detail: 'Consulta de Inventarios',
-    audits: 'Auditorías y Ajustes',
-    catalog: 'Catálogo Maestro',
-    users: 'Gestión de Usuarios',
+const PAGE_TITLES: Record<string, string> = {
+    '/dashboard/overview': 'Dashboard General',
+    '/dashboard/inventory': 'Consulta de Inventarios',
+    '/dashboard/audits': 'Auditorías y Ajustes',
+    '/dashboard/catalog': 'Catálogo Maestro',
+    '/dashboard/users': 'Gestión de Usuarios',
 };
 
-const Topbar: React.FC<TopbarProps> = ({ currentView, onLogout }) => {
+const Topbar: React.FC<TopbarProps> = ({ onLogout }) => {
+    const { pathname } = useLocation();
     const [showProfileMenu, setShowProfileMenu] = useState(false);
     const profileRef = useRef<HTMLDivElement>(null);
+
+    const getTitle = () => {
+        // Simple direct match
+        if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
+        // Partial match for nested routes like /dashboard/audits/123
+        if (pathname.startsWith('/dashboard/audits')) return 'Auditorías y Ajustes';
+        return 'Dashboard General';
+    };
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -39,7 +48,7 @@ const Topbar: React.FC<TopbarProps> = ({ currentView, onLogout }) => {
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm">
             {/* Dynamic Title */}
             <div>
-                <h2 className="text-lg font-bold text-slate-800">{VIEW_TITLES[currentView]}</h2>
+                <h2 className="text-lg font-bold text-slate-800">{getTitle()}</h2>
                 <p className="text-xs text-slate-500">Bienvenido de vuelta, Administrador</p>
             </div>
 

@@ -15,6 +15,13 @@ import { AuditProvider } from './context/AuditContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 
+// View components
+import DashboardView from './components/dashboard/DashboardView';
+import InventoryView from './components/inventory/InventoryView';
+import AuditsView from './components/audits/AuditsView';
+import CatalogView from './components/catalog/CatalogView';
+import UsersView from './components/users/UsersView';
+
 /**
  * Protected Route Component
  * Redirects to /login if not authenticated
@@ -83,7 +90,15 @@ const AppRoutes: React.FC = () => {
             <Dashboard />
           </ProtectedRoute>
         }
-      />
+      >
+        {/* Dashboard Nested Routes */}
+        <Route index element={<Navigate to="overview" replace />} />
+        <Route path="overview" element={<DashboardView onViewInventory={() => { }} />} />
+        <Route path="inventory" element={<InventoryView />} />
+        <Route path="audits/*" element={<AuditsView />} />
+        <Route path="catalog" element={<CatalogView />} />
+        <Route path="users" element={<UsersView />} />
+      </Route>
 
       {/* Default Route - Redirect based on auth */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />

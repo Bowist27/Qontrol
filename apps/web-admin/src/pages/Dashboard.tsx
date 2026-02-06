@@ -5,23 +5,16 @@
 
 import { useState, useEffect } from 'react';
 import { LogOut } from 'lucide-react';
+import { Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import type { ViewType, SystemHealth } from '../types';
+import type { SystemHealth } from '../types';
 
 // Layout components
 import Sidebar from '../components/layout/Sidebar';
 import Topbar from '../components/layout/Topbar';
 import SystemStatusModal from '../components/layout/SystemStatusModal';
 
-// View components
-import DashboardView from '../components/dashboard/DashboardView';
-import InventoryView from '../components/inventory/InventoryView';
-import AuditsView from '../components/audits/AuditsView';
-import CatalogView from '../components/catalog/CatalogView';
-import UsersView from '../components/users/UsersView';
-
 export default function AdminDashboard() {
-    const [currentView, setCurrentView] = useState<ViewType>('dashboard');
     const [systemHealth, setSystemHealth] = useState<SystemHealth>({ status: 200, online: true });
     const [showSystemStatus, setShowSystemStatus] = useState(false);
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -46,14 +39,8 @@ export default function AdminDashboard() {
         setIsLoggingOut(true);
         try {
             await logout();
-            // AuthContext handles state cleanup, and since we are using 
-            // protected routes or simple state, the UI should update (e.g. redirect to login)
-            // But depending on router setup we might need explicit navigate, 
-            // though AuthContext usually triggers a re-render that redirects.
-            // For now, let's assume AuthContext updates 'user' to null.
         } catch (error) {
             console.error("Error during logout:", error);
-            // Force logout local even if error
             alert("Hubo un error al conectar con el servidor, pero se cerrará la sesión local.");
             localStorage.removeItem('token');
             window.location.reload();
@@ -63,16 +50,12 @@ export default function AdminDashboard() {
         }
     };
 
-    const handleViewInventory = () => {
-        setCurrentView('inventory_detail');
-    };
+
 
     return (
         <div className="min-h-screen bg-slate-50 flex font-sans">
             {/* Sidebar */}
             <Sidebar
-                currentView={currentView}
-                onViewChange={setCurrentView}
                 systemHealth={systemHealth}
                 onShowSystemStatus={() => setShowSystemStatus(true)}
                 onLogout={handleLogout}
@@ -129,16 +112,10 @@ export default function AdminDashboard() {
 
             {/* Main Content */}
             <main className="flex-1 flex flex-col">
-                <Topbar currentView={currentView} onLogout={handleLogout} />
+                <Topbar onLogout={handleLogout} />
 
                 <div className="p-8 overflow-y-auto h-[calc(100vh-64px)]">
-                    {currentView === 'dashboard' && (
-                        <DashboardView onViewInventory={handleViewInventory} />
-                    )}
-                    {currentView === 'inventory_detail' && <InventoryView />}
-                    {currentView === 'audits' && <AuditsView />}
-                    {currentView === 'catalog' && <CatalogView />}
-                    {currentView === 'users' && <UsersView />}
+                    <Outlet />
                 </div>
             </main>
         </div>
