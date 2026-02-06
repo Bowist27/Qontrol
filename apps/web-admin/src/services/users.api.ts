@@ -94,14 +94,23 @@ export const AVAILABLE_PERMISSIONS = {
 // API FUNCTIONS
 // =====================================================
 
+// Helper to get auth headers
+const getAuthHeaders = () => {
+    const token = localStorage.getItem('token');
+    return {
+        'Content-Type': 'application/json',
+        'Authorization': token ? `Bearer ${token}` : '',
+    };
+};
+
 export const usersApi = {
     // =====================================================
     // USERS
     // =====================================================
-    
+
     async getUsers(): Promise<User[]> {
         const response = await fetch(`${API_BASE}/users`, {
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
         });
         if (!response.ok) {
             const error = await response.json();
@@ -113,7 +122,7 @@ export const usersApi = {
 
     async getUser(id: string): Promise<User> {
         const response = await fetch(`${API_BASE}/users/${id}`, {
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
         });
         if (!response.ok) {
             const error = await response.json();
@@ -125,7 +134,7 @@ export const usersApi = {
     async createUser(data: CreateUserRequest): Promise<User> {
         const response = await fetch(`${API_BASE}/users`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
             body: JSON.stringify(data),
         });
         if (!response.ok) {
@@ -138,7 +147,7 @@ export const usersApi = {
     async updateUser(id: string, data: UpdateUserRequest): Promise<User> {
         const response = await fetch(`${API_BASE}/users/${id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
             body: JSON.stringify(data),
         });
         if (!response.ok) {
@@ -151,7 +160,7 @@ export const usersApi = {
     async deleteUser(id: string): Promise<void> {
         const response = await fetch(`${API_BASE}/users/${id}`, {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
         });
         if (!response.ok) {
             const error = await response.json();
@@ -162,7 +171,7 @@ export const usersApi = {
     async banUser(id: string, reason: string): Promise<void> {
         const response = await fetch(`${API_BASE}/users/${id}/ban`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
             body: JSON.stringify({ reason }),
         });
         if (!response.ok) {
@@ -174,7 +183,7 @@ export const usersApi = {
     async unbanUser(id: string): Promise<void> {
         const response = await fetch(`${API_BASE}/users/${id}/unban`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
         });
         if (!response.ok) {
             const error = await response.json();
@@ -188,7 +197,7 @@ export const usersApi = {
 
     async getStores(): Promise<Store[]> {
         const response = await fetch(`${API_BASE}/stores`, {
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
         });
         if (!response.ok) {
             const error = await response.json();
@@ -204,7 +213,7 @@ export const usersApi = {
 
     async getRoles(): Promise<Role[]> {
         const response = await fetch(`${API_BASE}/roles`, {
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
         });
         if (!response.ok) {
             const error = await response.json();
@@ -216,7 +225,7 @@ export const usersApi = {
 
     async getRole(id: number): Promise<Role> {
         const response = await fetch(`${API_BASE}/roles/${id}`, {
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
         });
         if (!response.ok) {
             const error = await response.json();
@@ -228,7 +237,7 @@ export const usersApi = {
     async createRole(data: CreateRoleRequest): Promise<Role> {
         const response = await fetch(`${API_BASE}/roles`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
             body: JSON.stringify(data),
         });
         if (!response.ok) {
@@ -241,7 +250,7 @@ export const usersApi = {
     async updateRole(id: number, data: UpdateRoleRequest): Promise<Role> {
         const response = await fetch(`${API_BASE}/roles/${id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
             body: JSON.stringify(data),
         });
         if (!response.ok) {
@@ -254,7 +263,7 @@ export const usersApi = {
     async deleteRole(id: number): Promise<void> {
         const response = await fetch(`${API_BASE}/roles/${id}`, {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
+            headers: getAuthHeaders(),
         });
         if (!response.ok) {
             const error = await response.json();
