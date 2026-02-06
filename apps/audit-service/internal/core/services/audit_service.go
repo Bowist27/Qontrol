@@ -166,3 +166,10 @@ func (s *AuditService) GetPhysicalScanSummary(ctx context.Context, auditID int) 
 func (s *AuditService) UndoLastScan(ctx context.Context, auditID int) error {
 	return s.repo.DeleteLastPhysicalScan(ctx, auditID)
 }
+
+// GetAudits returns audits for the dashboard following business rules:
+// - Scope: Global (all stores)
+// - Status: 'waiting_count', 'waiting_valuation' OR 'closed' within last 24 hours
+func (s *AuditService) GetAudits(ctx context.Context) ([]domain.AuditListDTO, error) {
+	return s.repo.GetDashboardAudits(ctx)
+}

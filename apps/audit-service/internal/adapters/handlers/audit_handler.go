@@ -21,6 +21,20 @@ func NewAuditHandler(service *services.AuditService) *AuditHandler {
 	return &AuditHandler{service: service}
 }
 
+// GetAudits handles GET /api/audits - Dashboard endpoint (HU10)
+// Returns filtered audits based on business rules
+func (h *AuditHandler) GetAudits(c *gin.Context) {
+	audits, err := h.service.GetAudits(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "fetch_failed",
+			"message": "Error al obtener auditorías",
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"audits": audits})
+}
+
 // ListStores handles GET /api/stores
 func (h *AuditHandler) ListStores(c *gin.Context) {
 	stores, err := h.service.ListStores(c.Request.Context())
@@ -195,11 +209,11 @@ func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 		api.DELETE("/audits/:id", h.DeleteAudit) // Cancel/Delete audit
 
 		// Physical Scan endpoints (for POS app)
-		api.GET("/audits/active", h.ListActiveAudits)         // Audits available for POS
-		api.POST("/audits/:id/scans", h.AddScan)              // Add scan from POS
-		api.GET("/audits/:id/scans", h.GetScans)              // Get all scans
+		api.GET("/audits/active", h.ListActiveAudits)          // Audits available for POS
+		api.POST("/audits/:id/scans", h.AddScan)               // Add scan from POS
+		api.GET("/audits/:id/scans", h.GetScans)               // Get all scans
 		api.GET("/audits/:id/scans/summary", h.GetScanSummary) // Get summary
-		api.DELETE("/audits/:id/scans/last", h.UndoLastScan)  // Undo last scan
+		api.DELETE("/audits/:id/scans/last", h.UndoLastScan)   // Undo last scan
 	}
 }
 

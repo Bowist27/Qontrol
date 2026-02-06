@@ -28,6 +28,9 @@ type AuditRepository interface {
 	GetPhysicalScanSummary(ctx context.Context, auditID int) (*domain.AuditPhysicalSummary, error)
 	DeleteLastPhysicalScan(ctx context.Context, auditID int) error
 	GetActiveAuditsForPOS(ctx context.Context) ([]domain.AuditListDTO, error)
+
+	// Dashboard specific (HU10)
+	GetDashboardAudits(ctx context.Context) ([]domain.AuditListDTO, error)
 }
 
 // PostgresRepository implements AuditRepository
@@ -325,27 +328,27 @@ func (r *PostgresRepository) GetCatalogStats(ctx context.Context) (int, float64,
 // Example: 19AWA02007 -> WA02007, 19AH963116 -> H963116, 19A3524744 -> 3524744
 func normalizeSKU(sku string) []string {
 	variants := []string{sku}
-	
+
 	// If SKU starts with "19A", also try without the prefix
 	if strings.HasPrefix(sku, "19A") && len(sku) > 3 {
 		// Remove "19A" prefix
 		withoutPrefix := sku[3:]
 		variants = append(variants, withoutPrefix)
 	}
-	
+
 	// Also try adding "19A" prefix in case the input doesn't have it
 	if !strings.HasPrefix(sku, "19A") {
 		withPrefix := "19A" + sku
 		variants = append(variants, withPrefix)
 	}
-	
+
 	return variants
 }
 
 // FindProductBySKU finds a product by its SKU, trying multiple variants
 func (r *PostgresRepository) FindProductBySKU(ctx context.Context, sku string) (*domain.Product, error) {
 	variants := normalizeSKU(sku)
-	
+
 	for _, variant := range variants {
 		var p domain.Product
 		err := r.db.QueryRowContext(ctx, `
@@ -356,7 +359,7 @@ func (r *PostgresRepository) FindProductBySKU(ctx context.Context, sku string) (
 			return &p, nil
 		}
 	}
-	
+
 	// None found
 	return nil, fmt.Errorf("product not found for SKU: %s", sku)
 }
@@ -484,7 +487,7 @@ func (r *PostgresRepository) ApplyCatalogImport(ctx context.Context, importID in
 	for _, sku := range selectedSKUs {
 		var name string
 		var price float64
-		
+
 		err := tx.QueryRowContext(ctx, `
 			SELECT product_name, new_price FROM catalog_import_items 
 			WHERE import_id = $1 AND sku = $2`, importID, sku).Scan(&name, &price)
@@ -592,7 +595,7 @@ func (r *PostgresRepository) RestoreCatalogImport(ctx context.Context, importID 
 		WHERE status = 'applied' 
 		ORDER BY applied_at DESC 
 		LIMIT 1`).Scan(&currentAppliedID)
-	
+
 	if err == nil && currentAppliedID != importID {
 		// Collect items to revert first
 		type revertItem struct {
@@ -600,7 +603,7 @@ func (r *PostgresRepository) RestoreCatalogImport(ctx context.Context, importID 
 			oldPrice *float64
 		}
 		var revertItems []revertItem
-		
+
 		rows, err := tx.QueryContext(ctx, `
 			SELECT sku, old_price FROM catalog_import_items 
 			WHERE import_id = $1 AND applied = true`, currentAppliedID)
@@ -650,7 +653,7 @@ func (r *PostgresRepository) RestoreCatalogImport(ctx context.Context, importID 
 		price float64
 	}
 	var applyItems []applyItem
-	
+
 	rows2, err := tx.QueryContext(ctx, `
 		SELECT sku, product_name, new_price FROM catalog_import_items 
 		WHERE import_id = $1`, importID)
@@ -798,6 +801,46 @@ func formatDateSpanish(t time.Time) string {
 	return fmt.Sprintf("%02d %s, %d:%02d %s", day, month, hour, minute, ampm)
 }
 
+// GetDashboardAudits returns audits for the dashboard based on HU10 business rules:
+// - ALL active audits (status != 'closed') OR ('closed' AND closed_at > NOW() - 24 hours)
+// - Ordered by creation date DESC
+func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.AuditListDTO, error) {
+	query := `
+		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at
+		FROM audit_sessions s
+		JOIN stores st ON s.store_id = st.id
+		WHERE s.status != 'closed'
+		   OR (s.status = 'closed' AND s.closed_at > NOW() - INTERVAL '24 hours')
+		ORDER BY s.created_at DESC
+	`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []domain.AuditListDTO
+	for rows.Next() {
+		var dto domain.AuditListDTO
+		var s domain.AuditSession
+		var storeName string
+
+		err := rows.Scan(
+			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
+			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		dto.Session = s
+		dto.StoreName = storeName
+		sessions = append(sessions, dto)
+	}
+	return sessions, nil
+}
+
 // ============ PHYSICAL SCAN METHODS (POS APP) ============
 
 // InsertPhysicalScan adds a new scan from the POS app
@@ -808,7 +851,7 @@ func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id
 	`
-	
+
 	// Handle empty scanned_by (it's a UUID in DB, pass NULL if empty)
 	var scannedByParam interface{}
 	if req.ScannedBy == "" {
@@ -816,7 +859,7 @@ func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain
 	} else {
 		scannedByParam = req.ScannedBy
 	}
-	
+
 	// Handle empty device_id
 	var deviceIDParam interface{}
 	if req.DeviceID == "" {
@@ -824,7 +867,7 @@ func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain
 	} else {
 		deviceIDParam = req.DeviceID
 	}
-	
+
 	var id int
 	err := r.db.QueryRowContext(ctx, query,
 		req.AuditID, req.Barcode, req.Quantity, scannedByParam, deviceIDParam, scannedAt,
@@ -837,7 +880,7 @@ func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain
 	var sku, productName sql.NullString
 	productQuery := `SELECT sku, name FROM products WHERE barcode = $1 LIMIT 1`
 	err = r.db.QueryRowContext(ctx, productQuery, req.Barcode).Scan(&sku, &productName)
-	
+
 	// If not found by barcode, try searching by SKU
 	if err == sql.ErrNoRows || !sku.Valid {
 		productQuery = `SELECT sku, name FROM products WHERE sku = $1 LIMIT 1`
@@ -845,14 +888,14 @@ func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain
 	}
 
 	scan := &domain.PhysicalScan{
-		ID:          id,
-		AuditID:     req.AuditID,
-		Barcode:     req.Barcode,
-		Quantity:    req.Quantity,
-		ScannedBy:   stringPtr(req.ScannedBy),
-		DeviceID:    stringPtr(req.DeviceID),
-		ScannedAt:   scannedAt,
-		IsUnknown:   !sku.Valid,
+		ID:        id,
+		AuditID:   req.AuditID,
+		Barcode:   req.Barcode,
+		Quantity:  req.Quantity,
+		ScannedBy: stringPtr(req.ScannedBy),
+		DeviceID:  stringPtr(req.DeviceID),
+		ScannedAt: scannedAt,
+		IsUnknown: !sku.Valid,
 	}
 	if sku.Valid {
 		scan.SKU = &sku.String

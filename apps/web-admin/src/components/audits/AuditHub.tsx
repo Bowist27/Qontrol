@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { STORES_DATA } from '../../data/mockData';
 import { auditApi } from '../../services/audit.api';
+import { useAudit } from '../../context/AuditContext';
 
 // Format date as DD/M/YYYY (strict format per spec)
 const formatDateDDMYYYY = (dateStr: string): string => {
@@ -70,8 +71,9 @@ interface AuditHubProps {
 }
 
 const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
-    const [sessions, setSessions] = useState<AuditSession[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    // Use context instead of local state (HU10)
+    const { audits, loading: isLoading } = useAudit();
+
     const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
     const [focusFilter, setFocusFilter] = useState<FocusFilter>('all');
 
@@ -115,59 +117,38 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    // Fetch real sessions
-    useEffect(() => {
-        const loadSessions = async () => {
-            try {
-                const data = await auditApi.getSessions();
+    // Map backend DTO to UI model
+    const sessions: AuditSession[] = audits.map(item => {
+        const s = item.session;
 
-                // Map backend DTO to UI model
-                const mapped: AuditSession[] = data.map(item => {
-                    const s = item.session;
+        // Map Status
+        let status: AuditSessionStatus = 'IN_PROGRESS';
+        if (s.status === 'waiting_pdf' || s.status === 'UPLOADING' || s.status === 'REVIEW_PENDING') status = 'WAITING_PDF';
+        else if (s.status === 'waiting_count' || (s.status === 'IN_PROGRESS' && !!s.pdf_url)) status = 'WAITING_COUNT';
+        else if (s.status === 'waiting_valuation') status = 'WAITING_COUNT';
+        else if (s.status === 'IN_PROGRESS' && !s.pdf_url) status = 'WAITING_PDF';
+        else if (s.status === 'COUNTING') status = 'IN_PROGRESS';
+        else if (s.status === 'closed' || s.status === 'COMPLETED') status = 'LOCKED_BY_STORE';
+        else if (s.status === 'ARCHIVED') status = 'ARCHIVED';
+        else if (s.status === 'CANCELLED') status = 'CANCELLED';
 
-                    // Map Status
-                    // IN_PROGRESS with PDF = waiting for physical count
-                    // IN_PROGRESS without PDF = waiting for PDF upload
-                    let status: AuditSessionStatus = 'IN_PROGRESS';
-                    if (s.status === 'UPLOADING' || s.status === 'REVIEW_PENDING') status = 'WAITING_PDF';
-                    else if (s.status === 'IN_PROGRESS' && !!s.pdf_url) status = 'WAITING_COUNT';
-                    else if (s.status === 'IN_PROGRESS' && !s.pdf_url) status = 'WAITING_PDF';
-                    else if (s.status === 'COUNTING') status = 'IN_PROGRESS';
-                    else if (s.status === 'COMPLETED') status = 'LOCKED_BY_STORE';
-                    else if (s.status === 'ARCHIVED') status = 'ARCHIVED';
-                    else if (s.status === 'CANCELLED') status = 'CANCELLED';
+        const percent = status === 'LOCKED_BY_STORE' || status === 'ARCHIVED' ? 100 : 0;
 
-                    // Calculate percent (Mock for now as backend doesn't send progress yet)
-                    // In real app, querying items count would be expensive here, 
-                    // so ideally backend list endpoint sends summary stats.
-                    // For now, assume 0% or 100% based on status
-                    const percent = status === 'LOCKED_BY_STORE' || status === 'ARCHIVED' ? 100 : 0;
-
-                    return {
-                        id: s.id.toString(),
-                        storeId: s.store_id,
-                        storeName: item.store_name, // Joined name
-                        managerName: 'Admin User', // TODO: Get from CreatedBy
-                        status: status,
-                        hasPdf: !!s.pdf_url,
-                        createdAt: s.created_at,
-                        percentComplete: percent,
-                        currentLoss: 0, // TODO: Backend summary
-                        theoreticalItems: 0,
-                        scannedItems: 0,
-                        scanLogsCount: 0
-                    };
-                });
-
-                setSessions(mapped);
-            } catch (err) {
-                console.error("Failed to load sessions", err);
-            } finally {
-                setIsLoading(false);
-            }
+        return {
+            id: s.id.toString(),
+            storeId: s.store_id,
+            storeName: item.store_name,
+            managerName: 'Admin User',
+            status: status,
+            hasPdf: !!s.pdf_url,
+            createdAt: s.created_at,
+            percentComplete: percent,
+            currentLoss: 0,
+            theoreticalItems: 0,
+            scannedItems: 0,
+            scanLogsCount: 0
         };
-        loadSessions();
-    }, []);
+    });
 
     useEffect(() => {
         setCurrentPage(1);
@@ -198,11 +179,14 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
     const inProgressSessions = activeSessions.filter(s => s.status === 'IN_PROGRESS' || s.status === 'WAITING_PDF');
     const exceptionSessions = activeSessions.filter(s => s.status === 'REOPEN_REQUEST');
 
+    // Apply store filter to any session list
+    const applyStoreFilter = (sessions: AuditSession[]) => {
+        if (filterStore === 'all') return sessions;
+        return sessions.filter(s => s.storeName === filterStore);
+    };
+
     const getFilteredHistory = () => {
-        let filtered = historySessions;
-        if (filterStore !== 'all') {
-            filtered = filtered.filter(s => s.storeId === parseInt(filterStore));
-        }
+        let filtered = applyStoreFilter(historySessions);
         if (filterDateFrom) {
             const fromDate = new Date(filterDateFrom);
             filtered = filtered.filter(s => new Date(s.createdAt) >= fromDate);
@@ -217,11 +201,14 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
 
     const getFilteredByFocus = () => {
         if (activeTab === 'history') return getFilteredHistory();
-        switch (focusFilter) {
-            case 'exceptions': return exceptionSessions;
-            case 'in_progress': return inProgressSessions;
-            default: return activeSessions;
-        }
+        const baseList = (() => {
+            switch (focusFilter) {
+                case 'exceptions': return exceptionSessions;
+                case 'in_progress': return inProgressSessions;
+                default: return activeSessions;
+            }
+        })();
+        return applyStoreFilter(baseList);
     };
 
     // Sorting logic
@@ -256,7 +243,14 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
 
     const showPagination = activeTab === 'history' || totalItems > 20;
 
-    const filteredStores = STORES_DATA.filter(store =>
+    // Extract unique stores from actual audit data (not mock)
+    const uniqueStoresMap = new Map<number, string>();
+    audits.forEach(audit => {
+        uniqueStoresMap.set(audit.session.store_id, audit.store_name);
+    });
+    const realStores = Array.from(uniqueStoresMap.entries()).map(([id, name]) => ({ id, name }));
+
+    const filteredStores = realStores.filter(store =>
         store.name.toLowerCase().includes(contextSearch.toLowerCase())
     );
 
@@ -283,9 +277,9 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         if (confirm(`¿Estás seguro de cancelar la auditoría de ${session.storeName}?\n\nEsto eliminará permanentemente todos los datos asociados.`)) {
             try {
                 await auditApi.deleteAudit(parseInt(session.id));
-                // Remove from local state
-                setSessions(prev => prev.filter(s => s.id !== session.id));
+                // Reload audits from context after delete
                 alert('Auditoría cancelada exitosamente');
+                window.location.reload(); // Temporary reload until we add refresh to context
             } catch (err) {
                 alert('Error al cancelar: ' + (err instanceof Error ? err.message : 'Error desconocido'));
             }
@@ -419,13 +413,16 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
         );
     };
 
-    const handleStoreSelect = (store: typeof STORES_DATA[0]) => {
+    const handleStoreSelect = (store: { id: number; name: string }) => {
         setShowContextDropdown(false);
         setContextSearch('');
-        const session = sessions.find(s => s.storeId === store.id && s.status !== 'ARCHIVED' && s.status !== 'CANCELLED');
-        if (session) {
-            onSelectSession(session.id, session.storeName);
-        }
+        setFilterStore(store.name);
+    };
+
+    const handleGlobalView = () => {
+        setShowContextDropdown(false);
+        setContextSearch('');
+        setFilterStore('all');
     };
 
     const clearFilters = () => {
@@ -453,9 +450,15 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                         onClick={() => setShowContextDropdown(!showContextDropdown)}
                         className="flex items-center gap-3 px-4 py-2.5 bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors"
                     >
-                        <Globe size={18} className="text-slate-500" />
-                        <span className="font-medium text-slate-700">Vista Global</span>
-                        <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{STORES_DATA.length}</span>
+                        {filterStore === 'all' ? (
+                            <Globe size={18} className="text-slate-500" />
+                        ) : (
+                            <Store size={18} className="text-blue-500" />
+                        )}
+                        <span className="font-medium text-slate-700">
+                            {filterStore === 'all' ? 'Vista Global' : filterStore}
+                        </span>
+                        <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{realStores.length}</span>
                         <ChevronDown size={16} className={`text-slate-400 transition-transform ${showContextDropdown ? 'rotate-180' : ''}`} />
                     </button>
 
@@ -476,12 +479,12 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                             </div>
 
                             <button
-                                onClick={() => { setShowContextDropdown(false); setContextSearch(''); }}
-                                className="w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-50 border-b border-slate-100 bg-blue-50"
+                                onClick={handleGlobalView}
+                                className={`w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-50 border-b border-slate-100 ${filterStore === 'all' ? 'bg-blue-50' : ''}`}
                             >
-                                <Globe size={16} className="text-blue-600" />
-                                <span className="text-sm font-medium text-blue-700 flex-1 text-left">Vista Global</span>
-                                <CheckCircle2 size={16} className="text-blue-600" />
+                                <Globe size={16} className={filterStore === 'all' ? 'text-blue-600' : 'text-slate-400'} />
+                                <span className={`text-sm font-medium flex-1 text-left ${filterStore === 'all' ? 'text-blue-700' : 'text-slate-600'}`}>Vista Global</span>
+                                {filterStore === 'all' && <CheckCircle2 size={16} className="text-blue-600" />}
                             </button>
 
                             <div className="max-h-64 overflow-y-auto">
@@ -612,7 +615,7 @@ const AuditHub: React.FC<AuditHubProps> = ({ onSelectSession }) => {
                                                     className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
                                                 >
                                                     <option value="all">Todas</option>
-                                                    {STORES_DATA.map(store => (
+                                                    {realStores.map(store => (
                                                         <option key={store.id} value={store.id}>{store.name}</option>
                                                     ))}
                                                 </select>

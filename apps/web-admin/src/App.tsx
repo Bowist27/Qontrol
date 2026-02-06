@@ -11,6 +11,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { AuditProvider } from './context/AuditContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 
@@ -100,16 +101,18 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
-        <ToastContainer
-          theme="dark"
-          position="top-right"
-          autoClose={3000}
-          hideProgressBar={false}
-          newestOnTop
-          closeOnClick
-          pauseOnHover
-        />
+        <AuditProvider>
+          <AppRoutes />
+          <ToastContainer
+            theme="dark"
+            position="top-right"
+            autoClose={3000}
+            hideProgressBar={false}
+            newestOnTop
+            closeOnClick
+            pauseOnHover
+          />
+        </AuditProvider>
       </AuthProvider>
     </BrowserRouter>
   );

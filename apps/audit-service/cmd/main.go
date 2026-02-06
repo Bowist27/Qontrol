@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"audit-service/internal/adapters/handlers"
+	"audit-service/internal/adapters/middleware"
 	"audit-service/internal/adapters/repositories"
 	"audit-service/internal/adapters/storage"
 	"audit-service/internal/core/services"
@@ -62,26 +63,44 @@ func main() {
 	// Gin router
 	router := gin.Default()
 
-	// CORS middleware
+	// Middleware
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET not set")
+	}
+	authMiddleware := middleware.NewAuthMiddleware(jwtSecret)
+
+	// CORS Middleware
 	router.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
+
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
 			return
 		}
+
 		c.Next()
 	})
 
-	// Register routes
-	auditHandler.RegisterRoutes(router)
-	catalogHandler.RegisterRoutes(router)
-
-	// Health check
+	// Health check (public)
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+
+	// Protected API routes (HU10)
+	api := router.Group("/api")
+	api.Use(authMiddleware.RequireAuth())
+	{
+		// HU10 Dashboard endpoint
+		api.GET("/audits", auditHandler.GetAudits)
+	}
+
+	// Legacy routes (unprotected for now - existing functionality)
+	auditHandler.RegisterRoutes(router)
+	catalogHandler.RegisterRoutes(router)
 
 	// Start server
 	port := os.Getenv("PORT")
