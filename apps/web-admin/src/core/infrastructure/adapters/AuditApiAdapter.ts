@@ -19,6 +19,8 @@ export interface AuditSession {
 export interface AuditListDTO {
     session: AuditSession;
     store_name: string;
+    theoretical_skus: number;
+    scanned_skus: number;
 }
 
 export interface GetAuditsResponse {

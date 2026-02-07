@@ -210,7 +210,9 @@ func (r *PostgresRepository) SaveAuditBatchWithStatus(ctx context.Context, audit
 // FindAllSessions retrieves all sessions with store names
 func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.AuditListDTO, error) {
 	query := `
-		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at
+		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
+		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
 		ORDER BY s.created_at DESC
@@ -230,6 +232,7 @@ func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.Audi
 		err := rows.Scan(
 			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
 			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
+			&dto.TheoreticalSKUs, &dto.ScannedSKUs,
 		)
 		if err != nil {
 			return nil, err
@@ -806,11 +809,11 @@ func formatDateSpanish(t time.Time) string {
 // - Ordered by creation date DESC
 func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.AuditListDTO, error) {
 	query := `
-		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at
+		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
+		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
-		WHERE s.status != 'closed'
-		   OR (s.status = 'closed' AND s.closed_at > NOW() - INTERVAL '24 hours')
 		ORDER BY s.created_at DESC
 	`
 
@@ -829,6 +832,7 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 		err := rows.Scan(
 			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
 			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
+			&dto.TheoreticalSKUs, &dto.ScannedSKUs,
 		)
 		if err != nil {
 			return nil, err

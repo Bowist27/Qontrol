@@ -202,7 +202,7 @@ func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
 	{
 		api.GET("/stores", h.ListStores)
-		api.GET("/audits", h.ListAudits)      // Dashboard list
+		// api.GET("/audits", h.ListAudits)   // Removed: handled in main.go with auth and filter logic
 		api.POST("/audits/parse", h.ParsePDF) // FASE 3: Preview only
 		api.POST("/audits", h.CreateAudit)    // FASE 5: Save after confirm
 		api.GET("/audits/:id", h.GetAudit)

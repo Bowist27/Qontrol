@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	log.Println("Starting Audit Service 2.0 force rebuild...")
+	log.Println("REBUILD VERIFICATION: SKU JOIN ADDED - Starting Audit Service 2.0")
 	// Database connection
 	db, err := database.NewPostgresConnection()
 	if err != nil {

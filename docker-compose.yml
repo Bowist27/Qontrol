@@ -57,6 +57,8 @@ services:
       AWS_ACCESS_KEY_ID: ${ACCESS_KEY:-}
       AWS_SECRET_ACCESS_KEY: ${SECRET_ACCESS_KEY:-}
       USE_MOCK_PARSER: ${USE_MOCK_PARSER:-false}
+      JWT_SECRET: ${JWT_SECRET}
+      PORT: 8081
     depends_on:
       postgres:
         condition: service_healthy

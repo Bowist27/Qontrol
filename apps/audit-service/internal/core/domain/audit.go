@@ -52,8 +52,10 @@ type AuditDTO struct {
 
 // AuditListDTO is for the dashboard list view
 type AuditListDTO struct {
-	Session   AuditSession `json:"session"`
-	StoreName string       `json:"store_name"`
+	Session         AuditSession `json:"session"`
+	StoreName       string       `json:"store_name"`
+	TheoreticalSKUs int          `json:"theoretical_skus"`
+	ScannedSKUs     int          `json:"scanned_skus"`
 }
 
 // CreateAuditRequest is the request payload for creating an audit
@@ -96,17 +98,17 @@ type AddScanRequest struct {
 
 // AuditPhysicalSummary is the summary of physical scans
 type AuditPhysicalSummary struct {
-	TotalScans      int     `json:"total_scans"`
-	TotalQuantity   float64 `json:"total_quantity"`
-	UniqueProducts  int     `json:"unique_products"`
-	UnknownItems    int     `json:"unknown_items"`
-	LastScanAt      *string `json:"last_scan_at,omitempty"`
+	TotalScans     int     `json:"total_scans"`
+	TotalQuantity  float64 `json:"total_quantity"`
+	UniqueProducts int     `json:"unique_products"`
+	UnknownItems   int     `json:"unknown_items"`
+	LastScanAt     *string `json:"last_scan_at,omitempty"`
 }
 
 // ConnectedDevice represents a POS device connected to an audit
 type ConnectedDevice struct {
-	DeviceID      string    `json:"device_id"`
-	UserName      string    `json:"user_name"`
-	ConnectedAt   time.Time `json:"connected_at"`
+	DeviceID       string    `json:"device_id"`
+	UserName       string    `json:"user_name"`
+	ConnectedAt    time.Time `json:"connected_at"`
 	LastActivityAt time.Time `json:"last_activity_at"`
 }

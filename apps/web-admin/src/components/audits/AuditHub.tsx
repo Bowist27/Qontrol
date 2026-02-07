@@ -9,11 +9,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Store, TrendingDown, TrendingUp, FileText, Play, CheckCircle2, Lock, KeyRound,
+    Store, FileText, Play, CheckCircle2, Lock, KeyRound,
     Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
     Filter, RefreshCw, ChevronLeft, X, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole
 } from 'lucide-react';
-import { STORES_DATA } from '../../data/mockData';
+
 import { auditApi } from '../../services/audit.api';
 import { useAudit } from '../../context/AuditContext';
 
@@ -138,7 +138,16 @@ const AuditHub: React.FC = () => {
         else if (s.status === 'ARCHIVED') status = 'ARCHIVED';
         else if (s.status === 'CANCELLED') status = 'CANCELLED';
 
-        const percent = status === 'LOCKED_BY_STORE' || status === 'ARCHIVED' ? 100 : 0;
+        const theoretical = item.theoretical_skus || 0;
+        const scanned = item.scanned_skus || 0;
+
+        let percent = 0;
+        if (status === 'LOCKED_BY_STORE' || status === 'ARCHIVED') {
+            percent = 100;
+        } else if (theoretical > 0) {
+            // Use 1 decimal place for better precision on large audits
+            percent = Number(((scanned / theoretical) * 100).toFixed(1));
+        }
 
         return {
             id: s.id.toString(),
@@ -151,13 +160,15 @@ const AuditHub: React.FC = () => {
             closedAt: s.closed_at || undefined,
             percentComplete: percent,
             currentLoss: 0,
-            theoreticalItems: 0,
-            scannedItems: 0,
+            theoreticalItems: theoretical,
+            scannedItems: scanned,
             scanLogsCount: 0
         };
     });
 
+    // Reset page when filters change
     useEffect(() => {
+        // eslint-disable-next-line
         setCurrentPage(1);
     }, [activeTab, focusFilter, filterStore, filterDateFrom, filterDateTo, sortField, sortDir]);
 
@@ -278,7 +289,6 @@ const AuditHub: React.FC = () => {
         store.name.toLowerCase().includes(contextSearch.toLowerCase())
     );
 
-    const totalLoss = activeSessions.reduce((sum, s) => sum + s.currentLoss, 0);
     const hasActiveFilters = filterStore !== 'all' || filterDateFrom || filterDateTo;
 
     const handleSort = (field: SortField) => {
@@ -408,7 +418,7 @@ const AuditHub: React.FC = () => {
                         style={{ width: `${percent}%` }}
                     ></div>
                 </div>
-                <span className="text-xs text-slate-500 tabular-nums w-8">{percent}%</span>
+                <span className="text-xs text-slate-500 tabular-nums w-10 text-right">{percent}%</span>
             </div>
         );
     };

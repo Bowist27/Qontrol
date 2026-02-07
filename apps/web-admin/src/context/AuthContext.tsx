@@ -23,17 +23,15 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-    const [user, setUser] = useState<User | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-
-    // Check for existing session on mount & Listen for global logout events
-    useEffect(() => {
+    // Initialize state directly from storage to avoid useEffect cascade
+    const [user, setUser] = useState<User | null>(() => {
         const storedUser = LoginUseCase.getCurrentUser();
-        if (storedUser && LoginUseCase.isAuthenticated()) {
-            setUser(storedUser);
-        }
-        setIsLoading(false);
+        return (storedUser && LoginUseCase.isAuthenticated()) ? storedUser : null;
+    });
+    const [isLoading] = useState(false);
 
+    // Listen for global logout events
+    useEffect(() => {
         // Global Logout Listener (triggered by 401s in API clients)
         const handleGlobalLogout = () => {
             loginUseCase.logout();
