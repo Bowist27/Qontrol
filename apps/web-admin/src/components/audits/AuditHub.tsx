@@ -11,11 +11,12 @@ import { useNavigate } from 'react-router-dom';
 import {
     Store, FileText, Play, CheckCircle2, Lock, KeyRound,
     Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
-    Filter, RefreshCw, ChevronLeft, X, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole
+    RefreshCw, ChevronLeft, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole
 } from 'lucide-react';
 
 import { auditApi } from '../../services/audit.api';
 import { useAudit } from '../../context/AuditContext';
+import { DateRangePicker } from '../ui/DateRangePicker';
 
 // Format date as DD/M/YYYY (strict format per spec)
 const formatDateDDMYYYY = (dateStr: string): string => {
@@ -92,11 +93,9 @@ const AuditHub: React.FC = () => {
     const [itemsPerPage, setItemsPerPage] = useState(10);
 
     // Filters
-    const [showHistoryFilter, setShowHistoryFilter] = useState(false);
     const [filterStore, setFilterStore] = useState<string>('all');
     const [filterDateFrom, setFilterDateFrom] = useState('');
     const [filterDateTo, setFilterDateTo] = useState('');
-    const filterRef = useRef<HTMLDivElement>(null);
 
     // Context Switcher
     const [showContextDropdown, setShowContextDropdown] = useState(false);
@@ -111,9 +110,6 @@ const AuditHub: React.FC = () => {
         const handleClickOutside = (e: MouseEvent) => {
             if (contextRef.current && !contextRef.current.contains(e.target as Node)) {
                 setShowContextDropdown(false);
-            }
-            if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
-                setShowHistoryFilter(false);
             }
             if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
                 setOpenMenuId(null);
@@ -168,7 +164,6 @@ const AuditHub: React.FC = () => {
 
     // Reset page when filters change
     useEffect(() => {
-        // eslint-disable-next-line
         setCurrentPage(1);
     }, [activeTab, focusFilter, filterStore, filterDateFrom, filterDateTo, sortField, sortDir]);
 
@@ -205,6 +200,33 @@ const AuditHub: React.FC = () => {
     const activeSessions = getActiveSessions();
     const historySessions = getHistorySessions();
 
+    // Auto-populate date filters with min/max closed_at dates from history
+    useEffect(() => {
+        if (historySessions.length > 0 && filterDateFrom === '' && filterDateTo === '') {
+            // Use closedAt for history sessions
+            const closedDates = historySessions
+                .filter(s => s.closedAt)
+                .map(s => new Date(s.closedAt!));
+
+            if (closedDates.length > 0) {
+                const minDate = new Date(Math.min(...closedDates.map(d => d.getTime())));
+                const maxDate = new Date(Math.max(...closedDates.map(d => d.getTime())));
+
+                // Format as YYYY-MM-DD using local timezone
+                const formatDate = (d: Date) => {
+                    const year = d.getFullYear();
+                    const month = String(d.getMonth() + 1).padStart(2, '0');
+                    const day = String(d.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                };
+
+                setFilterDateFrom(formatDate(minDate));
+                setFilterDateTo(formatDate(maxDate));
+            }
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [historySessions.length]);
+
     const inProgressSessions = activeSessions.filter(s => s.status === 'IN_PROGRESS' || s.status === 'WAITING_PDF');
     const exceptionSessions = activeSessions.filter(s => s.status === 'REOPEN_REQUEST');
 
@@ -216,14 +238,31 @@ const AuditHub: React.FC = () => {
 
     const getFilteredHistory = () => {
         let filtered = applyStoreFilter(historySessions);
+
+        // Helper to extract date string (YYYY-MM-DD) from any date format
+        const getDateString = (dateStr: string): string => {
+            const d = new Date(dateStr);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
         if (filterDateFrom) {
-            const fromDate = new Date(filterDateFrom);
-            filtered = filtered.filter(s => new Date(s.createdAt) >= fromDate);
+            filtered = filtered.filter(s => {
+                const closeDate = s.closedAt;
+                if (!closeDate) return false;
+                const closeDateStr = getDateString(closeDate);
+                return closeDateStr >= filterDateFrom;
+            });
         }
         if (filterDateTo) {
-            const toDate = new Date(filterDateTo);
-            toDate.setHours(23, 59, 59);
-            filtered = filtered.filter(s => new Date(s.createdAt) <= toDate);
+            filtered = filtered.filter(s => {
+                const closeDate = s.closedAt;
+                if (!closeDate) return false;
+                const closeDateStr = getDateString(closeDate);
+                return closeDateStr <= filterDateTo;
+            });
         }
         return filtered;
     };
@@ -289,7 +328,6 @@ const AuditHub: React.FC = () => {
         store.name.toLowerCase().includes(contextSearch.toLowerCase())
     );
 
-    const hasActiveFilters = filterStore !== 'all' || filterDateFrom || filterDateTo;
 
     const handleSort = (field: SortField) => {
         if (sortField === field) {
@@ -608,77 +646,22 @@ const AuditHub: React.FC = () => {
 
                         {activeTab === 'history' && (
                             <>
-                                {hasActiveFilters && (
-                                    <button
-                                        onClick={clearFilters}
-                                        className="flex items-center gap-1.5 px-2.5 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-medium hover:bg-blue-200"
-                                    >
-                                        <X size={12} />
-                                        Limpiar
-                                    </button>
-                                )}
+                                {/* Date Range Picker - Compact version */}
+                                <DateRangePicker
+                                    fromDate={filterDateFrom}
+                                    toDate={filterDateTo}
+                                    onFromDateChange={setFilterDateFrom}
+                                    onToDateChange={setFilterDateTo}
+                                    onClear={clearFilters}
+                                />
 
-                                <div className="relative" ref={filterRef}>
-                                    <button
-                                        onClick={() => setShowHistoryFilter(!showHistoryFilter)}
-                                        className={`p-2 rounded-lg transition-colors ${hasActiveFilters || showHistoryFilter
-                                            ? 'bg-blue-100 text-blue-600'
-                                            : 'text-slate-400 hover:text-slate-600 hover:bg-slate-100'
-                                            }`}
-                                    >
-                                        <Filter size={18} />
-                                    </button>
-
-                                    {showHistoryFilter && (
-                                        <div className="absolute top-full right-0 mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-4">
-                                            <h4 className="text-sm font-semibold text-slate-700 mb-3">Filtrar</h4>
-
-                                            <div className="mb-3">
-                                                <label className="block text-xs text-slate-500 mb-1">Tienda</label>
-                                                <select
-                                                    value={filterStore}
-                                                    onChange={(e) => setFilterStore(e.target.value)}
-                                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
-                                                >
-                                                    <option value="all">Todas</option>
-                                                    {realStores.map(store => (
-                                                        <option key={store.id} value={store.id}>{store.name}</option>
-                                                    ))}
-                                                </select>
-                                            </div>
-
-                                            <div className="grid grid-cols-2 gap-2 mb-3">
-                                                <div>
-                                                    <label className="block text-xs text-slate-500 mb-1">Desde</label>
-                                                    <input
-                                                        type="date"
-                                                        value={filterDateFrom}
-                                                        onChange={(e) => setFilterDateFrom(e.target.value)}
-                                                        className="w-full px-2 py-2 border border-slate-200 rounded-lg text-sm"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-xs text-slate-500 mb-1">Hasta</label>
-                                                    <input
-                                                        type="date"
-                                                        value={filterDateTo}
-                                                        onChange={(e) => setFilterDateTo(e.target.value)}
-                                                        className="w-full px-2 py-2 border border-slate-200 rounded-lg text-sm"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <button
-                                                onClick={() => setShowHistoryFilter(false)}
-                                                className="w-full py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700"
-                                            >
-                                                Aplicar
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg">
+                                <button
+                                    onClick={() => {
+                                        window.location.reload();
+                                    }}
+                                    className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg"
+                                    title="Actualizar"
+                                >
                                     <RefreshCw size={18} />
                                 </button>
                             </>
@@ -905,7 +888,7 @@ const AuditHub: React.FC = () => {
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 
 };
