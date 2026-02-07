@@ -3,6 +3,10 @@
  * Connects frontend to auth-service user/role management endpoints
  */
 
+import { httpClient } from './httpClient';
+
+
+
 const API_BASE = import.meta.env.VITE_AUTH_API_URL || 'http://localhost:8080';
 
 // =====================================================
@@ -94,14 +98,8 @@ export const AVAILABLE_PERMISSIONS = {
 // API FUNCTIONS
 // =====================================================
 
-// Helper to get auth headers
-const getAuthHeaders = () => {
-    const token = localStorage.getItem('token');
-    return {
-        'Content-Type': 'application/json',
-        'Authorization': token ? `Bearer ${token}` : '',
-    };
-};
+// Helper to get auth headers (deprecated, kept for reference if needed elsewhere, but unused here)
+// const getAuthHeaders = ... 
 
 export const usersApi = {
     // =====================================================
@@ -109,86 +107,32 @@ export const usersApi = {
     // =====================================================
 
     async getUsers(): Promise<User[]> {
-        const response = await fetch(`${API_BASE}/users`, {
-            headers: getAuthHeaders(),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al obtener usuarios');
-        }
-        const data = await response.json();
+        const data = await httpClient.get<{ users: User[] }>(`${API_BASE}/users`);
         return data.users || [];
     },
 
     async getUser(id: string): Promise<User> {
-        const response = await fetch(`${API_BASE}/users/${id}`, {
-            headers: getAuthHeaders(),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Usuario no encontrado');
-        }
-        return response.json();
+        return httpClient.get<User>(`${API_BASE}/users/${id}`);
     },
 
     async createUser(data: CreateUserRequest): Promise<User> {
-        const response = await fetch(`${API_BASE}/users`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            body: JSON.stringify(data),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al crear usuario');
-        }
-        return response.json();
+        return httpClient.post<User>(`${API_BASE}/users`, data);
     },
 
     async updateUser(id: string, data: UpdateUserRequest): Promise<User> {
-        const response = await fetch(`${API_BASE}/users/${id}`, {
-            method: 'PUT',
-            headers: getAuthHeaders(),
-            body: JSON.stringify(data),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al actualizar usuario');
-        }
-        return response.json();
+        return httpClient.put<User>(`${API_BASE}/users/${id}`, data);
     },
 
     async deleteUser(id: string): Promise<void> {
-        const response = await fetch(`${API_BASE}/users/${id}`, {
-            method: 'DELETE',
-            headers: getAuthHeaders(),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al eliminar usuario');
-        }
+        return httpClient.delete<void>(`${API_BASE}/users/${id}`);
     },
 
     async banUser(id: string, reason: string): Promise<void> {
-        const response = await fetch(`${API_BASE}/users/${id}/ban`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            body: JSON.stringify({ reason }),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al banear usuario');
-        }
+        return httpClient.post<void>(`${API_BASE}/users/${id}/ban`, { reason });
     },
 
     async unbanUser(id: string): Promise<void> {
-        const response = await fetch(`${API_BASE}/users/${id}/unban`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al desbanear usuario');
-        }
+        return httpClient.post<void>(`${API_BASE}/users/${id}/unban`);
     },
 
     // =====================================================
@@ -196,14 +140,7 @@ export const usersApi = {
     // =====================================================
 
     async getStores(): Promise<Store[]> {
-        const response = await fetch(`${API_BASE}/stores`, {
-            headers: getAuthHeaders(),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al obtener tiendas');
-        }
-        const data = await response.json();
+        const data = await httpClient.get<{ stores: Store[] }>(`${API_BASE}/stores`);
         return data.stores || [];
     },
 
@@ -212,63 +149,24 @@ export const usersApi = {
     // =====================================================
 
     async getRoles(): Promise<Role[]> {
-        const response = await fetch(`${API_BASE}/roles`, {
-            headers: getAuthHeaders(),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al obtener roles');
-        }
-        const data = await response.json();
+        const data = await httpClient.get<{ roles: Role[] }>(`${API_BASE}/roles`);
         return data.roles || [];
     },
 
     async getRole(id: number): Promise<Role> {
-        const response = await fetch(`${API_BASE}/roles/${id}`, {
-            headers: getAuthHeaders(),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Rol no encontrado');
-        }
-        return response.json();
+        return httpClient.get<Role>(`${API_BASE}/roles/${id}`);
     },
 
     async createRole(data: CreateRoleRequest): Promise<Role> {
-        const response = await fetch(`${API_BASE}/roles`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            body: JSON.stringify(data),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al crear rol');
-        }
-        return response.json();
+        return httpClient.post<Role>(`${API_BASE}/roles`, data);
     },
 
     async updateRole(id: number, data: UpdateRoleRequest): Promise<Role> {
-        const response = await fetch(`${API_BASE}/roles/${id}`, {
-            method: 'PUT',
-            headers: getAuthHeaders(),
-            body: JSON.stringify(data),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al actualizar rol');
-        }
-        return response.json();
+        return httpClient.put<Role>(`${API_BASE}/roles/${id}`, data);
     },
 
     async deleteRole(id: number): Promise<void> {
-        const response = await fetch(`${API_BASE}/roles/${id}`, {
-            method: 'DELETE',
-            headers: getAuthHeaders(),
-        });
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.message || 'Error al eliminar rol');
-        }
+        return httpClient.delete<void>(`${API_BASE}/roles/${id}`);
     },
 };
 

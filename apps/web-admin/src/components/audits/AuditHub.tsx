@@ -78,6 +78,11 @@ const AuditHub: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
     const [focusFilter, setFocusFilter] = useState<FocusFilter>('all');
 
+    // Debugging
+    useEffect(() => {
+        console.log('AuditHub: Raw audits from context:', audits);
+    }, [audits]);
+
     // Sorting
     const [sortField, setSortField] = useState<SortField>('date');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -247,6 +252,12 @@ const AuditHub: React.FC = () => {
     };
 
     const allFilteredSessions = sortSessions(getFilteredByFocus());
+
+    useEffect(() => {
+        console.log('AuditHub: Filtered sessions:', allFilteredSessions);
+        console.log('AuditHub: Active Tab:', activeTab);
+        console.log('AuditHub: Focus Filter:', focusFilter);
+    }, [allFilteredSessions, activeTab, focusFilter]);
 
     // Pagination
     const totalItems = allFilteredSessions.length;

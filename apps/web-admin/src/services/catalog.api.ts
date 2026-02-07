@@ -11,6 +11,8 @@
  * - POST /api/catalog/imports/:id/revert - Revert an applied import
  */
 
+import { httpClient } from './httpClient';
+
 const API_BASE = import.meta.env.VITE_AUDIT_API_URL || 'http://localhost:8085';
 
 // Types matching backend domain
@@ -125,9 +127,7 @@ export const catalogApi = {
      * GET /api/catalog - List all products
      */
     getProducts: async (): Promise<CatalogListResponse> => {
-        const res = await fetch(`${API_BASE}/api/catalog`);
-        if (!res.ok) throw new Error('Failed to fetch catalog');
-        return res.json();
+        return httpClient.get<CatalogListResponse>(`${API_BASE}/api/catalog`);
     },
 
     /**
@@ -141,43 +141,24 @@ export const catalogApi = {
             formData.append('store_name', storeName);
         }
 
-        const res = await fetch(`${API_BASE}/api/catalog/analyze`, {
-            method: 'POST',
-            body: formData,
-        });
-        if (!res.ok) {
-            const error = await res.json();
-            throw new Error(error.message || 'Failed to analyze report');
-        }
-        return res.json();
+        return httpClient.postMultipart<CatalogDiffResult>(`${API_BASE}/api/catalog/analyze`, formData);
     },
 
     /**
      * POST /api/catalog/analyze/save - Save analysis for later
      */
     saveAnalysis: async (result: CatalogDiffResult, userName: string): Promise<{ import_id: number }> => {
-        const res = await fetch(`${API_BASE}/api/catalog/analyze/save`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ result, user_name: userName }),
-        });
-        if (!res.ok) {
-            const error = await res.json();
-            throw new Error(error.message || 'Failed to save analysis');
-        }
-        return res.json();
+        return httpClient.post<{ import_id: number }>(`${API_BASE}/api/catalog/analyze/save`, { result, user_name: userName });
     },
 
     /**
      * GET /api/catalog/imports - Get import history
      */
     getImportHistory: async (limit?: number): Promise<ImportHistoryItem[]> => {
-        const url = limit 
+        const url = limit
             ? `${API_BASE}/api/catalog/imports?limit=${limit}`
             : `${API_BASE}/api/catalog/imports`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('Failed to fetch import history');
-        const data: ImportHistoryResponse = await res.json();
+        const data = await httpClient.get<ImportHistoryResponse>(url);
         return data.imports || [];
     },
 
@@ -185,93 +166,67 @@ export const catalogApi = {
      * POST /api/catalog/imports/:id/commit - Apply selected changes
      */
     commitImport: async (importId: number, selectedSKUs: string[]): Promise<void> => {
-        const res = await fetch(`${API_BASE}/api/catalog/imports/${importId}/commit`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ selected_skus: selectedSKUs }),
-        });
-        if (!res.ok) {
-            const error = await res.json();
-            throw new Error(error.message || 'Failed to commit import');
-        }
+        return httpClient.post<void>(`${API_BASE}/api/catalog/imports/${importId}/commit`, { selected_skus: selectedSKUs });
     },
 
     /**
      * POST /api/catalog/imports/:id/revert - Revert an applied import
      */
     revertImport: async (importId: number): Promise<void> => {
-        const res = await fetch(`${API_BASE}/api/catalog/imports/${importId}/revert`, {
-            method: 'POST',
-        });
-        if (!res.ok) {
-            const error = await res.json();
-            throw new Error(error.message || 'Failed to revert import');
-        }
+        return httpClient.post<void>(`${API_BASE}/api/catalog/imports/${importId}/revert`);
     },
 
     /**
      * DELETE /api/catalog/imports/:id - Discard/delete a pending import
      */
     discardImport: async (importId: number): Promise<void> => {
-        const res = await fetch(`${API_BASE}/api/catalog/imports/${importId}`, {
-            method: 'DELETE',
-        });
-        if (!res.ok) {
-            const error = await res.json();
-            throw new Error(error.message || 'Failed to discard import');
-        }
+        return httpClient.delete<void>(`${API_BASE}/api/catalog/imports/${importId}`);
     },
 
     /**
      * POST /api/catalog/imports/:id/restore - Restore a previous version
      */
     restoreImport: async (importId: number): Promise<void> => {
-        const res = await fetch(`${API_BASE}/api/catalog/imports/${importId}/restore`, {
-            method: 'POST',
-        });
-        if (!res.ok) {
-            const error = await res.json();
-            throw new Error(error.message || 'Failed to restore version');
-        }
+        return httpClient.post<void>(`${API_BASE}/api/catalog/imports/${importId}/restore`);
     },
 
     /**
      * GET /api/catalog/valuation/latest - Get latest pending valuation
      */
     getLatestValuationSummary: async (): Promise<ValuationSummary> => {
-        const res = await fetch(`${API_BASE}/api/catalog/valuation/latest`);
-        if (!res.ok) {
-            if (res.status === 404) {
+        try {
+            const data = await httpClient.get<LatestValuationResponse>(`${API_BASE}/api/catalog/valuation/latest`);
+            return data.summary;
+        } catch (error: any) {
+            if (error.message?.includes('404') || error.message?.includes('No hay valuación')) {
                 throw new Error('No hay valuación pendiente');
             }
-            throw new Error('Failed to fetch latest valuation');
+            throw error;
         }
-        const data: LatestValuationResponse = await res.json();
-        return data.summary;
     },
 
     /**
      * GET /api/catalog/valuation/latest - Get latest pending valuation products
      */
     getLatestValuationProducts: async (): Promise<ValuationProduct[]> => {
-        const res = await fetch(`${API_BASE}/api/catalog/valuation/latest`);
-        if (!res.ok) {
-            if (res.status === 404) {
+        try {
+            const data = await httpClient.get<LatestValuationResponse>(`${API_BASE}/api/catalog/valuation/latest`);
+            return data.products.map(p => ({
+                sku: p.sku,
+                name: p.name,
+                changeType: p.change_type as ValuationProduct['changeType'],
+                oldPrice: p.old_price,
+                newPrice: p.new_price,
+                difference: p.difference,
+                percentChange: p.percent_change,
+                selected: p.selected,
+            }));
+        } catch (error: any) {
+            if (error.message?.includes('404') || error.message?.includes('No hay valuación')) {
                 throw new Error('No hay valuación pendiente');
             }
-            throw new Error('Failed to fetch latest valuation products');
+            throw error;
         }
-        const data: LatestValuationResponse = await res.json();
-        return data.products.map(p => ({
-            sku: p.sku,
-            name: p.name,
-            changeType: p.change_type as ValuationProduct['changeType'],
-            oldPrice: p.old_price,
-            newPrice: p.new_price,
-            difference: p.difference,
-            percentChange: p.percent_change,
-            selected: p.selected,
-        }));
     },
 };
 
@@ -302,7 +257,7 @@ export const transformDiffResult = (apiResult: CatalogDiffResult) => ({
     })),
 });
 
-export const transformImportHistory = (apiItems: ImportHistoryItem[]) => 
+export const transformImportHistory = (apiItems: ImportHistoryItem[]) =>
     apiItems.map(item => ({
         id: `IMP-${String(item.id).padStart(3, '0')}`,
         numericId: item.id,

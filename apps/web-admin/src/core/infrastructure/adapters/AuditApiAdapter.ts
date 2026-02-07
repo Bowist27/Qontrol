@@ -1,14 +1,9 @@
+import { httpClient } from '../../../services/httpClient';
+
 const API_BASE = 'http://localhost:8085/api'; // Temporary: direct to audit-service
 
 
-// Helper to get auth headers
-const getAuthHeaders = () => {
-    const token = localStorage.getItem('token');
-    return {
-        'Content-Type': 'application/json',
-        'Authorization': token ? `Bearer ${token}` : '',
-    };
-};
+
 
 export interface AuditSession {
     id: number;
@@ -36,15 +31,7 @@ export const auditApiAdapter = {
      * Calls GET /api/audits
      */
     async getAudits(): Promise<AuditListDTO[]> {
-        const response = await fetch(`${API_BASE}/audits`, {
-            headers: getAuthHeaders(),
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data: GetAuditsResponse = await response.json();
+        const data = await httpClient.get<GetAuditsResponse>(`${API_BASE}/audits`);
         return data.audits || [];
     },
 };

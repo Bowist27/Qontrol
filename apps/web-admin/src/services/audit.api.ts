@@ -8,6 +8,10 @@
  * 3. createAudit() - Save after user confirms
  */
 
+import { httpClient } from './httpClient';
+
+
+
 const API_BASE = import.meta.env.VITE_AUDIT_API_URL || 'http://localhost:8085';
 
 // Types matching backend domain
@@ -53,15 +57,17 @@ export interface ParseResult {
     total_value: number;
 }
 
+// Helper to get headers with Auth (deprecated)
+// const getHeaders = ...
+// const getMultipartHeaders = ...
+
 // API Client
 export const auditApi = {
     /**
      * GET /api/stores - List all active stores
      */
     getStores: async (): Promise<Store[]> => {
-        const res = await fetch(`${API_BASE}/api/stores`);
-        if (!res.ok) throw new Error('Failed to fetch stores');
-        const data = await res.json();
+        const data = await httpClient.get<{ stores: Store[] }>(`${API_BASE}/api/stores`);
         return data.stores;
     },
 
@@ -72,16 +78,7 @@ export const auditApi = {
     parsePDF: async (file: File): Promise<ParseResult> => {
         const formData = new FormData();
         formData.append('file', file);
-
-        const res = await fetch(`${API_BASE}/api/audits/parse`, {
-            method: 'POST',
-            body: formData,
-        });
-        if (!res.ok) {
-            const error = await res.json();
-            throw new Error(error.message || 'Failed to parse PDF');
-        }
-        return res.json();
+        return httpClient.postMultipart<ParseResult>(`${API_BASE}/api/audits/parse`, formData);
     },
 
     /**
@@ -92,34 +89,21 @@ export const auditApi = {
         const formData = new FormData();
         formData.append('store_id', storeId.toString());
         formData.append('file', file);
-
-        const res = await fetch(`${API_BASE}/api/audits`, {
-            method: 'POST',
-            body: formData,
-        });
-        if (!res.ok) {
-            const error = await res.json();
-            throw new Error(error.message || 'Failed to create audit');
-        }
-        return res.json();
+        return httpClient.postMultipart<AuditDTO>(`${API_BASE}/api/audits`, formData);
     },
 
     /**
      * GET /api/audits/:id - Get audit with items
      */
     getAudit: async (sessionId: number): Promise<AuditDTO> => {
-        const res = await fetch(`${API_BASE}/api/audits/${sessionId}`);
-        if (!res.ok) throw new Error('Failed to fetch audit');
-        return res.json();
+        return httpClient.get<AuditDTO>(`${API_BASE}/api/audits/${sessionId}`);
     },
 
     /**
      * GET /api/audits - List all audits for dashboard
      */
     getSessions: async (): Promise<AuditListDTO[]> => {
-        const res = await fetch(`${API_BASE}/api/audits`);
-        if (!res.ok) throw new Error('Failed to fetch sessions');
-        const data = await res.json();
+        const data = await httpClient.get<{ audits: AuditListDTO[] }>(`${API_BASE}/api/audits`);
         return data.audits;
     },
 
@@ -127,10 +111,7 @@ export const auditApi = {
      * DELETE /api/audits/:id - Cancel/Delete an audit
      */
     deleteAudit: async (sessionId: number): Promise<void> => {
-        const res = await fetch(`${API_BASE}/api/audits/${sessionId}`, {
-            method: 'DELETE',
-        });
-        if (!res.ok) throw new Error('Failed to delete audit');
+        return httpClient.delete<void>(`${API_BASE}/api/audits/${sessionId}`);
     },
 
     // ============ CATALOG APIs ============
@@ -139,9 +120,7 @@ export const auditApi = {
      * GET /api/catalog - Get all catalog products
      */
     getCatalogProducts: async () => {
-        const res = await fetch(`${API_BASE}/api/catalog`);
-        if (!res.ok) throw new Error('Failed to fetch catalog');
-        return res.json();
+        return httpClient.get<any>(`${API_BASE}/api/catalog`);
     },
 
     /**
@@ -151,71 +130,47 @@ export const auditApi = {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('store_name', storeName);
-
-        const res = await fetch(`${API_BASE}/api/catalog/analyze`, {
-            method: 'POST',
-            body: formData,
-        });
-        if (!res.ok) throw new Error('Failed to analyze valuation');
-        return res.json();
+        return httpClient.postMultipart<any>(`${API_BASE}/api/catalog/analyze`, formData);
     },
 
     /**
      * GET /api/catalog/valuation/latest - Get latest pending valuation
      */
     getLatestValuation: async () => {
-        const res = await fetch(`${API_BASE}/api/catalog/valuation/latest`);
-        if (!res.ok) {
-            if (res.status === 404) return null;
-            throw new Error('Failed to fetch latest valuation');
+        try {
+            return await httpClient.get<any>(`${API_BASE}/api/catalog/valuation/latest`);
+        } catch (error: any) {
+            if (error.message?.includes('404')) return null;
+            throw error;
         }
-        return res.json();
     },
 
     /**
      * POST /api/catalog/analyze/save - Save analysis for later commit
      */
     saveAnalysis: async (result: any, userName: string) => {
-        const res = await fetch(`${API_BASE}/api/catalog/analyze/save`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ result, user_name: userName }),
-        });
-        if (!res.ok) throw new Error('Failed to save analysis');
-        return res.json();
+        return httpClient.post<any>(`${API_BASE}/api/catalog/analyze/save`, { result, user_name: userName });
     },
 
     /**
      * POST /api/catalog/imports/:id/commit - Apply selected changes
      */
     commitCatalogImport: async (importId: number, selectedSKUs: string[]) => {
-        const res = await fetch(`${API_BASE}/api/catalog/imports/${importId}/commit`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ selected_skus: selectedSKUs }),
-        });
-        if (!res.ok) throw new Error('Failed to commit import');
-        return res.json();
+        return httpClient.post<any>(`${API_BASE}/api/catalog/imports/${importId}/commit`, { selected_skus: selectedSKUs });
     },
 
     /**
      * POST /api/catalog/imports/:id/revert - Revert import
      */
     revertCatalogImport: async (importId: number) => {
-        const res = await fetch(`${API_BASE}/api/catalog/imports/${importId}/revert`, {
-            method: 'POST',
-        });
-        if (!res.ok) throw new Error('Failed to revert import');
-        return res.json();
+        return httpClient.post<any>(`${API_BASE}/api/catalog/imports/${importId}/revert`);
     },
 
     /**
      * GET /api/catalog/imports - Get import history
      */
     getCatalogHistory: async (limit = 20) => {
-        const res = await fetch(`${API_BASE}/api/catalog/imports?limit=${limit}`);
-        if (!res.ok) throw new Error('Failed to fetch history');
-        return res.json();
+        return httpClient.get<any>(`${API_BASE}/api/catalog/imports?limit=${limit}`);
     },
 
     // ============ PHYSICAL SCAN APIs (POS Integration) ============
@@ -224,9 +179,7 @@ export const auditApi = {
      * GET /api/audits/:id/scans - Get physical scans for an audit
      */
     getPhysicalScans: async (auditId: number): Promise<PhysicalScan[]> => {
-        const res = await fetch(`${API_BASE}/api/audits/${auditId}/scans`);
-        if (!res.ok) throw new Error('Failed to fetch scans');
-        const data = await res.json();
+        const data = await httpClient.get<{ scans: PhysicalScan[] }>(`${API_BASE}/api/audits/${auditId}/scans`);
         return data.scans || [];
     },
 
@@ -234,9 +187,7 @@ export const auditApi = {
      * GET /api/audits/:id/scans/summary - Get summary stats for physical scans
      */
     getPhysicalScanSummary: async (auditId: number): Promise<PhysicalScanSummary> => {
-        const res = await fetch(`${API_BASE}/api/audits/${auditId}/scans/summary`);
-        if (!res.ok) throw new Error('Failed to fetch scan summary');
-        return res.json();
+        return httpClient.get<PhysicalScanSummary>(`${API_BASE}/api/audits/${auditId}/scans/summary`);
     },
 };
 

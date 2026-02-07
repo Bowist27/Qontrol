@@ -30,6 +30,11 @@ export const AuditProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }, []);
 
 
+    // Load audits on mount
+    React.useEffect(() => {
+        loadAudits();
+    }, [loadAudits]);
+
     return (
         <AuditContext.Provider value={{ audits, loading, error, loadAudits }}>
             {children}
