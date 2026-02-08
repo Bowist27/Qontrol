@@ -236,6 +236,12 @@ const AuditHub: React.FC = () => {
         return sessions.filter(s => s.storeName === filterStore);
     };
 
+    // Filtered counts for display (update when store filter changes)
+    const filteredActiveSessions = applyStoreFilter(activeSessions);
+    const filteredHistorySessions = applyStoreFilter(historySessions);
+    const filteredInProgressSessions = applyStoreFilter(inProgressSessions);
+    const filteredExceptionSessions = applyStoreFilter(exceptionSessions);
+
     const getFilteredHistory = () => {
         let filtered = applyStoreFilter(historySessions);
 
@@ -598,7 +604,7 @@ const AuditHub: React.FC = () => {
                                 : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
                                 }`}
                         >
-                            Activas ({activeSessions.length})
+                            Activas ({filteredActiveSessions.length})
                         </button>
                         <button
                             onClick={() => setActiveTab('history')}
@@ -607,7 +613,7 @@ const AuditHub: React.FC = () => {
                                 : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
                                 }`}
                         >
-                            Historial ({historySessions.length})
+                            Historial ({filteredHistorySessions.length})
                         </button>
                     </div>
 
@@ -616,7 +622,7 @@ const AuditHub: React.FC = () => {
                         {isLoading && <span className="text-xs text-slate-400">Cargando datos...</span>}
                         {activeTab === 'active' && (
                             <>
-                                {exceptionSessions.length > 0 && (
+                                {filteredExceptionSessions.length > 0 && (
                                     <button
                                         onClick={() => setFocusFilter(focusFilter === 'exceptions' ? 'all' : 'exceptions')}
                                         className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${focusFilter === 'exceptions'
@@ -625,7 +631,7 @@ const AuditHub: React.FC = () => {
                                             }`}
                                     >
                                         <KeyRound size={14} />
-                                        <span className="font-bold tabular-nums">{exceptionSessions.length}</span>
+                                        <span className="font-bold tabular-nums">{filteredExceptionSessions.length}</span>
                                         <span>Pendientes</span>
                                     </button>
                                 )}
@@ -638,7 +644,7 @@ const AuditHub: React.FC = () => {
                                         }`}
                                 >
                                     <Play size={14} />
-                                    <span className="font-bold tabular-nums">{inProgressSessions.length}</span>
+                                    <span className="font-bold tabular-nums">{filteredInProgressSessions.length}</span>
                                     <span className="text-blue-600">En Curso</span>
                                 </button>
                             </>
