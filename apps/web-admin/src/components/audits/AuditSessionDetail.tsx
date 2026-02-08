@@ -441,7 +441,7 @@ const AuditSessionDetail: React.FC = () => {
     const discrepanciesCount = diffItems.filter(i => i.difference !== 0).length;
     const extrasCount = diffItems.filter(i => i.difference > 0).length; // Sobrantes (físico > teórico)
     const highValueDiffs = diffItems.filter(i => i.impact < -5000).length;
-    const totalNegativeImpact = diffItems.filter(i => i.impact < 0).reduce((sum, i) => sum + i.impact, 0);
+    const totalImpact = diffItems.reduce((sum, i) => sum + i.impact, 0);
 
     return (
         <div className="h-[calc(100vh-140px)] flex flex-col gap-3">
@@ -945,17 +945,14 @@ const AuditSessionDetail: React.FC = () => {
                         <div className={`px-4 py-2 border-b flex items-center justify-between ${highValueDiffs > 0 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
                             <div className="flex items-center gap-2">
                                 <AlertCircle size={16} className={highValueDiffs > 0 ? 'text-amber-600' : 'text-red-600'} />
-                                <span className="text-sm text-slate-700">
-                                    {highValueDiffs > 0
-                                        ? `${highValueDiffs} productos con diferencia mayor a $5,000 MXN`
-                                        : `${discrepanciesCount} productos con diferencias detectadas`
-                                    }
+                                <span className={`text-sm font-medium ${highValueDiffs > 0 ? 'text-amber-800' : 'text-red-800'}`}>
+                                    {highValueDiffs} productos con diferencia mayor a $5,000 MXN
                                 </span>
                             </div>
                             <div className="flex items-center gap-2">
-                                <span className="text-sm text-slate-600">Pérdida Total:</span>
-                                <span className="text-lg font-bold text-red-700 tabular-nums">
-                                    ${Math.abs(totalNegativeImpact).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                <span className="text-sm text-slate-600">{totalImpact >= 0 ? 'Ganancia Total:' : 'Pérdida Total (Neto):'}</span>
+                                <span className={`text-lg font-bold tabular-nums ${totalImpact >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                                    ${Math.abs(totalImpact).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                                 </span>
                             </div>
                         </div>
