@@ -67,7 +67,8 @@ const AuditSessionDetail: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     const location = useLocation();
-    const isNewAudit = id === 'new';
+    // Detect new audit: static "new" route has id=undefined, OR path ends with /new
+    const isNewAudit = !id || location.pathname.endsWith('/new');
     const _sessionId = id; // Mapping to existing logic variable legacy name
 
     // Legacy mapping functions
@@ -80,12 +81,23 @@ const AuditSessionDetail: React.FC = () => {
     const [showStoreDropdown, setShowStoreDropdown] = useState(false);
     const [storeSearch, setStoreSearch] = useState('');
     const [stores, setStores] = useState<StoreType[]>([]);
+    const [isLoadingStores, setIsLoadingStores] = useState(true);
+    const [storesError, setStoresError] = useState<string | null>(null);
 
     // Fetch stores from API on mount (always, to ensure we can resolve store name if state is missing)
     useEffect(() => {
+        setIsLoadingStores(true);
+        setStoresError(null);
         auditApi.getStores()
-            .then(setStores)
-            .catch(err => console.error('Failed to load stores:', err));
+            .then(data => {
+                setStores(data);
+                setIsLoadingStores(false);
+            })
+            .catch(err => {
+                console.error('Failed to load stores:', err);
+                setStoresError('Error al cargar tiendas');
+                setIsLoadingStores(false);
+            });
     }, []);
 
     // Get the effective store name (used when creating new audit vs viewing existing)
@@ -124,7 +136,7 @@ const AuditSessionDetail: React.FC = () => {
     const [uploadedFile, setUploadedFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const tableContainerRef = useRef<HTMLDivElement>(null);
-    const [isLoadingStores] = useState(false);
+
 
     const [, setIsLoadingSession] = useState(false);
 
@@ -462,7 +474,13 @@ const AuditSessionDetail: React.FC = () => {
                                                     <span className="text-slate-700 font-medium">{store.name}</span>
                                                 </button>
                                             ))}
-                                        {stores.length === 0 && !isLoadingStores && (
+                                        {isLoadingStores && (
+                                            <div className="p-4 text-center text-slate-500 text-xs">Cargando tiendas...</div>
+                                        )}
+                                        {storesError && (
+                                            <div className="p-4 text-center text-red-500 text-xs">{storesError}</div>
+                                        )}
+                                        {stores.length === 0 && !isLoadingStores && !storesError && (
                                             <div className="p-4 text-center text-slate-500 text-xs">No hay tiendas disponibles</div>
                                         )}
                                     </div>
