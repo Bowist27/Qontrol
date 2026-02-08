@@ -302,6 +302,48 @@ const AuditSessionDetail: React.FC = () => {
         }
     };
 
+    // Export to Excel (CSV format compatible with Excel)
+    const exportToExcel = () => {
+        if (diffItems.length === 0) {
+            alert('No hay datos para exportar');
+            return;
+        }
+
+        // Headers
+        const headers = ['SKU', 'Descripción', 'Precio Unitario', 'Cant. Teórico', 'Cant. Físico', 'Diferencia', 'Impacto ($)'];
+
+        // Data rows
+        const rows = diffItems.map(item => [
+            item.sku,
+            `"${item.name.replace(/"/g, '""')}"`, // Escape quotes in names
+            item.unitCost?.toFixed(2) || '0.00',
+            item.theoretical.toString(),
+            item.physical.toString(),
+            item.difference.toString(),
+            item.impact.toFixed(2)
+        ]);
+
+        // Build CSV content with BOM for Excel UTF-8 compatibility
+        const BOM = '\uFEFF';
+        const csvContent = BOM + [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+
+        // Create download
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+
+        // Filename with store name and date
+        const storeName = stores.find(s => s.id === selectedStoreId)?.name || 'Auditoria';
+        const date = new Date().toISOString().split('T')[0];
+        link.download = `Auditoria_${storeName.replace(/\s+/g, '_')}_${date}.csv`;
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     // Scroll to top on page change
     useEffect(() => {
         if (tableContainerRef.current) {
@@ -386,7 +428,7 @@ const AuditSessionDetail: React.FC = () => {
             item.name.toLowerCase().includes(searchQuery.toLowerCase());
 
         if (activeTab === 'differences') return matchesSearch && item.difference !== 0;
-        if (activeTab === 'extras') return matchesSearch && item.theoretical === 0 && item.physical > 0;
+        if (activeTab === 'extras') return matchesSearch && item.difference > 0; // Sobrantes (físico > teórico)
         return matchesSearch;
     });
 
@@ -397,7 +439,7 @@ const AuditSessionDetail: React.FC = () => {
     // Stats for tabs and alerts
     const totalProducts = diffItems.length;
     const discrepanciesCount = diffItems.filter(i => i.difference !== 0).length;
-    const extrasCount = diffItems.filter(i => i.theoretical === 0 && i.physical > 0).length;
+    const extrasCount = diffItems.filter(i => i.difference > 0).length; // Sobrantes (físico > teórico)
     const highValueDiffs = diffItems.filter(i => i.impact < -5000).length;
     const totalNegativeImpact = diffItems.filter(i => i.impact < 0).reduce((sum, i) => sum + i.impact, 0);
 
@@ -886,7 +928,11 @@ const AuditSessionDetail: React.FC = () => {
                                 <div className="h-8 w-px bg-slate-200"></div>
 
                                 {/* Tool Buttons */}
-                                <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="Exportar Excel">
+                                <button
+                                    onClick={exportToExcel}
+                                    className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                                    title="Exportar Excel"
+                                >
                                     <FileSpreadsheet size={20} />
                                 </button>
                                 <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="Recargar datos">
@@ -920,7 +966,7 @@ const AuditSessionDetail: React.FC = () => {
                                 <thead className="sticky top-0 z-10">
                                     {/* Group Headers */}
                                     <tr className="bg-slate-100 border-b border-slate-300">
-                                        <th colSpan={2} className="px-3 py-1.5 text-left font-semibold text-slate-700 text-xs uppercase tracking-wide">
+                                        <th colSpan={3} className="px-3 py-1.5 text-left font-semibold text-slate-700 text-xs uppercase tracking-wide">
                                             Producto
                                         </th>
                                         <th className="px-3 py-1.5 text-center font-semibold text-slate-600 text-xs uppercase tracking-wide bg-gray-200 border-l border-slate-300">
@@ -937,6 +983,7 @@ const AuditSessionDetail: React.FC = () => {
                                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
                                         <th className="px-3 py-1.5 text-left font-medium text-xs w-28">SKU</th>
                                         <th className="px-3 py-1.5 text-left font-medium text-xs">Descripción</th>
+                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-24">P. Unitario</th>
                                         <th className="px-3 py-1.5 text-right font-medium text-xs w-20 bg-gray-100 border-l border-slate-200">Cant.</th>
                                         <th className="px-3 py-1.5 text-right font-medium text-xs w-20 bg-blue-50 border-l border-slate-200 text-blue-700">Cant.</th>
                                         <th className="px-3 py-1.5 text-right font-medium text-xs w-16 border-l border-slate-200">Dif.</th>
@@ -946,7 +993,7 @@ const AuditSessionDetail: React.FC = () => {
                                 <tbody>
                                     {paginatedItems.length === 0 ? (
                                         <tr>
-                                            <td colSpan={6} className="px-4 py-12 text-center text-slate-400">
+                                            <td colSpan={7} className="px-4 py-12 text-center text-slate-400">
                                                 No hay productos que mostrar en esta pestaña
                                             </td>
                                         </tr>
@@ -964,6 +1011,10 @@ const AuditSessionDetail: React.FC = () => {
                                                 <td className="px-3 py-1.5 font-mono text-xs text-slate-600">{item.sku}</td>
                                                 {/* Description */}
                                                 <td className="px-3 py-1.5 text-slate-700 text-xs">{item.name}</td>
+                                                {/* Precio Unitario */}
+                                                <td className="px-3 py-1.5 text-right text-slate-600 tabular-nums text-xs">
+                                                    ${item.unitCost?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '—'}
+                                                </td>
                                                 {/* Teórico - Gray Column Tinting */}
                                                 <td className="px-3 py-1.5 text-right bg-gray-50 text-gray-700 font-medium tabular-nums border-l border-slate-100">
                                                     {item.theoretical}
@@ -989,7 +1040,7 @@ const AuditSessionDetail: React.FC = () => {
                                                 <td className={`px-3 py-1.5 text-right font-semibold tabular-nums border-l border-slate-100 ${item.impact === 0 ? 'text-slate-400' :
                                                     item.impact < 0 ? 'text-red-700' : 'text-emerald-600'
                                                     }`}>
-                                                    {item.impact !== 0 ? `$${Math.abs(item.impact).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
+                                                    {item.impact !== 0 ? `${item.impact < 0 ? '-' : '+'}$${Math.abs(item.impact).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
                                                 </td>
                                             </tr>
                                         ))
