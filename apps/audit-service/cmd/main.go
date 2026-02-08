@@ -90,7 +90,7 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Protected API routes (HU10)
+	// Protected API routes (require authentication)
 	api := router.Group("/api")
 	api.Use(authMiddleware.RequireAuth())
 	{
@@ -98,9 +98,9 @@ func main() {
 		api.GET("/audits", auditHandler.GetAudits)
 	}
 
-	// Legacy routes (unprotected for now - existing functionality)
-	auditHandler.RegisterRoutes(router)
-	catalogHandler.RegisterRoutes(router)
+	// Register all routes with auth middleware
+	auditHandler.RegisterRoutesWithAuth(router, authMiddleware)
+	catalogHandler.RegisterRoutesWithAuth(router, authMiddleware)
 
 	// Start server
 	port := os.Getenv("PORT")

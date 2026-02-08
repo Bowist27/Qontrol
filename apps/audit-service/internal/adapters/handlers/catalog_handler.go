@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"audit-service/internal/adapters/middleware"
 	"audit-service/internal/core/domain"
 	"audit-service/internal/core/services"
 	"audit-service/internal/parser"
@@ -355,14 +356,35 @@ func (h *CatalogHandler) GetImportHistory(c *gin.Context) {
 	})
 }
 
-// RegisterRoutes sets up catalog routes
+// RegisterRoutes sets up catalog routes (legacy - unprotected)
 func (h *CatalogHandler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
 	{
 		api.GET("/catalog", h.ListProducts)
 		api.POST("/catalog/import", h.ImportCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)
-		
+
+		// New endpoints for diff engine
+		api.POST("/catalog/analyze", h.AnalyzeReport)
+		api.POST("/catalog/analyze/save", h.SaveAnalysis)
+		api.GET("/catalog/imports", h.GetImportHistory)
+		api.GET("/catalog/valuation/latest", h.GetLatestValuation)
+		api.POST("/catalog/imports/:id/commit", h.CommitImport)
+		api.POST("/catalog/imports/:id/revert", h.RevertImport)
+		api.POST("/catalog/imports/:id/restore", h.RestoreImport)
+		api.DELETE("/catalog/imports/:id", h.DiscardImport)
+	}
+}
+
+// RegisterRoutesWithAuth sets up catalog routes with authentication middleware
+func (h *CatalogHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middleware.AuthMiddleware) {
+	api := router.Group("/api")
+	api.Use(auth.RequireAuth())
+	{
+		api.GET("/catalog", h.ListProducts)
+		api.POST("/catalog/import", h.ImportCatalog)
+		api.GET("/catalog/barcode/:code", h.LookupBarcode)
+
 		// New endpoints for diff engine
 		api.POST("/catalog/analyze", h.AnalyzeReport)
 		api.POST("/catalog/analyze/save", h.SaveAnalysis)
@@ -389,20 +411,20 @@ func (h *CatalogHandler) GetLatestValuation(c *gin.Context) {
 
 	// Build summary
 	summary := gin.H{
-		"id":                  imp.ID,
-		"file_name":           imp.FileName,
-		"store_name":          imp.StoreName,
-		"imported_by":         imp.ImportedByName,
-		"new_products":        imp.NewProducts,
-		"price_up":            imp.PriceUpCount,
-		"price_down":          imp.PriceDownCount,
-		"unchanged":           imp.UnchangedCount,
-		"total_value":         imp.TotalValue,
-		"previous_value":      imp.PreviousValue,
+		"id":                   imp.ID,
+		"file_name":            imp.FileName,
+		"store_name":           imp.StoreName,
+		"imported_by":          imp.ImportedByName,
+		"new_products":         imp.NewProducts,
+		"price_up":             imp.PriceUpCount,
+		"price_down":           imp.PriceDownCount,
+		"unchanged":            imp.UnchangedCount,
+		"total_value":          imp.TotalValue,
+		"previous_value":       imp.PreviousValue,
 		"economic_impact_up":   imp.EconomicImpactUp,
 		"economic_impact_down": imp.EconomicImpactDown,
-		"status":              imp.Status,
-		"created_at":          imp.CreatedAt,
+		"status":               imp.Status,
+		"created_at":           imp.CreatedAt,
 	}
 
 	// Build products list

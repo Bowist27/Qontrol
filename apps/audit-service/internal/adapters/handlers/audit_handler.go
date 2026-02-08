@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"audit-service/internal/adapters/middleware"
 	"audit-service/internal/core/domain"
 	"audit-service/internal/core/services"
 
@@ -197,12 +198,32 @@ func (h *AuditHandler) DeleteAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Audit deleted successfully"})
 }
 
-// RegisterRoutes sets up the routes
+// RegisterRoutes sets up the routes (legacy - unprotected)
 func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
 	{
 		api.GET("/stores", h.ListStores)
 		// api.GET("/audits", h.ListAudits)   // Removed: handled in main.go with auth and filter logic
+		api.POST("/audits/parse", h.ParsePDF) // FASE 3: Preview only
+		api.POST("/audits", h.CreateAudit)    // FASE 5: Save after confirm
+		api.GET("/audits/:id", h.GetAudit)
+		api.DELETE("/audits/:id", h.DeleteAudit) // Cancel/Delete audit
+
+		// Physical Scan endpoints (for POS app)
+		api.GET("/audits/active", h.ListActiveAudits)          // Audits available for POS
+		api.POST("/audits/:id/scans", h.AddScan)               // Add scan from POS
+		api.GET("/audits/:id/scans", h.GetScans)               // Get all scans
+		api.GET("/audits/:id/scans/summary", h.GetScanSummary) // Get summary
+		api.DELETE("/audits/:id/scans/last", h.UndoLastScan)   // Undo last scan
+	}
+}
+
+// RegisterRoutesWithAuth sets up routes with authentication middleware
+func (h *AuditHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middleware.AuthMiddleware) {
+	api := router.Group("/api")
+	api.Use(auth.RequireAuth())
+	{
+		api.GET("/stores", h.ListStores)
 		api.POST("/audits/parse", h.ParsePDF) // FASE 3: Preview only
 		api.POST("/audits", h.CreateAudit)    // FASE 5: Save after confirm
 		api.GET("/audits/:id", h.GetAudit)
@@ -291,6 +312,11 @@ func (h *AuditHandler) GetScans(c *gin.Context) {
 			Message: err.Error(),
 		})
 		return
+	}
+
+	// Ensure we return empty array instead of null
+	if scans == nil {
+		scans = []domain.PhysicalScan{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"scans": scans})
