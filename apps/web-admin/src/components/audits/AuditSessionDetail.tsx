@@ -11,10 +11,12 @@ import {
     FileText, Upload, Wifi, WifiOff, Clock, Users, AlertTriangle,
     CheckCircle2, RefreshCw, Search, FileSpreadsheet, X, ArrowLeft,
     Activity, AlertCircle, BarChart3, History, MapPin, Calendar, User,
-    ChevronDown, Store, Save, Loader2
+    ChevronDown, Store, Save, Loader2, FileDown, DownloadCloud
 } from 'lucide-react';
+import { pdf } from '@react-pdf/renderer';
 import { auditApi, type Store as StoreType, type AuditEvent } from '../../services/audit.api';
 import { useAudit } from '../../context/AuditContext';
+import ReporteAjusteInventario from './ReporteAjusteInventario';
 
 // Types
 type AuditStatus = 'not_started' | 'partial' | 'in_progress' | 'reconciled' | 'locked';
@@ -85,6 +87,9 @@ const AuditSessionDetail: React.FC = () => {
     const [stores, setStores] = useState<StoreType[]>([]);
     const [isLoadingStores, setIsLoadingStores] = useState(true);
     const [storesError, setStoresError] = useState<string | null>(null);
+
+    // Export Dropdown State
+    const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
 
     // Event Log State
     const [showEventLog, setShowEventLog] = useState(false);
@@ -373,8 +378,8 @@ const AuditSessionDetail: React.FC = () => {
         const link = document.createElement('a');
         link.href = url;
 
-        // Filename with store name and date
-        const storeName = stores.find(s => s.id === selectedStoreId)?.name || 'Auditoria';
+        // Filename with store name and date (use existingStoreName for existing audits)
+        const storeName = existingStoreName || stores.find(s => s.id === selectedStoreId)?.name || 'Auditoria';
         const date = new Date().toISOString().split('T')[0];
         link.download = `Auditoria_${storeName.replace(/\s+/g, '_')}_${date}.csv`;
 
@@ -382,6 +387,84 @@ const AuditSessionDetail: React.FC = () => {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+
+        setExportDropdownOpen(false);
+    };
+
+    // Transform diffItems for PDF format
+    const transformDataForPDF = () => {
+        // Get store name: for existing audits use existingStoreName, for new audits use selected store
+        const storeName = existingStoreName || stores.find(s => s.id === selectedStoreId)?.name || 'Tienda Sin Nombre';
+        const fechaInventario = new Date().toLocaleDateString('es-MX');
+        const fechaValuacion = new Date().toLocaleDateString('es-MX');
+
+        const ajustes = diffItems.map(item => {
+            // Determine product family based on description/unit
+            let familia = 'OTROS';
+            const desc = item.name.toUpperCase();
+            if (desc.includes('CUBETA')) familia = 'CUBETAS';
+            else if (item.unitCost && item.unitCost > 500) familia = 'CUBETAS'; // High value = cubetas
+            else if (desc.includes('GALON') || desc.includes('GAL')) familia = 'GALONES';
+            else if (desc.includes('LITRO') || desc.includes('LT')) familia = 'LITROS';
+            else if (desc.includes('BROCHA') || desc.includes('RODILLO') || desc.includes('LIJA') || desc.includes('CINTA')) familia = 'COMPLEMENTOS';
+
+            // Determine movement type
+            let tipoMovimiento: 'ENTRADA' | 'SALIDA' | 'SIN CAMBIO';
+            if (item.difference < 0) tipoMovimiento = 'SALIDA';
+            else if (item.difference > 0) tipoMovimiento = 'ENTRADA';
+            else tipoMovimiento = 'SIN CAMBIO';
+
+            return {
+                codigo: item.sku,
+                descripcion: item.name,
+                unidad: 'PZA', // Default, could be enhanced
+                familia,
+                cantidadTeorica: item.theoretical,
+                cantidadFisica: item.physical,
+                diferencia: item.difference,
+                tipoMovimiento
+            };
+        });
+
+        return {
+            ajustes,
+            nombreTienda: storeName,
+            fechaValuacion,
+            fechaInventario
+        };
+    };
+
+    // Export to PDF with error handling
+    const exportToPDF = async () => {
+        try {
+            console.log('📄 Generating PDF...');
+            const pdfData = transformDataForPDF();
+            console.log('📊 PDF Data:', pdfData);
+
+            // Generate PDF blob
+            const blob = await pdf(<ReporteAjusteInventario {...pdfData} />).toBlob();
+            console.log('✅ PDF Blob generated:', blob.size, 'bytes');
+
+            // Create download link
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+
+            const storeName = stores.find(s => s.id === selectedStoreId)?.name || 'Reporte';
+            const date = new Date().toISOString().split('T')[0];
+            link.download = `Auditoria_${storeName.replace(/\s+/g, '_')}_${date}.pdf`;
+
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            setExportDropdownOpen(false);
+            console.log('✅ PDF downloaded successfully');
+        } catch (error) {
+            console.error('❌ Error generating PDF:', error);
+            alert('Error al generar el PDF. Por favor revisa la consola para más detalles.');
+        }
     };
 
     // Scroll to top on page change
@@ -985,14 +1068,36 @@ const AuditSessionDetail: React.FC = () => {
                                     {/* Separator */}
                                     <div className="h-8 w-px bg-slate-200"></div>
 
-                                    {/* Tool Buttons */}
-                                    <button
-                                        onClick={exportToExcel}
-                                        className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-                                        title="Exportar Excel"
-                                    >
-                                        <FileSpreadsheet size={20} />
-                                    </button>
+                                    {/* Export Dropdown */}
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
+                                            className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-1"
+                                            title="Exportar"
+                                        >
+                                            <DownloadCloud size={20} />
+                                            <ChevronDown size={14} className={`transition-transform ${exportDropdownOpen ? 'rotate-180' : ''}`} />
+                                        </button>
+
+                                        {exportDropdownOpen && (
+                                            <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-50 min-w-[180px]">
+                                                <button
+                                                    onClick={exportToExcel}
+                                                    className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+                                                >
+                                                    <FileSpreadsheet size={16} className="text-green-600" />
+                                                    Descargar Excel
+                                                </button>
+                                                <button
+                                                    onClick={exportToPDF}
+                                                    className="w-full px-4 py-2 text-left text-sm hover:bg-slate-50 flex items-center gap-2 text-slate-700"
+                                                >
+                                                    <FileDown size={16} className="text-red-600" />
+                                                    Descargar PDF
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
                                     <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="Recargar datos">
                                         <RefreshCw size={20} />
                                     </button>
