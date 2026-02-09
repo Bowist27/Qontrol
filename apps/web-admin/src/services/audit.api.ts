@@ -52,6 +52,7 @@ export interface AuditListDTO {
     store_name: string;
     theoretical_skus: number; // Added field
     scanned_skus: number;     // Added field
+    total_loss: number;       // Discrepancy value
 }
 
 export interface AuditEvent {

@@ -225,7 +225,18 @@ func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.Audi
 	query := `
 		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       COALESCE((
+		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
+		           FROM audit_theoretical t
+		           LEFT JOIN (
+		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
+		               FROM audit_physical ap2
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               GROUP BY ap2.audit_id, p2.sku
+		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           WHERE t.audit_id = s.id
+		       ), 0) as total_loss
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
 		ORDER BY s.created_at DESC
@@ -824,7 +835,18 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 	query := `
 		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       COALESCE((
+		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
+		           FROM audit_theoretical t
+		           LEFT JOIN (
+		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
+		               FROM audit_physical ap2
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               GROUP BY ap2.audit_id, p2.sku
+		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           WHERE t.audit_id = s.id
+		       ), 0) as total_loss
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
 		ORDER BY s.created_at DESC
@@ -845,7 +867,7 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 		err := rows.Scan(
 			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
 			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
-			&dto.TheoreticalSKUs, &dto.ScannedSKUs,
+			&dto.TheoreticalSKUs, &dto.ScannedSKUs, &dto.TotalLoss,
 		)
 		if err != nil {
 			return nil, err

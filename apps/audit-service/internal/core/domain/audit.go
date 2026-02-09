@@ -56,6 +56,7 @@ type AuditListDTO struct {
 	StoreName       string       `json:"store_name"`
 	TheoreticalSKUs int          `json:"theoretical_skus"`
 	ScannedSKUs     int          `json:"scanned_skus"`
+	TotalLoss       float64      `json:"total_loss"`
 }
 
 // CreateAuditRequest is the request payload for creating an audit

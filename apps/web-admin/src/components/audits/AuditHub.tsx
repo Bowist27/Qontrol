@@ -159,7 +159,7 @@ const AuditHub: React.FC = () => {
             createdAt: s.created_at,
             closedAt: s.closed_at || undefined,
             percentComplete: percent,
-            currentLoss: 0,
+            currentLoss: item.total_loss || 0,
             theoreticalItems: theoretical,
             scannedItems: scanned,
             scanLogsCount: 0
@@ -476,11 +476,10 @@ const AuditHub: React.FC = () => {
             return <span className="text-slate-400 text-sm">$0</span>;
         }
 
-        const isPositive = loss < 0;
         const absLoss = Math.abs(loss);
         const isBig = absLoss > 10000;
 
-        if (isPositive) {
+        if (loss > 0) {
             return (
                 <span className={`text-emerald-600 tabular-nums ${isBig ? 'font-bold' : 'font-medium'}`}>
                     +${absLoss.toLocaleString()}
@@ -664,16 +663,6 @@ const AuditHub: React.FC = () => {
                                     onToDateChange={setFilterDateTo}
                                     onClear={clearFilters}
                                 />
-
-                                <button
-                                    onClick={() => {
-                                        window.location.reload();
-                                    }}
-                                    className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg"
-                                    title="Actualizar"
-                                >
-                                    <RefreshCw size={18} />
-                                </button>
                             </>
                         )}
                     </div>
