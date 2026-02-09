@@ -362,6 +362,7 @@ func (h *CatalogHandler) RegisterRoutes(router *gin.Engine) {
 	{
 		api.GET("/catalog", h.ListProducts)
 		api.POST("/catalog/import", h.ImportCatalog)
+		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)
 
 		// New endpoints for diff engine
@@ -383,6 +384,7 @@ func (h *CatalogHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middle
 	{
 		api.GET("/catalog", h.ListProducts)
 		api.POST("/catalog/import", h.ImportCatalog)
+		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)
 
 		// New endpoints for diff engine
@@ -395,6 +397,24 @@ func (h *CatalogHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middle
 		api.POST("/catalog/imports/:id/restore", h.RestoreImport)
 		api.DELETE("/catalog/imports/:id", h.DiscardImport)
 	}
+}
+
+// ClearCatalog handles DELETE /api/catalog
+// Deletes all products and import history from the catalog
+func (h *CatalogHandler) ClearCatalog(c *gin.Context) {
+	deleted, err := h.service.ClearCatalog(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "clear_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":          "Catálogo borrado exitosamente",
+		"deleted_products": deleted,
+	})
 }
 
 // GetLatestValuation handles GET /api/catalog/valuation/latest

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { catalogApi, type ValuationProduct, type ValuationSummary, type ImportHistoryItem } from '../../services/catalog.api';
 
 type FilterType = 'all' | 'price_up' | 'price_down' | 'new' | 'unchanged';
@@ -34,6 +35,14 @@ const CatalogView: React.FC = () => {
   const [applying, setApplying] = useState(false);
   const [showDetails, setShowDetails] = useState(true);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [restoreConfirmId, setRestoreConfirmId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [restoringId, setRestoringId] = useState<number | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const menuButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   
   // Undo state
   const [undoState, setUndoState] = useState<UndoState>({
@@ -269,6 +278,24 @@ const CatalogView: React.FC = () => {
     }
   };
 
+  // Handle clear entire catalog
+  const handleClearCatalog = async () => {
+    try {
+      setClearing(true);
+      await catalogApi.clearCatalog();
+      setShowClearConfirm(false);
+      setSummary(null);
+      setProducts([]);
+      setHistory([]);
+      setSelectedProducts(new Set());
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al borrar el catálogo');
+    } finally {
+      setClearing(false);
+    }
+  };
+
   // Format helpers
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('es-MX', {
@@ -327,11 +354,36 @@ const CatalogView: React.FC = () => {
   // Handle revert/restore from history - moved up to be available in all states
   const handleRevertFromHistory = async (importId: number) => {
     try {
+      setRestoringId(importId);
       setMenuOpenId(null);
       await catalogApi.restoreImport(importId);
+      setRestoreConfirmId(null);
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al restaurar');
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  // Handle delete individual import from history
+  const handleDeleteImport = async (importId: number) => {
+    try {
+      setDeletingId(importId);
+      setMenuOpenId(null);
+      // Use discard for pending/reverted, revert for applied (which also removes products)
+      const item = history.find(h => h.id === importId);
+      if (item?.status === 'pending' || item?.status === 'reverted') {
+        await catalogApi.discardImport(importId);
+      } else {
+        await catalogApi.revertImport(importId);
+      }
+      setDeleteConfirmId(null);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al eliminar');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -385,7 +437,7 @@ const CatalogView: React.FC = () => {
           </div>
 
           {/* History List */}
-          <div className="flex-1 overflow-y-auto p-2">
+          <div className="flex-1 overflow-y-auto overflow-x-visible p-2">
             {history.length === 0 ? (
               <div className="p-4 text-center text-gray-500 text-sm">
                 No hay historial
@@ -395,7 +447,6 @@ const CatalogView: React.FC = () => {
                 {history.map((item, index) => {
                   const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
                   const isVigente = item.status === 'applied' && isFirstApplied;
-                  const canRestore = !isVigente && item.status !== 'pending';
                   
                   const getBadge = () => {
                     if (isVigente) return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500 text-white">Vigente</span>;
@@ -428,32 +479,31 @@ const CatalogView: React.FC = () => {
                             <span className="text-orange-600">{item.price_changes} precios</span>
                           )}
                         </div>
-                        {canRestore && (
-                          <div className="relative">
+                        {!isVigente && (
+                          <div className="relative z-10">
                             <button
+                              type="button"
+                              ref={(el) => { if (el) menuButtonRefs.current.set(item.id, el); }}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setMenuOpenId(menuOpenId === item.id ? null : item.id);
+                                e.preventDefault();
+                                console.log('Menu button clicked for item:', item.id);
+                                if (menuOpenId === item.id) {
+                                  setMenuOpenId(null);
+                                  setMenuPosition(null);
+                                } else {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const left = Math.max(10, Math.min(rect.left, window.innerWidth - 170));
+                                  setMenuPosition({ top: rect.bottom + 4, left });
+                                  setMenuOpenId(item.id);
+                                }
                               }}
-                              className="p-1 hover:bg-gray-200 rounded transition-colors"
+                              className="p-1.5 hover:bg-gray-200 rounded transition-colors cursor-pointer"
                             >
-                              <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                              <svg className="w-4 h-4 text-gray-500 pointer-events-none" fill="currentColor" viewBox="0 0 20 20">
                                 <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" />
                               </svg>
                             </button>
-                            {menuOpenId === item.id && (
-                              <div className="absolute right-0 top-6 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 min-w-[160px]">
-                                <button
-                                  onClick={() => handleRevertFromHistory(item.id)}
-                                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                                >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                                  </svg>
-                                  Restaurar versión
-                                </button>
-                              </div>
-                            )}
                           </div>
                         )}
                       </div>
@@ -463,7 +513,70 @@ const CatalogView: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Clear Catalog Button */}
+          <div className="p-3 border-t border-gray-200">
+            <button
+              onClick={() => setShowClearConfirm(true)}
+              className="w-full px-3 py-2.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Borrar Catálogo
+            </button>
+          </div>
         </div>
+
+        {/* Clear Catalog Confirmation Modal */}
+        {showClearConfirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">¿Borrar todo el catálogo?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Esta acción eliminará <strong>todos los productos</strong> y el <strong>historial de importaciones</strong>. 
+                    El archivo Excel (LISTADF.xlsx) no se verá afectado y podrás volver a importarlo.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => setShowClearConfirm(false)}
+                  disabled={clearing}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleClearCatalog}
+                  disabled={clearing}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {clearing ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Borrando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Sí, borrar todo
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ===== MAIN CONTENT - BIG DROP ZONE ===== */}
         <div className="flex-1 flex flex-col overflow-hidden p-6">
@@ -511,6 +624,169 @@ const CatalogView: React.FC = () => {
             )}
           </div>
         </div>
+
+        {/* Portal Dropdown Menu - No Summary State */}
+        {menuOpenId && menuPosition && createPortal(
+          <div 
+            className="fixed inset-0"
+            style={{ zIndex: 9998 }}
+            onClick={() => { setMenuOpenId(null); setMenuPosition(null); }}
+          >
+            <div 
+              className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1"
+              style={{ 
+                top: menuPosition.top, 
+                left: menuPosition.left,
+                zIndex: 9999,
+                minWidth: 160
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {(() => {
+                const item = history.find(h => h.id === menuOpenId);
+                if (!item) return null;
+                
+                const firstAppliedId = history.find(h => h.status === 'applied')?.id;
+                const isVigente = item.id === firstAppliedId && item.status === 'applied';
+                const canRestore = item.status === 'reverted' && firstAppliedId;
+                
+                return (
+                  <>
+                    {canRestore && (
+                      <button
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          setMenuPosition(null);
+                          setRestoreConfirmId(menuOpenId);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                        </svg>
+                        Restaurar versión
+                      </button>
+                    )}
+                    {!isVigente && (
+                      <button
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          setMenuPosition(null);
+                          setDeleteConfirmId(menuOpenId);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Eliminar
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>,
+          document.body
+        )}
+
+        {/* Delete Import Confirmation Modal - No Summary State */}
+        {deleteConfirmId && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">¿Eliminar esta importación?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Esta acción eliminará permanentemente el registro de esta importación del historial.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => setDeleteConfirmId(null)}
+                  disabled={deletingId !== null}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleDeleteImport(deleteConfirmId)}
+                  disabled={deletingId !== null}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {deletingId === deleteConfirmId ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Eliminando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Sí, eliminar
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Restore Import Confirmation Modal - No Summary State */}
+        {restoreConfirmId && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center shrink-0">
+                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">¿Restaurar esta versión?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Se revertirá la versión vigente actual y se aplicarán los precios de esta importación.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => setRestoreConfirmId(null)}
+                  disabled={restoringId !== null}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleRevertFromHistory(restoreConfirmId)}
+                  disabled={restoringId !== null}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {restoringId === restoreConfirmId ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Restaurando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                      </svg>
+                      Sí, restaurar
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -572,7 +848,7 @@ const CatalogView: React.FC = () => {
         </div>
 
         {/* History List */}
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex-1 overflow-y-auto overflow-x-visible p-2">
           {history.length === 0 ? (
             <div className="p-4 text-center text-gray-500 text-sm">
               No hay historial
@@ -582,8 +858,6 @@ const CatalogView: React.FC = () => {
               {history.map((item, index) => {
                 const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
                 const isVigente = item.status === 'applied' && isFirstApplied;
-                // Mostrar menú en CUALQUIER versión que no sea la vigente ni pendiente
-                const canRestore = !isVigente && item.status !== 'pending';
                 
                 return (
                   <div
@@ -613,32 +887,31 @@ const CatalogView: React.FC = () => {
                           <span className="text-orange-600">{item.price_changes} precios</span>
                         )}
                       </div>
-                      {canRestore && (
-                        <div className="relative">
+                      {!isVigente && (
+                        <div className="relative z-10">
                           <button
+                            type="button"
+                            ref={(el) => { if (el) menuButtonRefs.current.set(item.id, el); }}
                             onClick={(e) => {
                               e.stopPropagation();
-                              setMenuOpenId(menuOpenId === item.id ? null : item.id);
+                              e.preventDefault();
+                              console.log('Menu button clicked for item:', item.id);
+                              if (menuOpenId === item.id) {
+                                setMenuOpenId(null);
+                                setMenuPosition(null);
+                              } else {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const left = Math.max(10, Math.min(rect.left, window.innerWidth - 170));
+                                setMenuPosition({ top: rect.bottom + 4, left });
+                                setMenuOpenId(item.id);
+                              }
                             }}
-                            className="p-1 hover:bg-gray-200 rounded transition-colors"
+                            className="p-1.5 hover:bg-gray-200 rounded transition-colors cursor-pointer"
                           >
-                            <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                            <svg className="w-4 h-4 text-gray-500 pointer-events-none" fill="currentColor" viewBox="0 0 20 20">
                               <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" />
                             </svg>
                           </button>
-                          {menuOpenId === item.id && (
-                            <div className="absolute right-0 top-6 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 min-w-[160px]">
-                              <button
-                                onClick={() => handleRevertFromHistory(item.id)}
-                                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                                </svg>
-                                Restaurar versión
-                              </button>
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>
@@ -648,7 +921,235 @@ const CatalogView: React.FC = () => {
             </div>
           )}
         </div>
+
+          {/* Clear Catalog Button */}
+          <div className="p-3 border-t border-gray-200">
+            <button
+              onClick={() => setShowClearConfirm(true)}
+              className="w-full px-3 py-2.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Borrar Catálogo
+            </button>
+          </div>
       </div>
+
+      {/* Clear Catalog Confirmation Modal */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">¿Borrar todo el catálogo?</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Esta acción eliminará <strong>todos los productos</strong> y el <strong>historial de importaciones</strong>. 
+                  El archivo Excel (LISTADF.xlsx) no se verá afectado y podrás volver a importarlo.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                disabled={clearing}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleClearCatalog}
+                disabled={clearing}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+              >
+                {clearing ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Borrando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Sí, borrar todo
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Import Confirmation Modal */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">¿Eliminar esta importación?</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  {history.find(h => h.id === deleteConfirmId)?.status === 'pending' 
+                    ? 'Se descartará esta valuación pendiente sin aplicar cambios.'
+                    : 'Se revertirán los cambios de precios aplicados por esta importación.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => setDeleteConfirmId(null)}
+                disabled={deletingId !== null}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleDeleteImport(deleteConfirmId)}
+                disabled={deletingId !== null}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+              >
+                {deletingId === deleteConfirmId ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Eliminando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Sí, eliminar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restore Import Confirmation Modal */}
+      {restoreConfirmId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">¿Restaurar esta versión?</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Se revertirá la versión vigente actual y se aplicarán los precios de esta importación.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => setRestoreConfirmId(null)}
+                disabled={restoringId !== null}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleRevertFromHistory(restoreConfirmId)}
+                disabled={restoringId !== null}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+              >
+                {restoringId === restoreConfirmId ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Restaurando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                    </svg>
+                    Sí, restaurar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Portal Dropdown Menu */}
+      {menuOpenId && menuPosition && createPortal(
+        <div 
+          className="fixed inset-0"
+          style={{ zIndex: 9998 }}
+          onClick={() => { setMenuOpenId(null); setMenuPosition(null); }}
+        >
+          <div 
+            className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1"
+            style={{ 
+              top: menuPosition.top, 
+              left: menuPosition.left,
+              zIndex: 9999,
+              minWidth: 160
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {(() => {
+              const item = history.find(h => h.id === menuOpenId);
+              if (!item) return null;
+              
+              const firstAppliedId = history.find(h => h.status === 'applied')?.id;
+              const isVigente = item.id === firstAppliedId && item.status === 'applied';
+              const canRestore = item.status === 'reverted' && firstAppliedId;
+              
+              return (
+                <>
+                  {canRestore && (
+                    <button
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        setMenuPosition(null);
+                        setRestoreConfirmId(menuOpenId);
+                      }}
+                      className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                      </svg>
+                      Restaurar versión
+                    </button>
+                  )}
+                  {!isVigente && (
+                    <button
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        setMenuPosition(null);
+                        setDeleteConfirmId(menuOpenId);
+                      }}
+                      className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Eliminar
+                    </button>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* ===== MAIN CONTENT ===== */}
       <div className="flex-1 flex flex-col overflow-hidden p-3">

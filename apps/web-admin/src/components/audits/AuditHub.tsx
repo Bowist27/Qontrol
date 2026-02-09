@@ -9,10 +9,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Store, FileText, Play, CheckCircle2, Lock, KeyRound,
+    Store, Play, CheckCircle2, Lock, KeyRound,
     Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
-    RefreshCw, ChevronLeft, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole,
-    FileSpreadsheet, FileDown, AlertTriangle, Loader2, Trash2
+    ChevronLeft, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole,
+    FileSpreadsheet, FileDown, Loader2, Trash2
 } from 'lucide-react';
 
 import { auditApi } from '../../services/audit.api';

@@ -191,6 +191,13 @@ export const catalogApi = {
     },
 
     /**
+     * DELETE /api/catalog/clear - Clear entire catalog (products + history)
+     */
+    clearCatalog: async (): Promise<{ message: string; deleted_products: number }> => {
+        return httpClient.delete<{ message: string; deleted_products: number }>(`${API_BASE}/api/catalog/clear`);
+    },
+
+    /**
      * GET /api/catalog/valuation/latest - Get latest pending valuation
      */
     getLatestValuationSummary: async (): Promise<ValuationSummary> => {

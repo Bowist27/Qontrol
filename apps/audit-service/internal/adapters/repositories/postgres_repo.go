@@ -727,7 +727,7 @@ func (r *PostgresRepository) RestoreCatalogImport(ctx context.Context, importID 
 	return tx.Commit()
 }
 
-// DiscardCatalogImport deletes a pending catalog import and its items
+// DiscardCatalogImport deletes a pending or reverted catalog import and its items
 func (r *PostgresRepository) DiscardCatalogImport(ctx context.Context, importID int) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -741,13 +741,48 @@ func (r *PostgresRepository) DiscardCatalogImport(ctx context.Context, importID 
 		return err
 	}
 
-	// Delete import
-	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_imports WHERE id = $1 AND status = 'pending'`, importID)
+	// Delete import (allow pending or reverted status)
+	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_imports WHERE id = $1 AND status IN ('pending', 'reverted')`, importID)
 	if err != nil {
 		return err
 	}
 
 	return tx.Commit()
+}
+
+// ClearCatalog deletes all products and import history
+func (r *PostgresRepository) ClearCatalog(ctx context.Context) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	// Delete all import items
+	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_import_items`)
+	if err != nil {
+		return 0, err
+	}
+
+	// Delete all imports
+	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_imports`)
+	if err != nil {
+		return 0, err
+	}
+
+	// Delete all products
+	result, err := tx.ExecContext(ctx, `DELETE FROM products`)
+	if err != nil {
+		return 0, err
+	}
+
+	deleted, _ := result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return deleted, nil
 }
 
 // GetLatestPendingImport returns the most recent pending import with its items

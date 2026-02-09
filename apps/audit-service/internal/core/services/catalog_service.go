@@ -25,6 +25,7 @@ type CatalogRepository interface {
 	RevertCatalogImport(ctx context.Context, importID int) error
 	DiscardCatalogImport(ctx context.Context, importID int) error
 	RestoreCatalogImport(ctx context.Context, importID int) error
+	ClearCatalog(ctx context.Context) (int64, error)
 }
 
 // CatalogService handles catalog business logic
@@ -184,4 +185,9 @@ func (s *CatalogService) RestoreImport(ctx context.Context, importID int) error 
 // GetLatestPendingValuation returns the latest pending import with its items
 func (s *CatalogService) GetLatestPendingValuation(ctx context.Context) (*domain.CatalogImport, []domain.CatalogImportItem, error) {
 	return s.repo.GetLatestPendingImport(ctx)
+}
+
+// ClearCatalog deletes all products and import history from the catalog
+func (s *CatalogService) ClearCatalog(ctx context.Context) (int64, error) {
+	return s.repo.ClearCatalog(ctx)
 }

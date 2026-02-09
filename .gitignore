@@ -4,6 +4,10 @@
 *.env.local
 node_modules
 
+# Excel temporary files
+~$*.xlsx
+~$*.xls
+
 # Test scripts dependencies
 docs/pruebas/package.json
 docs/pruebas/package-lock.json
