@@ -11,7 +11,8 @@ import {
     FileText, Upload, Wifi, WifiOff, Clock, Users, AlertTriangle,
     CheckCircle2, RefreshCw, Search, FileSpreadsheet, X, ArrowLeft,
     Activity, AlertCircle, BarChart3, History, MapPin, Calendar, User,
-    ChevronDown, Store, Save, Loader2, FileDown, DownloadCloud
+    ChevronDown, Store, Save, Loader2, FileDown, DownloadCloud,
+    Trash2, LockKeyhole, RotateCcw, ShieldAlert, Info
 } from 'lucide-react';
 import { pdf } from '@react-pdf/renderer';
 import { auditApi, type Store as StoreType, type AuditEvent } from '../../services/audit.api';
@@ -160,6 +161,52 @@ const AuditSessionDetail: React.FC = () => {
     const [uploadedFile, setUploadedFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const tableContainerRef = useRef<HTMLDivElement>(null);
+
+    // Feedback modal (success / error / warning notifications)
+    const [feedbackModal, setFeedbackModal] = useState<{
+        open: boolean;
+        type: 'success' | 'error' | 'warning';
+        title: string;
+        message: string;
+        onClose?: () => void;
+    }>({ open: false, type: 'success', title: '', message: '' });
+
+    // Confirm modal (confirm dialogs for destructive/important actions)
+    const [confirmModal, setConfirmModal] = useState<{
+        open: boolean;
+        type: 'danger' | 'warning' | 'info';
+        icon: 'trash' | 'lock' | 'rotate' | 'shield' | 'info';
+        title: string;
+        message: string;
+        confirmLabel: string;
+        isLoading: boolean;
+        onConfirm: () => Promise<void>;
+    }>({ open: false, type: 'danger', icon: 'trash', title: '', message: '', confirmLabel: '', isLoading: false, onConfirm: async () => {} });
+
+    const showFeedback = (type: 'success' | 'error' | 'warning', title: string, message: string, onClose?: () => void) => {
+        setFeedbackModal({ open: true, type, title, message, onClose });
+    };
+
+    const closeFeedback = () => {
+        const cb = feedbackModal.onClose;
+        setFeedbackModal(prev => ({ ...prev, open: false }));
+        if (cb) cb();
+    };
+
+    const showConfirm = (opts: {
+        type: 'danger' | 'warning' | 'info';
+        icon: 'trash' | 'lock' | 'rotate' | 'shield' | 'info';
+        title: string;
+        message: string;
+        confirmLabel: string;
+        onConfirm: () => Promise<void>;
+    }) => {
+        setConfirmModal({ ...opts, open: true, isLoading: false });
+    };
+
+    const closeConfirm = () => {
+        setConfirmModal(prev => ({ ...prev, open: false, isLoading: false }));
+    };
 
 
     const [, setIsLoadingSession] = useState(false);
@@ -359,7 +406,7 @@ const AuditSessionDetail: React.FC = () => {
     // Export to Excel (CSV format compatible with Excel)
     const exportToExcel = () => {
         if (diffItems.length === 0) {
-            alert('No hay datos para exportar');
+            showFeedback('warning', 'Sin datos', 'No hay datos para exportar.');
             return;
         }
 
@@ -472,7 +519,7 @@ const AuditSessionDetail: React.FC = () => {
             console.log('✅ PDF downloaded successfully');
         } catch (error) {
             console.error('❌ Error generating PDF:', error);
-            alert('Error al generar el PDF. Por favor revisa la consola para más detalles.');
+            showFeedback('error', 'Error al generar PDF', 'No se pudo generar el PDF. Por favor revisa la consola para más detalles.');
         }
     };
 
@@ -484,49 +531,57 @@ const AuditSessionDetail: React.FC = () => {
     }, [currentPage]);
 
     // Handle Close Audit
-    const handleCloseAudit = async () => {
+    const handleCloseAudit = () => {
         if (!_sessionId) return;
-
-        const confirmed = window.confirm(
-            '¿Cerrar esta auditoría? El estado cambiará a "Finalizado" y se registrará en la bitácora.'
-        );
-
-        if (!confirmed) return;
-
-        try {
-            await auditApi.closeAudit(parseInt(_sessionId));
-            await loadAudits();
-            navigate('/dashboard/audits');
-        } catch (err) {
-            console.error('Error closing audit:', err);
-            alert('Error al cerrar la auditoría: ' + (err instanceof Error ? err.message : 'Unknown error'));
-        }
+        showConfirm({
+            type: 'warning',
+            icon: 'lock',
+            title: 'Cerrar Auditoría',
+            message: '¿Cerrar esta auditoría? El estado cambiará a "Finalizado" y se registrará en la bitácora.',
+            confirmLabel: 'Cerrar Auditoría',
+            onConfirm: async () => {
+                try {
+                    await auditApi.closeAudit(parseInt(_sessionId));
+                    await loadAudits();
+                    closeConfirm();
+                    navigate('/dashboard/audits');
+                } catch (err) {
+                    console.error('Error closing audit:', err);
+                    closeConfirm();
+                    showFeedback('error', 'Error', 'Error al cerrar la auditoría: ' + (err instanceof Error ? err.message : 'Error desconocido'));
+                }
+            }
+        });
     };
 
     // Handle Reopen Audit
-    const handleReopenAudit = async () => {
+    const handleReopenAudit = () => {
         if (!_sessionId) return;
-
-        const confirmed = window.confirm(
-            '¿Reabrir esta auditoría? El estado volverá a "Activa" y se registrará en la bitácora.'
-        );
-
-        if (!confirmed) return;
-
-        try {
-            await auditApi.reopenAudit(parseInt(_sessionId));
-            await loadAudits();
-            navigate('/dashboard/audits');
-        } catch (err) {
-            console.error('Error reopening audit:', err);
-            alert('Error al reabrir la auditoría: ' + (err instanceof Error ? err.message : 'Unknown error'));
-        }
+        showConfirm({
+            type: 'info',
+            icon: 'rotate',
+            title: 'Reabrir Auditoría',
+            message: '¿Reabrir esta auditoría? El estado volverá a "Activa" y se registrará en la bitácora.',
+            confirmLabel: 'Reabrir Auditoría',
+            onConfirm: async () => {
+                try {
+                    await auditApi.reopenAudit(parseInt(_sessionId));
+                    await loadAudits();
+                    closeConfirm();
+                    navigate('/dashboard/audits');
+                } catch (err) {
+                    console.error('Error reopening audit:', err);
+                    closeConfirm();
+                    showFeedback('error', 'Error', 'Error al reabrir la auditoría: ' + (err instanceof Error ? err.message : 'Error desconocido'));
+                }
+            }
+        });
     };
 
     // FASE 3: Parse PDF (Preview)
     const processFile = async (file: File) => {
         if (isNewAudit && !selectedStoreId) {
-            alert('Por favor selecciona una tienda primero');
+            showFeedback('warning', 'Selecciona una tienda', 'Por favor selecciona una tienda antes de cargar el archivo.');
             return;
         }
 
@@ -594,25 +649,31 @@ const AuditSessionDetail: React.FC = () => {
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
-    const handleUpdateAudit = async () => {
+    const handleUpdateAudit = () => {
         if (!_sessionId || !uploadedFile) return;
-
-        if (!confirm('¿Estás seguro de actualizar el archivo de valuación? Esto recalculará los teóricos. Tu inventario físico se mantendrá intacto.')) {
-            return;
-        }
-
-        setIsSaving(true);
-        try {
-            await auditApi.updateAudit(parseInt(_sessionId), uploadedFile);
-            alert('Auditoría actualizada exitosamente');
-            // Reload page to fetch fresh data
-            window.location.reload();
-        } catch (err) {
-            console.error(err);
-            alert('Error al actualizar: ' + (err instanceof Error ? err.message : 'Error desconocido'));
-        } finally {
-            setIsSaving(false);
-        }
+        showConfirm({
+            type: 'warning',
+            icon: 'shield',
+            title: 'Actualizar Valuación',
+            message: '¿Estás seguro de actualizar el archivo de valuación? Esto recalculará los teóricos. Tu inventario físico se mantendrá intacto.',
+            confirmLabel: 'Actualizar',
+            onConfirm: async () => {
+                setIsSaving(true);
+                try {
+                    await auditApi.updateAudit(parseInt(_sessionId!), uploadedFile!);
+                    closeConfirm();
+                    showFeedback('success', 'Actualización exitosa', 'La auditoría ha sido actualizada correctamente.', () => {
+                        window.location.reload();
+                    });
+                } catch (err) {
+                    console.error(err);
+                    closeConfirm();
+                    showFeedback('error', 'Error', 'Error al actualizar: ' + (err instanceof Error ? err.message : 'Error desconocido'));
+                } finally {
+                    setIsSaving(false);
+                }
+            }
+        });
     };
 
     // Filter diff items based on active tab
@@ -785,10 +846,9 @@ const AuditSessionDetail: React.FC = () => {
                                         // Call API to Create Audit (Saves to DB)
                                         await auditApi.createAudit(selectedStoreId, uploadedFile);
                                         await loadAudits(); // Refresh context
-                                        alert('Auditoría creada exitosamente');
-                                        onBack();
+                                        showFeedback('success', 'Auditoría creada', 'La auditoría ha sido creada exitosamente.', () => onBack());
                                     } catch (err) {
-                                        alert('Error al guardar: ' + (err instanceof Error ? err.message : 'Unknown error'));
+                                        showFeedback('error', 'Error al guardar', err instanceof Error ? err.message : 'Error desconocido');
                                     } finally {
                                         setIsSaving(false);
                                     }
@@ -857,18 +917,26 @@ const AuditSessionDetail: React.FC = () => {
                                     {/* Cancel/Delete Button */}
                                     <button
                                         type="button"
-                                        onClick={async () => {
+                                        onClick={() => {
                                             if (!_sessionId) return;
-                                            if (confirm('¿Estás seguro de que deseas eliminar esta auditoría? Esto eliminará todos los datos asociados.')) {
-                                                try {
-                                                    await auditApi.deleteAudit(parseInt(_sessionId));
-                                                    alert('Auditoría eliminada exitosamente');
-                                                    onBack();
-                                                } catch (err) {
-                                                    console.error(err);
-                                                    alert('Error al cancelar: ' + (err instanceof Error ? err.message : 'Unknown error'));
+                                            showConfirm({
+                                                type: 'danger',
+                                                icon: 'trash',
+                                                title: 'Eliminar Auditoría',
+                                                message: '¿Estás seguro de que deseas eliminar esta auditoría? Esto eliminará todos los datos asociados. Esta acción no se puede deshacer.',
+                                                confirmLabel: 'Eliminar',
+                                                onConfirm: async () => {
+                                                    try {
+                                                        await auditApi.deleteAudit(parseInt(_sessionId));
+                                                        closeConfirm();
+                                                        showFeedback('success', 'Auditoría eliminada', 'La auditoría ha sido eliminada exitosamente.', () => onBack());
+                                                    } catch (err) {
+                                                        console.error(err);
+                                                        closeConfirm();
+                                                        showFeedback('error', 'Error', 'Error al eliminar: ' + (err instanceof Error ? err.message : 'Error desconocido'));
+                                                    }
                                                 }
-                                            }
+                                            });
                                         }}
                                         className="px-4 py-2 bg-red-100 text-red-700 rounded-lg font-medium hover:bg-red-200 flex items-center gap-2"
                                     >
@@ -1689,6 +1757,116 @@ const AuditSessionDetail: React.FC = () => {
                     </div>
                 )
             }
+
+            {/* ===== FEEDBACK MODAL (success / error / warning) ===== */}
+            {feedbackModal.open && (
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={closeFeedback} />
+                    <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 p-8 animate-in fade-in zoom-in duration-200">
+                        <div className="flex flex-col items-center text-center">
+                            {/* Icon */}
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${
+                                feedbackModal.type === 'success' ? 'bg-emerald-100' :
+                                feedbackModal.type === 'error' ? 'bg-red-100' :
+                                'bg-amber-100'
+                            }`}>
+                                {feedbackModal.type === 'success' && <CheckCircle2 className="w-8 h-8 text-emerald-600" />}
+                                {feedbackModal.type === 'error' && <AlertCircle className="w-8 h-8 text-red-600" />}
+                                {feedbackModal.type === 'warning' && <AlertTriangle className="w-8 h-8 text-amber-600" />}
+                            </div>
+
+                            {/* Title */}
+                            <h3 className={`text-xl font-bold mb-2 ${
+                                feedbackModal.type === 'success' ? 'text-emerald-800' :
+                                feedbackModal.type === 'error' ? 'text-red-800' :
+                                'text-amber-800'
+                            }`}>
+                                {feedbackModal.title}
+                            </h3>
+
+                            {/* Message */}
+                            <p className="text-slate-600 mb-6 leading-relaxed">{feedbackModal.message}</p>
+
+                            {/* Button */}
+                            <button
+                                onClick={closeFeedback}
+                                className={`px-6 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg ${
+                                    feedbackModal.type === 'success' ? 'bg-emerald-600 hover:bg-emerald-700' :
+                                    feedbackModal.type === 'error' ? 'bg-red-600 hover:bg-red-700' :
+                                    'bg-amber-600 hover:bg-amber-700'
+                                }`}
+                            >
+                                Aceptar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ===== CONFIRM MODAL (destructive/important actions) ===== */}
+            {confirmModal.open && (
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center">
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => !confirmModal.isLoading && closeConfirm()} />
+                    <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 p-8 animate-in fade-in zoom-in duration-200">
+                        <div className="flex flex-col items-center text-center">
+                            {/* Icon */}
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${
+                                confirmModal.type === 'danger' ? 'bg-red-100' :
+                                confirmModal.type === 'warning' ? 'bg-amber-100' :
+                                'bg-blue-100'
+                            }`}>
+                                {confirmModal.icon === 'trash' && <Trash2 className={`w-8 h-8 ${confirmModal.type === 'danger' ? 'text-red-600' : 'text-amber-600'}`} />}
+                                {confirmModal.icon === 'lock' && <LockKeyhole className="w-8 h-8 text-amber-600" />}
+                                {confirmModal.icon === 'rotate' && <RotateCcw className="w-8 h-8 text-blue-600" />}
+                                {confirmModal.icon === 'shield' && <ShieldAlert className="w-8 h-8 text-amber-600" />}
+                                {confirmModal.icon === 'info' && <Info className="w-8 h-8 text-blue-600" />}
+                            </div>
+
+                            {/* Title */}
+                            <h3 className={`text-xl font-bold mb-2 ${
+                                confirmModal.type === 'danger' ? 'text-red-800' :
+                                confirmModal.type === 'warning' ? 'text-amber-800' :
+                                'text-blue-800'
+                            }`}>
+                                {confirmModal.title}
+                            </h3>
+
+                            {/* Message */}
+                            <p className="text-slate-600 mb-6 leading-relaxed">{confirmModal.message}</p>
+
+                            {/* Buttons */}
+                            <div className="flex gap-3 w-full">
+                                <button
+                                    onClick={closeConfirm}
+                                    disabled={confirmModal.isLoading}
+                                    className="flex-1 px-4 py-2.5 rounded-xl font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-all duration-200 disabled:opacity-50"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        setConfirmModal(prev => ({ ...prev, isLoading: true }));
+                                        await confirmModal.onConfirm();
+                                    }}
+                                    disabled={confirmModal.isLoading}
+                                    className={`flex-1 px-4 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 ${
+                                        confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' :
+                                        confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700' :
+                                        'bg-blue-600 hover:bg-blue-700'
+                                    }`}
+                                >
+                                    {confirmModal.isLoading ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Procesando...
+                                        </>
+                                    ) : confirmModal.confirmLabel}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 };
