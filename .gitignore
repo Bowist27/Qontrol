@@ -3,3 +3,8 @@
 .env
 *.env.local
 node_modules
+
+# Test scripts dependencies
+docs/pruebas/package.json
+docs/pruebas/package-lock.json
+docs/pruebas/node_modules
