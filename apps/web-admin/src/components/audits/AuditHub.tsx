@@ -11,7 +11,8 @@ import { useNavigate } from 'react-router-dom';
 import {
     Store, FileText, Play, CheckCircle2, Lock, KeyRound,
     Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
-    RefreshCw, ChevronLeft, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole
+    RefreshCw, ChevronLeft, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole,
+    FileSpreadsheet, FileDown, AlertTriangle, Loader2, Trash2
 } from 'lucide-react';
 
 import { auditApi } from '../../services/audit.api';
@@ -74,7 +75,7 @@ const isLockedOver24h = (lockedAt?: string): boolean => {
 const AuditHub: React.FC = () => {
     const navigate = useNavigate();
     // Use context instead of local state (HU10)
-    const { audits, loading: isLoading } = useAudit();
+    const { audits, loading: isLoading, loadAudits } = useAudit();
 
     const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
     const [focusFilter, setFocusFilter] = useState<FocusFilter>('all');
@@ -105,6 +106,14 @@ const AuditHub: React.FC = () => {
     // Kebab Menu State
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+
+    // Confirmation Modal State
+    const [confirmModal, setConfirmModal] = useState<{
+        open: boolean;
+        type: 'close' | 'cancel';
+        session: AuditSession | null;
+        loading: boolean;
+    }>({ open: false, type: 'cancel', session: null, loading: false });
 
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
@@ -350,28 +359,91 @@ const AuditHub: React.FC = () => {
 
     // Admin Actions
     const handleForceClose = (session: AuditSession) => {
-        // TODO: API call to force lock
-        alert(`Forzar cierre para ${session.storeName}\nEstado cambiará a LOCKED_BY_STORE`);
         setOpenMenuId(null);
+        setConfirmModal({ open: true, type: 'close', session, loading: false });
     };
 
-    const handleCancelSession = async (session: AuditSession) => {
-        if (confirm(`¿Estás seguro de cancelar la auditoría de ${session.storeName}?\n\nEsto eliminará permanentemente todos los datos asociados.`)) {
-            try {
-                await auditApi.deleteAudit(parseInt(session.id));
-                // Reload audits from context after delete
-                alert('Auditoría cancelada exitosamente');
-                window.location.reload(); // Temporary reload until we add refresh to context
-            } catch (err) {
-                alert('Error al cancelar: ' + (err instanceof Error ? err.message : 'Error desconocido'));
-            }
-        }
+    const handleCancelSession = (session: AuditSession) => {
         setOpenMenuId(null);
+        setConfirmModal({ open: true, type: 'cancel', session, loading: false });
+    };
+
+    const confirmModalAction = async () => {
+        if (!confirmModal.session) return;
+        setConfirmModal(prev => ({ ...prev, loading: true }));
+        try {
+            if (confirmModal.type === 'close') {
+                await auditApi.closeAudit(parseInt(confirmModal.session.id));
+            } else {
+                await auditApi.deleteAudit(parseInt(confirmModal.session.id));
+            }
+            await loadAudits();
+            setConfirmModal({ open: false, type: 'cancel', session: null, loading: false });
+        } catch (err) {
+            setConfirmModal(prev => ({ ...prev, loading: false }));
+            alert('Error: ' + (err instanceof Error ? err.message : 'Error desconocido'));
+        }
     };
 
     const handleViewDetail = (session: AuditSession) => {
         navigate(session.id.toString(), { state: { storeName: session.storeName } });
         setOpenMenuId(null);
+    };
+
+    // Download Excel (CSV) for a specific audit
+    const handleDownloadExcel = async (e: React.MouseEvent, session: AuditSession) => {
+        e.stopPropagation();
+        try {
+            const auditId = parseInt(session.id);
+            const [auditData, scans] = await Promise.all([
+                auditApi.getAudit(auditId),
+                auditApi.getPhysicalScans(auditId)
+            ]);
+
+            const physicalMap = new Map<string, number>();
+            scans.forEach(scan => {
+                if (scan.sku) {
+                    physicalMap.set(scan.sku, (physicalMap.get(scan.sku) || 0) + scan.quantity);
+                }
+            });
+
+            const headers = ['SKU', 'Descripci\u00f3n', 'Precio Unitario', 'Cant. Te\u00f3rico', 'Cant. F\u00edsico', 'Diferencia', 'Impacto ($)'];
+            const rows = auditData.items.map(item => {
+                const physical = physicalMap.get(item.product_code) || 0;
+                const diff = physical - item.expected_qty;
+                const impact = diff * item.unit_cost;
+                return [
+                    item.product_code,
+                    `"${item.product_name.replace(/"/g, '""')}"`,
+                    item.unit_cost?.toFixed(2) || '0.00',
+                    item.expected_qty.toString(),
+                    physical.toString(),
+                    diff.toString(),
+                    impact.toFixed(2)
+                ];
+            });
+
+            const BOM = '\uFEFF';
+            const csvContent = BOM + [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            const date = new Date().toISOString().split('T')[0];
+            link.download = `Auditoria_${session.storeName.replace(/\s+/g, '_')}_${date}.csv`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            alert('Error al descargar Excel: ' + (err instanceof Error ? err.message : 'Error desconocido'));
+        }
+    };
+
+    // Download PDF for a specific audit (navigates to detail for now)
+    const handleDownloadPDF = (e: React.MouseEvent, session: AuditSession) => {
+        e.stopPropagation();
+        navigate(session.id.toString(), { state: { storeName: session.storeName, autoExportPDF: true } });
     };
 
     /**
@@ -778,12 +850,22 @@ const AuditHub: React.FC = () => {
                                         {/* REPORTE (history only) */}
                                         {activeTab === 'history' && (
                                             <td className="px-4 py-3 text-center">
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); }}
-                                                    className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"
-                                                >
-                                                    <FileText size={16} />
-                                                </button>
+                                                <div className="flex items-center justify-center gap-1">
+                                                    <button
+                                                        onClick={(e) => handleDownloadExcel(e, session)}
+                                                        className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded"
+                                                        title="Descargar Excel"
+                                                    >
+                                                        <FileSpreadsheet size={16} />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => handleDownloadPDF(e, session)}
+                                                        className="p-1.5 text-red-500 hover:bg-red-50 rounded"
+                                                        title="Descargar PDF"
+                                                    >
+                                                        <FileDown size={16} />
+                                                    </button>
+                                                </div>
                                             </td>
                                         )}
 
@@ -823,12 +905,12 @@ const AuditHub: React.FC = () => {
                                                         )}
 
                                                         {/* Divider */}
-                                                        {activeTab === 'active' && session.status !== 'CANCELLED' && (
+                                                        {session.status !== 'CANCELLED' && (
                                                             <div className="border-t border-slate-100 my-1"></div>
                                                         )}
 
                                                         {/* Cancelar - Destructive (Red) */}
-                                                        {activeTab === 'active' && session.status !== 'CANCELLED' && (
+                                                        {session.status !== 'CANCELLED' && (
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); handleCancelSession(session); }}
                                                                 className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
@@ -887,6 +969,68 @@ const AuditHub: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Confirmation Modal */}
+            {confirmModal.open && confirmModal.session && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 transform transition-all scale-100">
+                        <div className="flex flex-col items-center text-center">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${
+                                confirmModal.type === 'cancel' ? 'bg-red-100' : 'bg-amber-100'
+                            }`}>
+                                {confirmModal.type === 'cancel' 
+                                    ? <Trash2 className="w-6 h-6 text-red-600" />
+                                    : <LockKeyhole className="w-6 h-6 text-amber-600" />
+                                }
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900 mb-2">
+                                {confirmModal.type === 'cancel' 
+                                    ? '¿Eliminar auditoría?'
+                                    : '¿Forzar cierre?'
+                                }
+                            </h3>
+                            <p className="text-slate-500 mb-1">
+                                <span className="font-semibold text-slate-700">{confirmModal.session.storeName}</span>
+                            </p>
+                            <p className="text-sm text-slate-400 mb-6">
+                                {confirmModal.type === 'cancel'
+                                    ? 'Esta acción eliminará permanentemente la auditoría y todos sus datos asociados. No se puede deshacer.'
+                                    : 'El estado cambiará a "Finalizado" y se registrará en la bitácora. Podrás reabrir desde el detalle.'
+                                }
+                            </p>
+                            <div className="flex gap-3 w-full">
+                                <button
+                                    onClick={() => setConfirmModal({ open: false, type: 'cancel', session: null, loading: false })}
+                                    disabled={confirmModal.loading}
+                                    className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg transition-colors disabled:opacity-50"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={confirmModalAction}
+                                    disabled={confirmModal.loading}
+                                    className={`flex-1 py-2.5 px-4 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50 ${
+                                        confirmModal.type === 'cancel'
+                                            ? 'bg-red-600 hover:bg-red-700'
+                                            : 'bg-amber-600 hover:bg-amber-700'
+                                    }`}
+                                >
+                                    {confirmModal.loading ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            Procesando...
+                                        </>
+                                    ) : confirmModal.type === 'cancel' ? (
+                                        'Eliminar'
+                                    ) : (
+                                        'Cerrar Auditoría'
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 
