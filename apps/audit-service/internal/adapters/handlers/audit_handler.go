@@ -121,8 +121,13 @@ func (h *AuditHandler) CreateAudit(c *gin.Context) {
 		return
 	}
 
-	// TODO: Get user ID from JWT context
-	var createdBy *string = nil
+	// Get user ID from JWT context
+	var createdBy *string
+	if userID, exists := c.Get("userID"); exists {
+		if idStr, ok := userID.(string); ok {
+			createdBy = &idStr
+		}
+	}
 
 	// Call service - now saves everything (session + S3 + items)
 	// Pass original filename to preserve it in S3 key
@@ -409,7 +414,13 @@ func (h *AuditHandler) UpdateAudit(c *gin.Context) {
 		return
 	}
 
-	userID := h.getUserIDFromContext(c)
+	// Get user ID from JWT context
+	var userID *string
+	if uid, exists := c.Get("userID"); exists {
+		if idStr, ok := uid.(string); ok {
+			userID = &idStr
+		}
+	}
 
 	if err := h.service.UpdateAudit(c.Request.Context(), id, pdfBytes, userID, header.Filename); err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "update_failed", Message: err.Error()})
