@@ -1072,10 +1072,12 @@ func (r *PostgresRepository) GetAuditEvents(ctx context.Context, auditID int) ([
 	// Order by DESC to show newest first
 	// JOIN with users table to get real names. defaults to 'SISTEMA' if user_id is null or not found
 	query := `
-		SELECT ae.id, ae.audit_id, ae.user_id, ae.event_type, ae.details, ae.created_at,
+		SELECT ae.id, ae.audit_id, ae.user_id, 
+		       COALESCE(ae.action, ae.event_type) as event_type, 
+		       ae.details, ae.created_at,
 		       COALESCE(u.first_name || ' ' || u.last_name, 'SISTEMA') as user_name
 		FROM audit_events ae
-		LEFT JOIN users u ON ae.user_id = u.id
+		LEFT JOIN users u ON ae.user_id::text = u.id::text
 		WHERE ae.audit_id = $1
 		ORDER BY ae.created_at DESC
 	`
