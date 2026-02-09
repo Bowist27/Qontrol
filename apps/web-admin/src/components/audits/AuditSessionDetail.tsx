@@ -173,6 +173,7 @@ const AuditSessionDetail: React.FC = () => {
 
 
 
+
                 // Extract unique device IDs as "users"
                 const devices = [...new Set(scans.map(s => s.device_id).filter(Boolean))];
 
@@ -188,9 +189,19 @@ const AuditSessionDetail: React.FC = () => {
                         : undefined
                 });
 
+                // Debug: Log scans data
+                console.log('🔍 [Physical Scans]', {
+                    scanCount: scans.length,
+                    summary,
+                    sampleScan: scans[0],
+                    scans: scans.slice(0, 5) // First 5 scans for inspection
+                });
+
                 // Update diffItems with physical counts
                 if (scans.length > 0) {
                     setDiffItems(prev => {
+                        console.log('🔄 [Update DiffItems] Current count:', prev.length);
+
                         // Create a map of SKU -> total physical quantity
                         const physicalMap = new Map<string, number>();
                         scans.forEach(scan => {
@@ -200,8 +211,13 @@ const AuditSessionDetail: React.FC = () => {
                             }
                         });
 
+                        console.log('📦 [Physical Map]', {
+                            uniqueSKUs: physicalMap.size,
+                            entries: Array.from(physicalMap.entries()).slice(0, 5)
+                        });
+
                         // Update each item with physical count
-                        return prev.map(item => {
+                        const updated = prev.map(item => {
                             const physicalQty = physicalMap.get(item.sku) || 0;
                             return {
                                 ...item,
@@ -210,6 +226,14 @@ const AuditSessionDetail: React.FC = () => {
                                 impact: (physicalQty - item.theoretical) * item.unitCost
                             };
                         });
+
+                        const updatedCount = updated.filter(i => i.physical > 0).length;
+                        console.log('✅ [Items Updated]', {
+                            totalItems: updated.length,
+                            itemsWithPhysical: updatedCount
+                        });
+
+                        return updated;
                     });
                 }
             } catch (err) {
