@@ -835,15 +835,6 @@ const AuditSessionDetail: React.FC = () => {
                             ) : (
                                 /* 2. NORMAL STATE */
                                 <>
-                                    {/* Upload/Replace Button */}
-                                    <button
-                                        onClick={() => fileInputRef.current?.click()}
-                                        className="px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2"
-                                        title="Reemplazar archivo PDF"
-                                    >
-                                        <Upload size={16} />
-                                    </button>
-
                                     {/* Close/Reopen Button Based on Status */}
                                     {sessionStatus === 'finalizado' ? (
                                         <button
