@@ -110,6 +110,7 @@ type AuditEvent struct {
 	ID        int                    `json:"id"`
 	AuditID   int                    `json:"audit_id"`
 	UserID    *string                `json:"user_id,omitempty"`
+	UserName  string                 `json:"user_name,omitempty"` // Added for UI display
 	EventType string                 `json:"event_type"`
 	Details   map[string]interface{} `json:"details,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`

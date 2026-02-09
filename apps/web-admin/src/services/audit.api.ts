@@ -58,6 +58,7 @@ export interface AuditEvent {
     id: number;
     audit_id: number;
     user_id?: string;
+    user_name?: string; // Added field from backend
     event_type: string;
     details?: {
         s3_url?: string;

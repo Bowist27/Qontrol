@@ -13,7 +13,7 @@ import {
     Activity, AlertCircle, BarChart3, History, MapPin, Calendar, User,
     ChevronDown, Store, Save, Loader2
 } from 'lucide-react';
-import { auditApi, type Store as StoreType, type PhysicalScan, type AuditDTO, type AuditItem, type AuditEvent } from '../../services/audit.api';
+import { auditApi, type Store as StoreType, type PhysicalScan, type AuditEvent } from '../../services/audit.api';
 
 // Types
 type AuditStatus = 'not_started' | 'partial' | 'in_progress' | 'reconciled' | 'locked';
@@ -1342,61 +1342,166 @@ const AuditSessionDetail: React.FC = () => {
             {/* Event Log Modal */}
             {
                 showEventLog && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/50">
-                        <div className="h-full w-full max-w-md bg-white shadow-xl flex flex-col animate-slide-left">
-                            <div className="p-4 border-b flex items-center justify-between bg-slate-50">
-                                <h3 className="font-semibold text-lg flex items-center gap-2">
-                                    <History size={20} />
-                                    Bitácora de Eventos
-                                </h3>
-                                <button onClick={() => setShowEventLog(false)} className="p-2 hover:bg-slate-200 rounded-full">
+                    <div className="fixed inset-0 z-50 flex justify-end">
+                        {/* Backdrop */}
+                        <div
+                            className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity"
+                            onClick={() => setShowEventLog(false)}
+                        />
+
+                        {/* Drawer */}
+                        <div className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col animate-slide-left border-l border-slate-100">
+                            {/* Header */}
+                            <div className="p-5 border-b border-slate-100 bg-white flex items-center justify-between z-10">
+                                <div>
+                                    <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                                        <History size={20} className="text-slate-500" />
+                                        Bitácora de Eventos
+                                    </h3>
+                                    <p className="text-xs text-slate-400 mt-1">Historial de versiones y cambios</p>
+                                </div>
+                                <button
+                                    onClick={() => setShowEventLog(false)}
+                                    className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-600 transition-colors"
+                                >
                                     <X size={20} />
                                 </button>
                             </div>
-                            <div className="flex-1 overflow-y-auto p-4">
+
+                            {/* Timeline Content */}
+                            <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50">
                                 {isLoadingEvents ? (
-                                    <div className="flex justify-center p-8"><Loader2 className="animate-spin text-blue-600" /></div>
+                                    <div className="flex flex-col items-center justify-center h-40 gap-3">
+                                        <Loader2 className="animate-spin text-blue-600" size={32} />
+                                        <span className="text-sm text-slate-500">Cargando historial...</span>
+                                    </div>
                                 ) : (auditEvents || []).length === 0 ? (
-                                    <div className="text-center text-slate-500 py-8">No hay eventos registrados</div>
+                                    <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-4">
+                                        <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center">
+                                            <History size={32} />
+                                        </div>
+                                        <p>No hay eventos registrados</p>
+                                    </div>
                                 ) : (
-                                    <div className="space-y-4">
-                                        {(auditEvents || []).map((event) => (
-                                            <div key={event.id} className="border rounded-lg p-3 text-sm hover:shadow-sm">
-                                                <div className="flex justify-between items-start mb-1">
-                                                    <span className={`font-medium px-2 py-0.5 rounded text-xs ${event.event_type === 'AUDIT_CREATED' ? 'bg-blue-100 text-blue-700' :
-                                                        event.event_type === 'AUDIT_UPDATED' ? 'bg-amber-100 text-amber-700' :
-                                                            'bg-gray-100 text-gray-700'
-                                                        }`}>
-                                                        {event.event_type.replace('AUDIT_', '')}
-                                                    </span>
-                                                    <span className="text-slate-400 text-xs">
-                                                        {new Date(event.created_at).toLocaleString()}
-                                                    </span>
-                                                </div>
-                                                {event.details && (
-                                                    <div className="mt-2 text-xs text-slate-600 space-y-1">
-                                                        {/* Handle both s3_url (legacy) and s3_key (new) */}
-                                                        {(event.details.s3_url || event.details.s3_key) && (
-                                                            <div className="truncate" title={event.details.s3_url || event.details.s3_key}>
-                                                                PDF: <span className="text-slate-500">{event.details.s3_key ? 'Archivo Privado' : 'Link Público'}</span>
+                                    <div className="relative space-y-8 pl-4">
+                                        {/* Vertical Timeline Line - Now fully connected */}
+                                        <div className="absolute left-[27px] top-6 bottom-6 w-0.5 bg-slate-300 z-0" />
+
+                                        {(auditEvents || []).map((event) => {
+                                            const isCreation = event.event_type === 'AUDIT_CREATED';
+
+                                            // Get user initials or default to SYS
+                                            const getUserInitials = (userName: string | undefined) => {
+                                                if (!userName || userName === 'SISTEMA') return 'SYS';
+                                                return userName.substring(0, 2).toUpperCase();
+                                            };
+
+                                            const displayName = event.user_name || event.user_id || 'SISTEMA';
+
+                                            return (
+                                                <div key={event.id} className="relative flex gap-4 group z-10">
+                                                    {/* Timeline Node */}
+                                                    <div className={`
+                                                        w-14 h-14 rounded-xl flex-shrink-0 flex items-center justify-center shadow-sm border-2 bg-white
+                                                        ${isCreation
+                                                            ? 'border-emerald-200 text-emerald-600'
+                                                            : 'border-amber-200 text-amber-600'}
+                                                    `}>
+                                                        {isCreation ? <Upload size={24} /> : <RefreshCw size={24} />}
+                                                    </div>
+
+                                                    {/* Content Card */}
+                                                    <div className="flex-1 min-w-0">
+                                                        {/* Header: Compact but with Date on newline */}
+                                                        <div className="mb-2">
+                                                            {/* Row 1: Badge + User */}
+                                                            <div className="flex items-center gap-2 mb-0.5">
+                                                                <span className={`
+                                                                    text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded
+                                                                    ${isCreation ? 'text-emerald-700 bg-emerald-100' : 'text-amber-700 bg-amber-100'}
+                                                                `}>
+                                                                    {isCreation ? 'Carga Inicial' : 'Reemplazo'}
+                                                                </span>
+
+                                                                <span className="text-[10px] text-slate-400">por</span>
+
+                                                                <div className="flex items-center gap-1.5 min-w-0">
+                                                                    <div className={`
+                                                                        w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shadow-sm flex-shrink-0
+                                                                        ${event.user_id ? 'bg-slate-700' : 'bg-slate-400'}
+                                                                    `}>
+                                                                        {getUserInitials(displayName)}
+                                                                    </div>
+                                                                    <span className="text-xs font-bold text-slate-700 truncate" title={displayName}>
+                                                                        {displayName}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Row 2: Date (Subtle) */}
+                                                            <div className="pl-1">
+                                                                <span className="text-[10px] font-medium text-slate-400 tabular-nums">
+                                                                    {new Date(event.created_at).toLocaleString(undefined, {
+                                                                        year: 'numeric',
+                                                                        month: 'numeric',
+                                                                        day: 'numeric',
+                                                                        hour: '2-digit',
+                                                                        minute: '2-digit'
+                                                                    })}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* The Asset (File Link) - Slimmer */}
+                                                        {(event.details?.s3_url || event.details?.s3_key) && (
+                                                            <div className={`
+                                                                rounded-lg border px-3 py-2 mb-3 flex items-center gap-3 transition-all
+                                                                ${isCreation
+                                                                    ? 'bg-emerald-50/50 border-emerald-100'
+                                                                    : 'bg-amber-50/50 border-amber-100'}
+                                                            `}>
+                                                                <div className={`
+                                                                    p-1.5 rounded-md shadow-sm border
+                                                                    ${isCreation ? 'bg-emerald-100 border-emerald-200 text-emerald-600' : 'bg-amber-100 border-amber-200 text-amber-600'}
+                                                                `}>
+                                                                    {isCreation ? <FileText size={16} /> : <RefreshCw size={16} />}
+                                                                </div>
+                                                                <div className="flex-1 min-w-0">
+                                                                    <a
+                                                                        href={event.details.s3_url || '#'}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className={`text-sm font-bold hover:underline truncate block group-hover:text-blue-600 transition-colors ${event.details.s3_url ? 'text-slate-800' : 'text-slate-400 cursor-not-allowed'
+                                                                            }`}
+                                                                        title={event.details.s3_key}
+                                                                    >
+                                                                        {event.details.s3_key ? `Archivo Privado (v${event.id})` : 'Archivo no disponible'}
+                                                                    </a>
+                                                                    <div className="text-[10px] text-slate-500 truncate flex items-center gap-1">
+                                                                        {event.details.s3_key || 'Sin referencia'}
+                                                                    </div>
+                                                                </div>
+                                                                {event.details.s3_url && (
+                                                                    <div className="bg-white p-1 rounded-full border border-slate-100 shadow-sm">
+                                                                        <Wifi size={12} className="text-emerald-500" />
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         )}
-                                                        {event.details.items_count !== undefined && (
-                                                            <div>Items: {event.details.items_count}</div>
-                                                        )}
-                                                        {event.details.action && (
-                                                            <div>Acción: {event.details.action}</div>
-                                                        )}
-                                                        {event.details.store_id && (
-                                                            <div>Store ID: {event.details.store_id}</div>
-                                                        )}
+
+                                                        {/* Metadata Footer - Bolder Numbers */}
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {event.details?.items_count !== undefined && (
+                                                                <div className="flex items-center gap-1.5 px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-600 shadow-sm">
+                                                                    <span className="text-sm font-extrabold text-slate-900">📦 {event.details.items_count}</span>
+                                                                    <span className="text-[10px] font-medium text-slate-400 uppercase">Items</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </div>
-                                                )}
-                                                <div className="mt-2 text-xs text-slate-400 border-t pt-1">
-                                                    Usuario: {event.user_id || 'Sistema'}
                                                 </div>
-                                            </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 )}
                             </div>

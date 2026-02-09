@@ -1040,9 +1040,18 @@ func (r *PostgresRepository) LogEvent(ctx context.Context, auditID int, userID *
 }
 
 // GetAuditEvents retrieves all events for an audit
+// GetAuditEvents retrieves all events for an audit with user names
 func (r *PostgresRepository) GetAuditEvents(ctx context.Context, auditID int) ([]domain.AuditEvent, error) {
 	// Order by DESC to show newest first
-	query := `SELECT id, audit_id, user_id, event_type, details, created_at FROM audit_events WHERE audit_id = $1 ORDER BY created_at DESC`
+	// JOIN with users table to get real names. defaults to 'SISTEMA' if user_id is null or not found
+	query := `
+		SELECT ae.id, ae.audit_id, ae.user_id, ae.event_type, ae.details, ae.created_at,
+		       COALESCE(u.first_name || ' ' || u.last_name, 'SISTEMA') as user_name
+		FROM audit_events ae
+		LEFT JOIN users u ON ae.user_id = u.id
+		WHERE ae.audit_id = $1
+		ORDER BY ae.created_at DESC
+	`
 	rows, err := r.db.QueryContext(ctx, query, auditID)
 	if err != nil {
 		return nil, err
@@ -1054,10 +1063,14 @@ func (r *PostgresRepository) GetAuditEvents(ctx context.Context, auditID int) ([
 		var e domain.AuditEvent
 		// details can be null
 		var detailsRaw sql.NullString
+		// We scan user_name into the new field
+		var userName string
 
-		if err := rows.Scan(&e.ID, &e.AuditID, &e.UserID, &e.EventType, &detailsRaw, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.AuditID, &e.UserID, &e.EventType, &detailsRaw, &e.CreatedAt, &userName); err != nil {
 			return nil, err
 		}
+
+		e.UserName = userName
 
 		if detailsRaw.Valid {
 			if err := json.Unmarshal([]byte(detailsRaw.String), &e.Details); err != nil {
