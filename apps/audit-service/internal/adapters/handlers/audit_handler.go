@@ -101,7 +101,7 @@ func (h *AuditHandler) CreateAudit(c *gin.Context) {
 	}
 
 	// Get file from form
-	file, _, err := c.Request.FormFile("file")
+	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
 			Error:   "missing_file",
@@ -125,7 +125,8 @@ func (h *AuditHandler) CreateAudit(c *gin.Context) {
 	var createdBy *string = nil
 
 	// Call service - now saves everything (session + S3 + items)
-	result, err := h.service.CreateAudit(c.Request.Context(), storeID, pdfData, createdBy)
+	// Pass original filename to preserve it in S3 key
+	result, err := h.service.CreateAudit(c.Request.Context(), storeID, pdfData, createdBy, header.Filename)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "create_failed",
@@ -394,20 +395,15 @@ func (h *AuditHandler) UpdateAudit(c *gin.Context) {
 		return
 	}
 
-	file, err := c.FormFile("file")
+	// Get file from form
+	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "file_required", Message: "PDF file is required"})
 		return
 	}
+	defer file.Close()
 
-	f, err := file.Open()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "file_error", Message: "Failed to open file"})
-		return
-	}
-	defer f.Close()
-
-	pdfBytes, err := io.ReadAll(f)
+	pdfBytes, err := io.ReadAll(file)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "read_error", Message: "Failed to read file"})
 		return
@@ -415,7 +411,7 @@ func (h *AuditHandler) UpdateAudit(c *gin.Context) {
 
 	userID := h.getUserIDFromContext(c)
 
-	if err := h.service.UpdateAudit(c.Request.Context(), id, pdfBytes, userID); err != nil {
+	if err := h.service.UpdateAudit(c.Request.Context(), id, pdfBytes, userID, header.Filename); err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "update_failed", Message: err.Error()})
 		return
 	}

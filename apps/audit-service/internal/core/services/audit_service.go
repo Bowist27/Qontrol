@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"audit-service/internal/adapters/repositories"
 	"audit-service/internal/adapters/storage"
@@ -68,7 +67,7 @@ func (s *AuditService) ParsePDF(ctx context.Context, pdfData []byte) (*ParseResu
 // CreateAudit is called AFTER user confirms the preview
 // This implements FASE 5 of the new sequence diagram
 // It saves: Session → S3 → Items (all in transaction)
-func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []byte, createdBy *string) (*domain.AuditDTO, error) {
+func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []byte, createdBy *string, originalFilename string) (*domain.AuditDTO, error) {
 	// 1. session := NewAuditSession(storeID)
 	session := domain.NewAuditSession(storeID, createdBy)
 
@@ -80,7 +79,15 @@ func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []b
 	session.ID = sessionID
 
 	// 3. s3.PutObject(pdf, key) → s3_key (Private)
-	key := fmt.Sprintf("audits/%d/%d.pdf", storeID, time.Now().Unix())
+	// STRICT PRESERVATION: Use a folder per audit to safely keep original filename
+	// Key format: audits/{store_id}/{audit_id}/{original_filename}
+	// We only sanitize '/' to avoid creating extra subfolders/traversal
+	cleanName := sanitizeFilenameStrict(originalFilename)
+	if cleanName == "" {
+		cleanName = "audit_file.pdf"
+	}
+	key := fmt.Sprintf("audits/%d/%d/%s", storeID, sessionID, cleanName)
+
 	s3Key, err := s.s3Client.PutObject(ctx, key, pdfData, "application/pdf")
 	if err != nil {
 		// Rollback: delete the session we just created
@@ -225,7 +232,7 @@ func (s *AuditService) GetAudits(ctx context.Context) ([]domain.AuditListDTO, er
 }
 
 // UpdateAudit handles FASE 6: Updating existing audit (PDF replacement)
-func (s *AuditService) UpdateAudit(ctx context.Context, auditID int, pdfData []byte, userID *string) error {
+func (s *AuditService) UpdateAudit(ctx context.Context, auditID int, pdfData []byte, userID *string, originalFilename string) error {
 	// 1. Get Session to know StoreID (for S3 key)
 	session, err := s.repo.GetSessionByID(ctx, auditID)
 	if err != nil {
@@ -233,8 +240,18 @@ func (s *AuditService) UpdateAudit(ctx context.Context, auditID int, pdfData []b
 	}
 
 	// 2. Upload new PDF
-	// Use _v2 or timestamp to avoid cache issues? Timestamp is safer.
-	key := fmt.Sprintf("audits/%d/%d_%d.pdf", session.StoreID, auditID, time.Now().Unix())
+	// STRICT PRESERVATION: Use folder per audit
+	cleanName := sanitizeFilenameStrict(originalFilename)
+	if cleanName == "" {
+		cleanName = "audit_update.pdf"
+	}
+	// To avoid caching if updating same file, we could append timestamp, but user requested exact name.
+	// We rely on S3 overwriting the file if it exists.
+	// But to be safe and allow "History" of uploads in same audit if we wanted,
+	// we will stick to the folder structure: audits/{store_id}/{audit_id}/{filename}
+	// If user uploads exact same name, it overwrites. This is expected behavior for "Preserve name".
+	key := fmt.Sprintf("audits/%d/%d/%s", session.StoreID, auditID, cleanName)
+
 	s3Key, err := s.s3Client.PutObject(ctx, key, pdfData, "application/pdf")
 	if err != nil {
 		return fmt.Errorf("failed to upload PDF: %w", err)
@@ -263,6 +280,21 @@ func (s *AuditService) UpdateAudit(ctx context.Context, auditID int, pdfData []b
 	_ = s.repo.LogEvent(ctx, auditID, userID, "AUDIT_UPDATED", details)
 
 	return nil
+}
+
+// sanitizeFilenameStrict only replaces forward slashes to prevent directory traversal.
+// It allows spaces, special chars, etc. as requested by user.
+func sanitizeFilenameStrict(filename string) string {
+	// Just replace path separators
+	var result []rune
+	for _, r := range filename {
+		if r == '/' || r == '\\' {
+			result = append(result, '_')
+		} else {
+			result = append(result, r)
+		}
+	}
+	return string(result)
 }
 
 // GetAuditEvents returns the audit trail with presigned URLs
