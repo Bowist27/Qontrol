@@ -56,6 +56,7 @@ type AuditListDTO struct {
 	StoreName       string       `json:"store_name"`
 	TheoreticalSKUs int          `json:"theoretical_skus"`
 	ScannedSKUs     int          `json:"scanned_skus"`
+	TotalLoss       float64      `json:"total_loss"`
 }
 
 // CreateAuditRequest is the request payload for creating an audit
@@ -98,11 +99,22 @@ type AddScanRequest struct {
 
 // AuditPhysicalSummary is the summary of physical scans
 type AuditPhysicalSummary struct {
-	TotalScans     int     `json:"total_scans"`
-	TotalQuantity  float64 `json:"total_quantity"`
-	UniqueProducts int     `json:"unique_products"`
-	UnknownItems   int     `json:"unknown_items"`
-	LastScanAt     *string `json:"last_scan_at,omitempty"`
+	TotalScans     int        `json:"total_scans"`
+	TotalQuantity  float64    `json:"total_quantity"`
+	UniqueProducts int        `json:"unique_products"`
+	UnknownItems   int        `json:"unknown_items"`
+	LastScanAt     *time.Time `json:"last_scan_at"`
+}
+
+// AuditEvent represents an entry in the audit log
+type AuditEvent struct {
+	ID        int                    `json:"id"`
+	AuditID   int                    `json:"audit_id"`
+	UserID    *string                `json:"user_id,omitempty"`
+	UserName  string                 `json:"user_name,omitempty"` // Added for UI display
+	EventType string                 `json:"event_type"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+	CreatedAt time.Time              `json:"created_at"`
 }
 
 // ConnectedDevice represents a POS device connected to an audit

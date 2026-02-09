@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -31,6 +32,18 @@ type AuditRepository interface {
 
 	// Dashboard specific (HU10)
 	GetDashboardAudits(ctx context.Context) ([]domain.AuditListDTO, error)
+
+	// Audit Logs (HU12)
+	LogEvent(ctx context.Context, auditID int, userID *string, eventType string, details map[string]interface{}) error
+	GetAuditEvents(ctx context.Context, auditID int) ([]domain.AuditEvent, error)
+
+	// Update Existing Audit (PDF Replacement)
+	UpdateAuditTheoretical(ctx context.Context, auditID int, items []domain.AuditItem, pdfURL string) error
+
+	// Close and Reopen Audits
+	CloseAudit(ctx context.Context, auditID int, userID string) error
+	ReopenAudit(ctx context.Context, auditID int, userID string) error
+	Delete(ctx context.Context, auditID int) error
 }
 
 // PostgresRepository implements AuditRepository
@@ -212,7 +225,18 @@ func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.Audi
 	query := `
 		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       COALESCE((
+		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
+		           FROM audit_theoretical t
+		           LEFT JOIN (
+		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
+		               FROM audit_physical ap2
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               GROUP BY ap2.audit_id, p2.sku
+		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           WHERE t.audit_id = s.id
+		       ), 0) as total_loss
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
 		ORDER BY s.created_at DESC
@@ -811,7 +835,18 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 	query := `
 		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       COALESCE((
+		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
+		           FROM audit_theoretical t
+		           LEFT JOIN (
+		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
+		               FROM audit_physical ap2
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               GROUP BY ap2.audit_id, p2.sku
+		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           WHERE t.audit_id = s.id
+		       ), 0) as total_loss
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
 		ORDER BY s.created_at DESC
@@ -832,7 +867,7 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 		err := rows.Scan(
 			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
 			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
-			&dto.TheoreticalSKUs, &dto.ScannedSKUs,
+			&dto.TheoreticalSKUs, &dto.ScannedSKUs, &dto.TotalLoss,
 		)
 		if err != nil {
 			return nil, err
@@ -989,8 +1024,7 @@ func (r *PostgresRepository) GetPhysicalScanSummary(ctx context.Context, auditID
 		return nil, err
 	}
 	if lastScan.Valid {
-		t := lastScan.Time.Format(time.RFC3339)
-		s.LastScanAt = &t
+		s.LastScanAt = &lastScan.Time
 	}
 	return &s, nil
 }
@@ -1008,6 +1042,73 @@ func (r *PostgresRepository) DeleteLastPhysicalScan(ctx context.Context, auditID
 	`
 	_, err := r.db.ExecContext(ctx, query, auditID)
 	return err
+}
+
+// LogEvent logs an audit event
+func (r *PostgresRepository) LogEvent(ctx context.Context, auditID int, userID *string, eventType string, details map[string]interface{}) error {
+	var detailsJSON []byte
+	var err error
+	if details != nil {
+		detailsJSON, err = json.Marshal(details)
+		if err != nil {
+			return err
+		}
+	}
+
+	query := `INSERT INTO audit_events (audit_id, user_id, event_type, details, created_at) VALUES ($1, $2, $3, $4, NOW())`
+
+	var d interface{} = nil
+	if len(detailsJSON) > 0 {
+		d = string(detailsJSON)
+	}
+
+	_, err = r.db.ExecContext(ctx, query, auditID, userID, eventType, d)
+	return err
+}
+
+// GetAuditEvents retrieves all events for an audit
+// GetAuditEvents retrieves all events for an audit with user names
+func (r *PostgresRepository) GetAuditEvents(ctx context.Context, auditID int) ([]domain.AuditEvent, error) {
+	// Order by DESC to show newest first
+	// JOIN with users table to get real names. defaults to 'SISTEMA' if user_id is null or not found
+	query := `
+		SELECT ae.id, ae.audit_id, ae.user_id, 
+		       COALESCE(ae.action, ae.event_type) as event_type, 
+		       ae.details, ae.created_at,
+		       COALESCE(u.first_name || ' ' || u.last_name, 'SISTEMA') as user_name
+		FROM audit_events ae
+		LEFT JOIN users u ON ae.user_id::text = u.id::text
+		WHERE ae.audit_id = $1
+		ORDER BY ae.created_at DESC
+	`
+	rows, err := r.db.QueryContext(ctx, query, auditID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []domain.AuditEvent
+	for rows.Next() {
+		var e domain.AuditEvent
+		// details can be null
+		var detailsRaw sql.NullString
+		// We scan user_name into the new field
+		var userName string
+
+		if err := rows.Scan(&e.ID, &e.AuditID, &e.UserID, &e.EventType, &detailsRaw, &e.CreatedAt, &userName); err != nil {
+			return nil, err
+		}
+
+		e.UserName = userName
+
+		if detailsRaw.Valid {
+			if err := json.Unmarshal([]byte(detailsRaw.String), &e.Details); err != nil {
+				e.Details = make(map[string]interface{})
+			}
+		}
+		events = append(events, e)
+	}
+	return events, nil
 }
 
 // GetActiveAuditsForPOS returns audits available for the POS app to connect
@@ -1039,4 +1140,48 @@ func (r *PostgresRepository) GetActiveAuditsForPOS(ctx context.Context) ([]domai
 		sessions = append(sessions, dto)
 	}
 	return sessions, nil
+}
+
+// UpdateAuditTheoretical updates the theoretical inventory and RESETS physical scans
+func (r *PostgresRepository) UpdateAuditTheoretical(ctx context.Context, auditID int, items []domain.AuditItem, pdfURL string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 1. Physical scans are PRESERVED (User Request)
+	// _, err = tx.ExecContext(ctx, `DELETE FROM audit_physical WHERE audit_id = $1`, auditID)
+
+	// 2. Delete existing theoretical items
+	_, err = tx.ExecContext(ctx, `DELETE FROM audit_theoretical WHERE audit_id = $1`, auditID)
+	if err != nil {
+		return err
+	}
+
+	// 3. Insert new theoretical items
+	if len(items) > 0 {
+		valueStrings := make([]string, 0, len(items))
+		valueArgs := make([]interface{}, 0, len(items)*5)
+		for i, item := range items {
+			// ($1, $2, $3, $4, $5)
+			valueStrings = append(valueStrings, fmt.Sprintf("($1, $%d, $%d, $%d, $%d)", i*4+2, i*4+3, i*4+4, i*4+5))
+			valueArgs = append(valueArgs, item.ProductCode, item.ProductName, item.UnitCost, item.ExpectedQty)
+		}
+		stmt := fmt.Sprintf("INSERT INTO audit_theoretical (audit_id, product_code, product_name, unit_cost, expected_qty) VALUES %s", strings.Join(valueStrings, ","))
+
+		args := append([]interface{}{auditID}, valueArgs...)
+		_, err = tx.ExecContext(ctx, stmt, args...)
+		if err != nil {
+			return err
+		}
+	}
+
+	// 4. Update session status and PDF URL
+	_, err = tx.ExecContext(ctx, `UPDATE audit_sessions SET pdf_url = $1, status = 'IN_PROGRESS', closed_at = NULL WHERE id = $2`, pdfURL, auditID)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

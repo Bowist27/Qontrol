@@ -87,7 +87,9 @@ const AppRoutes: React.FC = () => {
         path="/dashboard"
         element={
           <ProtectedRoute>
-            <Dashboard />
+            <AuditProvider>
+              <Dashboard />
+            </AuditProvider>
           </ProtectedRoute>
         }
       >
@@ -116,18 +118,16 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AuditProvider>
-          <AppRoutes />
-          <ToastContainer
-            theme="dark"
-            position="top-right"
-            autoClose={3000}
-            hideProgressBar={false}
-            newestOnTop
-            closeOnClick
-            pauseOnHover
-          />
-        </AuditProvider>
+        <AppRoutes />
+        <ToastContainer
+          theme="dark"
+          position="top-right"
+          autoClose={3000}
+          hideProgressBar={false}
+          newestOnTop
+          closeOnClick
+          pauseOnHover
+        />
       </AuthProvider>
     </BrowserRouter>
   );

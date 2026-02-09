@@ -66,6 +66,15 @@ export const httpClient = {
         return handleResponse<T>(res);
     },
 
+    patch: async <T>(url: string, body?: unknown): Promise<T> => {
+        const res = await fetch(url, {
+            method: 'PATCH',
+            headers: getAuthHeaders(),
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        return handleResponse<T>(res);
+    },
+
     delete: async <T>(url: string): Promise<T> => {
         const res = await fetch(url, {
             method: 'DELETE',
@@ -79,6 +88,15 @@ export const httpClient = {
         const res = await fetch(url, {
             method: 'POST',
             headers: getMultipartHeaders(), // No Content-Type header (browser sets it with boundary)
+            body: formData,
+        });
+        return handleResponse<T>(res);
+    },
+
+    putMultipart: async <T>(url: string, formData: FormData): Promise<T> => {
+        const res = await fetch(url, {
+            method: 'PUT',
+            headers: getMultipartHeaders(),
             body: formData,
         });
         return handleResponse<T>(res);

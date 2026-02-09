@@ -101,7 +101,7 @@ func (h *AuditHandler) CreateAudit(c *gin.Context) {
 	}
 
 	// Get file from form
-	file, _, err := c.Request.FormFile("file")
+	file, header, err := c.Request.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
 			Error:   "missing_file",
@@ -121,11 +121,17 @@ func (h *AuditHandler) CreateAudit(c *gin.Context) {
 		return
 	}
 
-	// TODO: Get user ID from JWT context
-	var createdBy *string = nil
+	// Get user ID from JWT context
+	var createdBy *string
+	if userID, exists := c.Get("userID"); exists {
+		if idStr, ok := userID.(string); ok {
+			createdBy = &idStr
+		}
+	}
 
 	// Call service - now saves everything (session + S3 + items)
-	result, err := h.service.CreateAudit(c.Request.Context(), storeID, pdfData, createdBy)
+	// Pass original filename to preserve it in S3 key
+	result, err := h.service.CreateAudit(c.Request.Context(), storeID, pdfData, createdBy, header.Filename)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "create_failed",
@@ -198,6 +204,74 @@ func (h *AuditHandler) DeleteAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Audit deleted successfully"})
 }
 
+// CloseAudit handles PATCH /api/audits/:id/close
+func (h *AuditHandler) CloseAudit(c *gin.Context) {
+	auditIDStr := c.Param("id")
+	auditID, err := strconv.Atoi(auditIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	// Get user ID from auth middleware
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "User ID not found in context",
+		})
+		return
+	}
+
+	err = h.service.CloseAudit(c.Request.Context(), auditID, userID.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "close_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Audit closed successfully"})
+}
+
+// ReopenAudit handles PATCH /api/audits/:id/reopen
+func (h *AuditHandler) ReopenAudit(c *gin.Context) {
+	auditIDStr := c.Param("id")
+	auditID, err := strconv.Atoi(auditIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	// Get user ID from auth middleware
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "User ID not found in context",
+		})
+		return
+	}
+
+	err = h.service.ReopenAudit(c.Request.Context(), auditID, userID.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "reopen_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Audit reopened successfully"})
+}
+
 // RegisterRoutes sets up the routes (legacy - unprotected)
 func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
@@ -226,8 +300,12 @@ func (h *AuditHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middlewa
 		api.GET("/stores", h.ListStores)
 		api.POST("/audits/parse", h.ParsePDF) // FASE 3: Preview only
 		api.POST("/audits", h.CreateAudit)    // FASE 5: Save after confirm
+		api.PUT("/audits/:id", h.UpdateAudit) // PDF Replacement
 		api.GET("/audits/:id", h.GetAudit)
-		api.DELETE("/audits/:id", h.DeleteAudit) // Cancel/Delete audit
+		api.GET("/audits/:id/events", h.GetAuditEvents) // Audit Logs
+		api.DELETE("/audits/:id", h.DeleteAudit)        // Cancel/Delete audit
+		api.PATCH("/audits/:id/close", h.CloseAudit)    // Close audit
+		api.PATCH("/audits/:id/reopen", h.ReopenAudit)  // Reopen audit
 
 		// Physical Scan endpoints (for POS app)
 		api.GET("/audits/active", h.ListActiveAudits)          // Audits available for POS
@@ -368,4 +446,74 @@ func (h *AuditHandler) UndoLastScan(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// Helper to get user ID
+func (h *AuditHandler) getUserIDFromContext(c *gin.Context) *string {
+	val, exists := c.Get("userID")
+	if !exists {
+		return nil
+	}
+	uid, ok := val.(string)
+	if !ok {
+		return nil
+	}
+	return &uid
+}
+
+// UpdateAudit handles PUT /api/audits/:id (PDF Replacement)
+func (h *AuditHandler) UpdateAudit(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "invalid_id", Message: "Invalid ID"})
+		return
+	}
+
+	// Get file from form
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "file_required", Message: "PDF file is required"})
+		return
+	}
+	defer file.Close()
+
+	pdfBytes, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "read_error", Message: "Failed to read file"})
+		return
+	}
+
+	// Get user ID from JWT context
+	var userID *string
+	if uid, exists := c.Get("userID"); exists {
+		if idStr, ok := uid.(string); ok {
+			userID = &idStr
+		}
+	}
+
+	if err := h.service.UpdateAudit(c.Request.Context(), id, pdfBytes, userID, header.Filename); err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "update_failed", Message: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// GetAuditEvents handles GET /api/audits/:id/events
+func (h *AuditHandler) GetAuditEvents(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "invalid_id", Message: "Invalid ID"})
+		return
+	}
+
+	events, err := h.service.GetAuditEvents(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "fetch_failed", Message: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"events": events})
 }

@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"audit-service/internal/adapters/repositories"
 	"audit-service/internal/adapters/storage"
@@ -68,7 +67,7 @@ func (s *AuditService) ParsePDF(ctx context.Context, pdfData []byte) (*ParseResu
 // CreateAudit is called AFTER user confirms the preview
 // This implements FASE 5 of the new sequence diagram
 // It saves: Session → S3 → Items (all in transaction)
-func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []byte, createdBy *string) (*domain.AuditDTO, error) {
+func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []byte, createdBy *string, originalFilename string) (*domain.AuditDTO, error) {
 	// 1. session := NewAuditSession(storeID)
 	session := domain.NewAuditSession(storeID, createdBy)
 
@@ -79,9 +78,17 @@ func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []b
 	}
 	session.ID = sessionID
 
-	// 3. s3.PutObject(pdf, key) → s3_url
-	key := fmt.Sprintf("audits/%d/%d.pdf", storeID, time.Now().Unix())
-	s3URL, err := s.s3Client.PutObject(ctx, key, pdfData, "application/pdf")
+	// 3. s3.PutObject(pdf, key) → s3_key (Private)
+	// STRICT PRESERVATION: Use a folder per audit to safely keep original filename
+	// Key format: audits/{store_id}/{audit_id}/{original_filename}
+	// We only sanitize '/' to avoid creating extra subfolders/traversal
+	cleanName := sanitizeFilenameStrict(originalFilename)
+	if cleanName == "" {
+		cleanName = "audit_file.pdf"
+	}
+	key := fmt.Sprintf("audits/%d/%d/%s", storeID, sessionID, cleanName)
+
+	s3Key, err := s.s3Client.PutObject(ctx, key, pdfData, "application/pdf")
 	if err != nil {
 		// Rollback: delete the session we just created
 		_ = s.repo.DeleteSession(ctx, sessionID)
@@ -95,16 +102,32 @@ func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []b
 		return nil, fmt.Errorf("failed to parse PDF: %w", err)
 	}
 
-	// 5. repo.SaveAuditBatch(session_id, items, s3_url) with status = IN_PROGRESS
-	err = s.repo.SaveAuditBatchWithStatus(ctx, sessionID, items, s3URL, "IN_PROGRESS")
+	// 5. repo.SaveAuditBatch(session_id, items, s3_key) with status = IN_PROGRESS
+	err = s.repo.SaveAuditBatchWithStatus(ctx, sessionID, items, s3Key, "IN_PROGRESS")
 	if err != nil {
 		_ = s.repo.DeleteSession(ctx, sessionID)
 		return nil, fmt.Errorf("failed to save audit batch: %w", err)
 	}
 
-	// Update session with new data
+	// Generate Presigned URL for the response
+	presignedURL, err := s.s3Client.PresignURL(ctx, s3Key)
+	if err != nil {
+		// Log error but don't fail, user can refresh
+		fmt.Printf("Failed to presign URL: %v\n", err)
+		presignedURL = ""
+	}
+
+	// 6. Log Event (Audit Trail)
+	details := map[string]interface{}{
+		"s3_key":      s3Key,
+		"items_count": len(items),
+		"store_id":    storeID,
+	}
+	_ = s.repo.LogEvent(ctx, sessionID, createdBy, "AUDIT_CREATED", details)
+
+	// Update session with new data (Response only, DB has key)
 	session.Status = "IN_PROGRESS"
-	session.PDFURL = &s3URL
+	session.PDFURL = &presignedURL // Return valid URL to frontend
 
 	return &domain.AuditDTO{
 		Session: *session,
@@ -114,7 +137,20 @@ func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []b
 
 // ListAudits returns all audit sessions
 func (s *AuditService) ListAudits(ctx context.Context) ([]domain.AuditListDTO, error) {
-	return s.repo.FindAllSessions(ctx)
+	audits, err := s.repo.FindAllSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range audits {
+		if audits[i].Session.PDFURL != nil && *audits[i].Session.PDFURL != "" {
+			presigned, err := s.s3Client.PresignURL(ctx, *audits[i].Session.PDFURL)
+			if err == nil {
+				audits[i].Session.PDFURL = &presigned
+			}
+		}
+	}
+	return audits, nil
 }
 
 // GetAuditByID retrieves an audit with its items
@@ -129,15 +165,33 @@ func (s *AuditService) GetAuditByID(ctx context.Context, sessionID int) (*domain
 		return nil, err
 	}
 
+	// Generate Presigned URL
+	if session.PDFURL != nil && *session.PDFURL != "" {
+		presigned, err := s.s3Client.PresignURL(ctx, *session.PDFURL)
+		if err == nil {
+			session.PDFURL = &presigned
+		}
+	}
+
 	return &domain.AuditDTO{
 		Session: *session,
 		Items:   items,
 	}, nil
 }
 
-// DeleteAudit removes an audit session and its items
-func (s *AuditService) DeleteAudit(ctx context.Context, sessionID int) error {
-	return s.repo.DeleteSession(ctx, sessionID)
+// DeleteAudit deletes an audit by ID
+func (s *AuditService) DeleteAudit(ctx context.Context, id int) error {
+	return s.repo.Delete(ctx, id)
+}
+
+// CloseAudit closes an audit and logs the event
+func (s *AuditService) CloseAudit(ctx context.Context, auditID int, userID string) error {
+	return s.repo.CloseAudit(ctx, auditID, userID)
+}
+
+// ReopenAudit reopens a closed audit and logs the event
+func (s *AuditService) ReopenAudit(ctx context.Context, auditID int, userID string) error {
+	return s.repo.ReopenAudit(ctx, auditID, userID)
 }
 
 // ===== Physical Scan Methods for POS App =====
@@ -171,5 +225,107 @@ func (s *AuditService) UndoLastScan(ctx context.Context, auditID int) error {
 // - Scope: Global (all stores)
 // - Status: 'waiting_count', 'waiting_valuation' OR 'closed' within last 24 hours
 func (s *AuditService) GetAudits(ctx context.Context) ([]domain.AuditListDTO, error) {
-	return s.repo.GetDashboardAudits(ctx)
+	audits, err := s.repo.GetDashboardAudits(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range audits {
+		if audits[i].Session.PDFURL != nil && *audits[i].Session.PDFURL != "" {
+			presigned, err := s.s3Client.PresignURL(ctx, *audits[i].Session.PDFURL)
+			if err == nil {
+				audits[i].Session.PDFURL = &presigned
+			}
+		}
+	}
+	return audits, nil
+}
+
+// UpdateAudit handles FASE 6: Updating existing audit (PDF replacement)
+func (s *AuditService) UpdateAudit(ctx context.Context, auditID int, pdfData []byte, userID *string, originalFilename string) error {
+	// 1. Get Session to know StoreID (for S3 key)
+	session, err := s.repo.GetSessionByID(ctx, auditID)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+
+	// 2. Upload new PDF
+	// STRICT PRESERVATION: Use folder per audit
+	cleanName := sanitizeFilenameStrict(originalFilename)
+	if cleanName == "" {
+		cleanName = "audit_update.pdf"
+	}
+	// To avoid caching if updating same file, we could append timestamp, but user requested exact name.
+	// We rely on S3 overwriting the file if it exists.
+	// But to be safe and allow "History" of uploads in same audit if we wanted,
+	// we will stick to the folder structure: audits/{store_id}/{audit_id}/{filename}
+	// If user uploads exact same name, it overwrites. This is expected behavior for "Preserve name".
+	key := fmt.Sprintf("audits/%d/%d/%s", session.StoreID, auditID, cleanName)
+
+	s3Key, err := s.s3Client.PutObject(ctx, key, pdfData, "application/pdf")
+	if err != nil {
+		return fmt.Errorf("failed to upload PDF: %w", err)
+	}
+
+	// 3. Parse PDF
+	items, err := s.pdfParser.Parse(pdfData)
+	if err != nil {
+		return fmt.Errorf("failed to parse PDF: %w", err)
+	}
+
+	// 4. Update DB (Transactional: Delete scans, Delete items, Insert items, Update session)
+	// We pass s3Key (private) instead of s3URL
+	err = s.repo.UpdateAuditTheoretical(ctx, auditID, items, s3Key)
+	if err != nil {
+		return fmt.Errorf("failed to update audit: %w", err)
+	}
+
+	// 5. Log Event
+	details := map[string]interface{}{
+		"s3_key":      s3Key,
+		"items_count": len(items),
+		"action":      "PDF_REPLACEMENT",
+		"reset_scans": true,
+	}
+	_ = s.repo.LogEvent(ctx, auditID, userID, "AUDIT_UPDATED", details)
+
+	return nil
+}
+
+// sanitizeFilenameStrict only replaces forward slashes to prevent directory traversal.
+// It allows spaces, special chars, etc. as requested by user.
+func sanitizeFilenameStrict(filename string) string {
+	// Just replace path separators
+	var result []rune
+	for _, r := range filename {
+		if r == '/' || r == '\\' {
+			result = append(result, '_')
+		} else {
+			result = append(result, r)
+		}
+	}
+	return string(result)
+}
+
+// GetAuditEvents returns the audit trail with presigned URLs
+func (s *AuditService) GetAuditEvents(ctx context.Context, auditID int) ([]domain.AuditEvent, error) {
+	events, err := s.repo.GetAuditEvents(ctx, auditID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich events with Presigned URLs if s3_key is present in details
+	for i := range events {
+		if events[i].Details != nil {
+			if key, ok := events[i].Details["s3_key"].(string); ok && key != "" {
+				presigned, err := s.s3Client.PresignURL(ctx, key)
+				if err == nil {
+					// Inject valid URL for frontend to use
+					events[i].Details["s3_url"] = presigned
+				}
+			}
+		}
+	}
+
+	return events, nil
 }

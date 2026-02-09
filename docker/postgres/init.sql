@@ -193,6 +193,22 @@ CREATE TABLE IF NOT EXISTS audit_physical (
 CREATE INDEX IF NOT EXISTS idx_audit_physical_audit ON audit_physical(audit_id);
 
 -- =====================================================
+-- AUDIT EVENTS (Bitácora de cierre/reapertura)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS audit_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    audit_id INT NOT NULL REFERENCES audit_sessions(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    previous_status VARCHAR(50),
+    new_status VARCHAR(50),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_audit_id ON audit_events(audit_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at);
+
+-- =====================================================
 -- SEED DATA: STORES
 -- =====================================================
 INSERT INTO stores (name, status) VALUES

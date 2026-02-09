@@ -28,6 +28,7 @@ export interface AuditSession {
     status: string;
     pdf_url?: string;
     created_at: string;
+    closed_at?: string; // Added field
 }
 
 export interface AuditItem {
@@ -44,9 +45,31 @@ export interface AuditDTO {
     items: AuditItem[];
 }
 
+// ...
+
 export interface AuditListDTO {
     session: AuditSession;
     store_name: string;
+    theoretical_skus: number; // Added field
+    scanned_skus: number;     // Added field
+    total_loss: number;       // Discrepancy value
+}
+
+export interface AuditEvent {
+    id: number;
+    audit_id: number;
+    user_id?: string;
+    user_name?: string; // Added field from backend
+    event_type: string;
+    details?: {
+        s3_url?: string;
+        s3_key?: string; // New field for private keys
+        items_count?: number;
+        action?: string;
+        store_id?: number;
+        [key: string]: any;
+    };
+    created_at: string;
 }
 
 // Response from parsePDF (preview only, no DB save)
@@ -93,10 +116,27 @@ export const auditApi = {
     },
 
     /**
+     * PUT /api/audits/:id - Update existing audit (PDF Replacement)
+     */
+    updateAudit: async (sessionId: number, file: File): Promise<void> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        return httpClient.putMultipart<void>(`${API_BASE}/api/audits/${sessionId}`, formData);
+    },
+
+    /**
      * GET /api/audits/:id - Get audit with items
      */
     getAudit: async (sessionId: number): Promise<AuditDTO> => {
         return httpClient.get<AuditDTO>(`${API_BASE}/api/audits/${sessionId}`);
+    },
+
+    /**
+     * GET /api/audits/:id/events - Get audit trail
+     */
+    getAuditEvents: async (sessionId: number): Promise<AuditEvent[]> => {
+        const response = await httpClient.get<{ events: AuditEvent[] }>(`${API_BASE}/api/audits/${sessionId}/events`);
+        return response.events;
     },
 
     /**
@@ -110,8 +150,22 @@ export const auditApi = {
     /**
      * DELETE /api/audits/:id - Cancel/Delete an audit
      */
-    deleteAudit: async (sessionId: number): Promise<void> => {
-        return httpClient.delete<void>(`${API_BASE}/api/audits/${sessionId}`);
+    deleteAudit: async (auditId: number): Promise<void> => {
+        return httpClient.delete<void>(`${API_BASE}/api/audits/${auditId}`);
+    },
+
+    /**
+     * PATCH /api/audits/:id/close - Close audit (change status to finalizado)
+     */
+    closeAudit: async (auditId: number): Promise<void> => {
+        return httpClient.patch<void>(`${API_BASE}/api/audits/${auditId}/close`);
+    },
+
+    /**
+     * PATCH /api/audits/:id/reopen - Reopen audit (change status back to activa)
+     */
+    reopenAudit: async (auditId: number): Promise<void> => {
+        return httpClient.patch<void>(`${API_BASE}/api/audits/${auditId}/reopen`);
     },
 
     // ============ CATALOG APIs ============
