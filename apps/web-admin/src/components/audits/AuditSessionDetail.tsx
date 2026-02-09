@@ -13,7 +13,7 @@ import {
     Activity, AlertCircle, BarChart3, History, MapPin, Calendar, User,
     ChevronDown, Store, Save, Loader2
 } from 'lucide-react';
-import { auditApi, type Store as StoreType, type PhysicalScan, type AuditEvent } from '../../services/audit.api';
+import { auditApi, type Store as StoreType, type AuditEvent } from '../../services/audit.api';
 import { useAudit } from '../../context/AuditContext';
 
 // Types
@@ -137,7 +137,6 @@ const AuditSessionDetail: React.FC = () => {
         unknownItems: 0,
         activeUsers: []
     });
-    const [physicalScans, setPhysicalScans] = useState<PhysicalScan[]>([]);
     const [diffItems, setDiffItems] = useState<DiffItem[]>([]);
     const [activeTab, setActiveTab] = useState<'all' | 'differences' | 'extras'>('differences'); // Default to discrepancies
     const [searchQuery, setSearchQuery] = useState('');
@@ -172,7 +171,7 @@ const AuditSessionDetail: React.FC = () => {
                     auditApi.getPhysicalScanSummary(auditId)
                 ]);
 
-                setPhysicalScans(scans);
+
 
                 // Extract unique device IDs as "users"
                 const devices = [...new Set(scans.map(s => s.device_id).filter(Boolean))];
@@ -841,17 +840,6 @@ const AuditSessionDetail: React.FC = () => {
                             </div>
                         ) : (
                             <div className="p-3">
-                                <div className="flex items-center gap-2 mb-2 p-2 bg-blue-50 rounded-lg">
-                                    <Wifi size={18} className="text-blue-500" />
-                                    <div className="flex-1">
-                                        <p className="font-medium text-blue-800 text-sm">Conexión Activa</p>
-                                        <p className="text-[10px] text-blue-600 flex items-center gap-1">
-                                            <Clock size={9} /> {physical.lastSync}
-                                        </p>
-                                    </div>
-                                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                                </div>
-
                                 <div className="grid grid-cols-2 gap-2 mb-2">
                                     <div className="bg-blue-50 rounded p-2 text-center">
                                         <p className="text-lg font-bold text-blue-700">{physical.scannedItems}</p>
@@ -902,31 +890,7 @@ const AuditSessionDetail: React.FC = () => {
                                     </div>
                                 </div>
 
-                                {/* Recent Scans List */}
-                                {physicalScans.length > 0 && (
-                                    <div className="mt-2 border-t border-slate-100 pt-2">
-                                        <p className="text-[10px] text-slate-500 mb-1">Últimos escaneos:</p>
-                                        <div className="max-h-24 overflow-y-auto space-y-1">
-                                            {physicalScans.slice(0, 5).map((scan) => (
-                                                <div key={scan.id} className={`flex items-center justify-between text-[10px] px-2 py-1 rounded ${scan.is_unknown ? 'bg-amber-50' : 'bg-slate-50'}`}>
-                                                    <div className="flex-1 truncate">
-                                                        <span className={`font-medium ${scan.is_unknown ? 'text-amber-700' : 'text-slate-700'}`}>
-                                                            {scan.product_name || scan.barcode}
-                                                        </span>
-                                                    </div>
-                                                    <span className="text-blue-600 font-bold ml-2">×{scan.quantity}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
 
-                                <div className="mt-2 flex items-center gap-1">
-                                    <span className="text-[10px] text-slate-500">Dispositivos:</span>
-                                    {physical.activeUsers.map((user, i) => (
-                                        <span key={i} className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">{user}</span>
-                                    ))}
-                                </div>
                             </div>
                         )
                     }
