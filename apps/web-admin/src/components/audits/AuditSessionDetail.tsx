@@ -13,7 +13,7 @@ import {
     Activity, AlertCircle, BarChart3, History, MapPin, Calendar, User,
     ChevronDown, Store, Save, Loader2
 } from 'lucide-react';
-import { auditApi, type Store as StoreType, type PhysicalScan } from '../../services/audit.api';
+import { auditApi, type Store as StoreType, type PhysicalScan, type AuditDTO, type AuditItem, type AuditEvent } from '../../services/audit.api';
 
 // Types
 type AuditStatus = 'not_started' | 'partial' | 'in_progress' | 'reconciled' | 'locked';
@@ -83,6 +83,21 @@ const AuditSessionDetail: React.FC = () => {
     const [stores, setStores] = useState<StoreType[]>([]);
     const [isLoadingStores, setIsLoadingStores] = useState(true);
     const [storesError, setStoresError] = useState<string | null>(null);
+
+    // Event Log State
+    const [showEventLog, setShowEventLog] = useState(false);
+    const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+    const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+
+    useEffect(() => {
+        if (showEventLog && _sessionId) {
+            setIsLoadingEvents(true);
+            auditApi.getAuditEvents(parseInt(_sessionId))
+                .then(data => setAuditEvents(data))
+                .catch(err => console.error('Failed to load events', err))
+                .finally(() => setIsLoadingEvents(false));
+        }
+    }, [showEventLog, _sessionId]);
 
     // Fetch stores from API on mount (always, to ensure we can resolve store name if state is missing)
     useEffect(() => {
@@ -246,7 +261,7 @@ const AuditSessionDetail: React.FC = () => {
                     setDiffItems(items);
                     setTheoretical({
                         status: 'loaded',
-                        fileName: data.session.pdf_url?.split('/').pop() || 'PDF Cargado',
+                        fileName: (data.session.pdf_url?.split('/').pop()?.split('?')[0]) || 'PDF Cargado',
                         uploadDate: new Date(data.session.created_at).toLocaleString(),
                         totalItems: items.length,
                         totalUnits: items.reduce((sum, i) => sum + i.theoretical, 0),
@@ -353,7 +368,7 @@ const AuditSessionDetail: React.FC = () => {
 
     // FASE 3: Parse PDF (Preview)
     const processFile = async (file: File) => {
-        if (!selectedStoreId) {
+        if (isNewAudit && !selectedStoreId) {
             alert('Por favor selecciona una tienda primero');
             return;
         }
@@ -422,6 +437,27 @@ const AuditSessionDetail: React.FC = () => {
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
+    const handleUpdateAudit = async () => {
+        if (!_sessionId || !uploadedFile) return;
+
+        if (!confirm('¿Estás seguro de actualizar el archivo de valuación? Esto recalculará los teóricos. Tu inventario físico se mantendrá intacto.')) {
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            await auditApi.updateAudit(parseInt(_sessionId), uploadedFile);
+            alert('Auditoría actualizada exitosamente');
+            // Reload page to fetch fresh data
+            window.location.reload();
+        } catch (err) {
+            console.error(err);
+            alert('Error al actualizar: ' + (err instanceof Error ? err.message : 'Error desconocido'));
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     // Filter diff items based on active tab
     const filteredItems = diffItems.filter(item => {
         const matchesSearch = item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -441,7 +477,7 @@ const AuditSessionDetail: React.FC = () => {
     const discrepanciesCount = diffItems.filter(i => i.difference !== 0).length;
     const extrasCount = diffItems.filter(i => i.difference > 0).length; // Sobrantes (físico > teórico)
     const highValueDiffs = diffItems.filter(i => i.impact < -5000).length;
-    const totalImpact = diffItems.reduce((sum, i) => sum + i.impact, 0);
+    const totalNegativeImpact = diffItems.filter(i => i.impact < 0).reduce((sum, i) => sum + i.impact, 0);
 
     return (
         <div className="h-[calc(100vh-140px)] flex flex-col gap-3">
@@ -555,10 +591,15 @@ const AuditSessionDetail: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-3">
-                    <button className="px-4 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2">
-                        <History size={16} />
-                        Bitácora de Eventos
-                    </button>
+                    {!isNewAudit && (
+                        <button
+                            onClick={() => setShowEventLog(true)}
+                            className="px-4 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                        >
+                            <History size={16} />
+                            Bitácora de Eventos
+                        </button>
+                    )}
 
                     {/* Action buttons for creation mode */}
                     {isNewAudit ? (
@@ -611,35 +652,56 @@ const AuditSessionDetail: React.FC = () => {
                             </button>
                         </>
                     ) : (
-                        /* Cancel/Delete button for existing audits */
-                        <button
-                            type="button"
-                            onClick={async () => {
-                                if (!_sessionId) return;
-                                if (confirm('¿Estás seguro de que deseas cancelar esta auditoría? Esto eliminará todos los datos asociados.')) {
-                                    try {
-                                        await auditApi.deleteAudit(parseInt(_sessionId));
-                                        alert('Auditoría cancelada exitosamente');
-                                        onBack();
-                                    } catch (err) {
-                                        console.error(err);
-                                        alert('Error al cancelar: ' + (err instanceof Error ? err.message : 'Unknown error'));
-                                    }
-                                }
-                            }}
-                            className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 flex items-center gap-2"
-                        >
-                            <X size={16} />
-                            Cancelar Auditoría
-                        </button>
+                        /* Actions for existing audits */
+                        <div className="flex items-center gap-2">
+                            {uploadedFile ? (
+                                <>
+                                    <button
+                                        onClick={handleReplaceFile}
+                                        className="px-4 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        onClick={handleUpdateAudit}
+                                        disabled={isSaving}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 flex items-center gap-2"
+                                    >
+                                        {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
+                                        Guardar Cambios
+                                    </button>
+                                </>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        if (!_sessionId) return;
+                                        if (confirm('¿Estás seguro de que deseas cancelar esta auditoría? Esto eliminará todos los datos asociados.')) {
+                                            try {
+                                                await auditApi.deleteAudit(parseInt(_sessionId));
+                                                alert('Auditoría cancelada exitosamente');
+                                                onBack();
+                                            } catch (err) {
+                                                console.error(err);
+                                                alert('Error al cancelar: ' + (err instanceof Error ? err.message : 'Unknown error'));
+                                            }
+                                        }
+                                    }}
+                                    className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 flex items-center gap-2"
+                                >
+                                    <X size={16} />
+                                    Cancelar Auditoría
+                                </button>
+                            )}
+                        </div>
                     )}
                 </div>
-            </div>
+            </div >
 
             {/* SECTION B: Split Cards */}
-            <div className="grid grid-cols-2 gap-3">
+            < div className="grid grid-cols-2 gap-3" >
                 {/* B.1 Theoretical Card (PDF) */}
-                <div className={`rounded-xl border-2 transition-all ${isNewAudit && !selectedStoreId
+                < div className={`rounded-xl border-2 transition-all ${isNewAudit && !selectedStoreId
                     ? 'bg-slate-50 border-slate-200 opacity-60'
                     : isDragging
                         ? 'border-blue-500 bg-blue-50'
@@ -663,85 +725,87 @@ const AuditSessionDetail: React.FC = () => {
                     </div>
 
                     {/* Locked state when no store selected */}
-                    {isNewAudit && !selectedStoreId ? (
-                        <div className="p-4 flex flex-col items-center justify-center min-h-[120px] cursor-not-allowed">
-                            <Upload size={28} className="text-slate-300" />
-                            <p className="font-medium text-slate-400 mt-2 text-sm">Selecciona una tienda arriba</p>
-                            <p className="text-[10px] text-slate-400 mt-1">para habilitar la carga del PDF</p>
-                        </div>
-                    ) : theoretical.status === 'empty' ? (
-                        /* Empty State - Dropzone */
-                        <div
-                            className={`p-6 flex flex-col items-center justify-center border-2 border-dashed rounded-lg m-3 transition-colors cursor-pointer min-h-[120px] ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-blue-400 hover:bg-slate-50'
-                                }`}
-                            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                            onDragLeave={() => setIsDragging(false)}
-                            onDrop={handleDrop}
-                            onClick={() => fileInputRef.current?.click()}
-                        >
-                            <input
-                                type="file"
-                                ref={fileInputRef}
-                                className="hidden"
-                                accept=".pdf"
-                                onChange={handleFileSelect}
-                            />
-                            {isUploading ? (
-                                <div className="text-center">
-                                    <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-                                    <p className="text-slate-600">Procesando PDF...</p>
-                                </div>
-                            ) : (
-                                <>
-                                    <Upload size={28} className={isDragging ? 'text-blue-500' : 'text-slate-400'} />
-                                    <p className="font-medium text-slate-700 mt-2 text-sm">Arrastra el Reporte de Valuación (PDF)</p>
-                                    <p className="text-[10px] text-slate-400 mt-1">Validará que corresponda a la tienda</p>
-                                </>
-                            )}
-                        </div>
-                    ) : theoretical.status === 'error' ? (
-                        /* Error State */
-                        <div className="p-6 text-center">
-                            <AlertTriangle size={40} className="mx-auto text-red-500 mb-3" />
-                            <p className="font-medium text-red-700">{theoretical.errorMessage}</p>
-                            <button onClick={() => setTheoretical({ status: 'empty', totalItems: 0, totalUnits: 0, totalValue: 0 })}
-                                className="mt-3 text-sm text-blue-600 hover:underline">
-                                Intentar de nuevo
-                            </button>
-                        </div>
-                    ) : (
-                        /* Loaded State */
-                        <div className="p-3">
-                            <div className="flex items-center gap-2 mb-2 p-2 bg-slate-50 rounded-lg">
-                                <FileText size={18} className="text-red-500" />
-                                <div className="flex-1">
-                                    <p className="font-medium text-slate-800 text-sm">{theoretical.fileName}</p>
-                                    <p className="text-[10px] text-slate-500">{theoretical.uploadDate}</p>
-                                </div>
-                                <CheckCircle2 size={16} className="text-emerald-500" />
+                    {
+                        isNewAudit && !selectedStoreId ? (
+                            <div className="p-4 flex flex-col items-center justify-center min-h-[120px] cursor-not-allowed">
+                                <Upload size={28} className="text-slate-300" />
+                                <p className="font-medium text-slate-400 mt-2 text-sm">Selecciona una tienda arriba</p>
+                                <p className="text-[10px] text-slate-400 mt-1">para habilitar la carga del PDF</p>
                             </div>
+                        ) : theoretical.status === 'empty' ? (
+                            /* Empty State - Dropzone */
+                            <div
+                                className={`p-6 flex flex-col items-center justify-center border-2 border-dashed rounded-lg m-3 transition-colors cursor-pointer min-h-[120px] ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:border-blue-400 hover:bg-slate-50'
+                                    }`}
+                                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                                onDragLeave={() => setIsDragging(false)}
+                                onDrop={handleDrop}
+                                onClick={() => fileInputRef.current?.click()}
+                            >
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    className="hidden"
+                                    accept=".pdf"
+                                    onChange={handleFileSelect}
+                                />
+                                {isUploading ? (
+                                    <div className="text-center">
+                                        <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
+                                        <p className="text-slate-600">Procesando PDF...</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <Upload size={28} className={isDragging ? 'text-blue-500' : 'text-slate-400'} />
+                                        <p className="font-medium text-slate-700 mt-2 text-sm">Arrastra el Reporte de Valuación (PDF)</p>
+                                        <p className="text-[10px] text-slate-400 mt-1">Validará que corresponda a la tienda</p>
+                                    </>
+                                )}
+                            </div>
+                        ) : theoretical.status === 'error' ? (
+                            /* Error State */
+                            <div className="p-6 text-center">
+                                <AlertTriangle size={40} className="mx-auto text-red-500 mb-3" />
+                                <p className="font-medium text-red-700">{theoretical.errorMessage}</p>
+                                <button onClick={() => setTheoretical({ status: 'empty', totalItems: 0, totalUnits: 0, totalValue: 0 })}
+                                    className="mt-3 text-sm text-blue-600 hover:underline">
+                                    Intentar de nuevo
+                                </button>
+                            </div>
+                        ) : (
+                            /* Loaded State */
+                            <div className="p-3">
+                                <div className="flex items-center gap-2 mb-2 p-2 bg-slate-50 rounded-lg">
+                                    <FileText size={18} className="text-red-500" />
+                                    <div className="flex-1">
+                                        <p className="font-medium text-slate-800 text-sm">{theoretical.fileName}</p>
+                                        <p className="text-[10px] text-slate-500">{theoretical.uploadDate}</p>
+                                    </div>
+                                    <CheckCircle2 size={16} className="text-emerald-500" />
+                                </div>
 
-                            {/* KPIs */}
-                            <div className="grid grid-cols-3 gap-2">
-                                <div className="bg-slate-50 rounded p-2 text-center">
-                                    <p className="text-lg font-bold text-slate-800">{theoretical.totalItems.toLocaleString()}</p>
-                                    <p className="text-[10px] text-slate-500">SKUs</p>
-                                </div>
-                                <div className="bg-slate-50 rounded p-2 text-center">
-                                    <p className="text-lg font-bold text-slate-800">{theoretical.totalUnits.toLocaleString()}</p>
-                                    <p className="text-[10px] text-slate-500">Unidades</p>
-                                </div>
-                                <div className="bg-emerald-50 rounded p-2 text-center">
-                                    <p className="text-lg font-bold text-emerald-700">{formatCurrencyCompact(theoretical.totalValue)}</p>
-                                    <p className="text-[10px] text-emerald-600">Valor</p>
+                                {/* KPIs */}
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div className="bg-slate-50 rounded p-2 text-center">
+                                        <p className="text-lg font-bold text-slate-800">{theoretical.totalItems.toLocaleString()}</p>
+                                        <p className="text-[10px] text-slate-500">SKUs</p>
+                                    </div>
+                                    <div className="bg-slate-50 rounded p-2 text-center">
+                                        <p className="text-lg font-bold text-slate-800">{theoretical.totalUnits.toLocaleString()}</p>
+                                        <p className="text-[10px] text-slate-500">Unidades</p>
+                                    </div>
+                                    <div className="bg-emerald-50 rounded p-2 text-center">
+                                        <p className="text-lg font-bold text-emerald-700">{formatCurrencyCompact(theoretical.totalValue)}</p>
+                                        <p className="text-[10px] text-emerald-600">Valor</p>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    )}
-                </div>
+                        )
+                    }
+                </div >
 
                 {/* B.2 Physical Card (Live Scanner) - Passive in creation mode */}
-                <div className={`rounded-xl border-2 transition-all ${isNewAudit
+                < div className={`rounded-xl border-2 transition-all ${isNewAudit
                     ? 'bg-slate-50 border-slate-200'
                     : physical.status === 'active'
                         ? 'border-blue-300 bg-white'
@@ -761,358 +825,365 @@ const AuditSessionDetail: React.FC = () => {
                         )}
                     </div>
 
-                    {isNewAudit || physical.status === 'disconnected' ? (
-                        <div className="p-4 flex flex-col items-center justify-center min-h-[120px]">
-                            <WifiOff size={28} className="text-slate-300" />
-                            <p className="font-medium text-slate-500 mt-2 text-sm">
-                                {isNewAudit ? 'Esperando conexión con App...' : 'Esperando sincronización'}
-                            </p>
-                            <p className="text-[10px] text-slate-400 mt-1">
-                                {isNewAudit ? 'La tienda escaneará desde la App móvil' : 'No hay escaneos aún'}
+                    {
+                        isNewAudit || physical.status === 'disconnected' ? (
+                            <div className="p-4 flex flex-col items-center justify-center min-h-[120px]">
+                                <WifiOff size={28} className="text-slate-300" />
+                                <p className="font-medium text-slate-500 mt-2 text-sm">
+                                    {isNewAudit ? 'Esperando conexión con App...' : 'Esperando sincronización'}
+                                </p>
+                                <p className="text-[10px] text-slate-400 mt-1">
+                                    {isNewAudit ? 'La tienda escaneará desde la App móvil' : 'No hay escaneos aún'}
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="p-3">
+                                <div className="flex items-center gap-2 mb-2 p-2 bg-blue-50 rounded-lg">
+                                    <Wifi size={18} className="text-blue-500" />
+                                    <div className="flex-1">
+                                        <p className="font-medium text-blue-800 text-sm">Conexión Activa</p>
+                                        <p className="text-[10px] text-blue-600 flex items-center gap-1">
+                                            <Clock size={9} /> {physical.lastSync}
+                                        </p>
+                                    </div>
+                                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                    <div className="bg-blue-50 rounded p-2 text-center">
+                                        <p className="text-lg font-bold text-blue-700">{physical.scannedItems}</p>
+                                        <p className="text-[10px] text-blue-600">Escaneados</p>
+                                    </div>
+                                    <div className="bg-slate-50 rounded p-2 text-center">
+                                        <div className="flex items-center justify-center gap-1">
+                                            <Users size={12} className="text-slate-500" />
+                                            <p className="text-base font-bold text-slate-700">{physical.activeUsers.length}</p>
+                                        </div>
+                                        <p className="text-[10px] text-slate-500">Usuarios</p>
+                                    </div>
+                                </div>
+
+                                {theoretical.status === 'loaded' && (
+                                    <div className="mt-2">
+                                        <div className="flex items-center justify-between text-[10px] mb-0.5">
+                                            <span className="text-slate-500">Progreso</span>
+                                            <span className="font-medium text-slate-700">
+                                                {physical.uniqueProducts} / {theoretical.totalItems} SKUs ({Math.round((physical.uniqueProducts / theoretical.totalItems) * 100)}%)
+                                            </span>
+                                        </div>
+                                        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                            <div
+                                                className="h-full rounded-full transition-all duration-500"
+                                                style={{
+                                                    width: `${Math.min((physical.uniqueProducts / theoretical.totalItems) * 100, 100)}%`,
+                                                    backgroundColor: '#06aef0'
+                                                }}
+                                            ></div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Summary Stats */}
+                                <div className="grid grid-cols-3 gap-1 mt-2 text-center">
+                                    <div className="bg-blue-50 rounded px-2 py-1">
+                                        <p className="text-sm font-bold text-blue-700">{physical.totalQuantity}</p>
+                                        <p className="text-[9px] text-blue-600">Unidades</p>
+                                    </div>
+                                    <div className="bg-emerald-50 rounded px-2 py-1">
+                                        <p className="text-sm font-bold text-emerald-700">{physical.uniqueProducts}</p>
+                                        <p className="text-[9px] text-emerald-600">Productos</p>
+                                    </div>
+                                    <div className={`rounded px-2 py-1 ${physical.unknownItems > 0 ? 'bg-amber-50' : 'bg-slate-50'}`}>
+                                        <p className={`text-sm font-bold ${physical.unknownItems > 0 ? 'text-amber-700' : 'text-slate-500'}`}>{physical.unknownItems}</p>
+                                        <p className={`text-[9px] ${physical.unknownItems > 0 ? 'text-amber-600' : 'text-slate-400'}`}>No catalog</p>
+                                    </div>
+                                </div>
+
+                                {/* Recent Scans List */}
+                                {physicalScans.length > 0 && (
+                                    <div className="mt-2 border-t border-slate-100 pt-2">
+                                        <p className="text-[10px] text-slate-500 mb-1">Últimos escaneos:</p>
+                                        <div className="max-h-24 overflow-y-auto space-y-1">
+                                            {physicalScans.slice(0, 5).map((scan) => (
+                                                <div key={scan.id} className={`flex items-center justify-between text-[10px] px-2 py-1 rounded ${scan.is_unknown ? 'bg-amber-50' : 'bg-slate-50'}`}>
+                                                    <div className="flex-1 truncate">
+                                                        <span className={`font-medium ${scan.is_unknown ? 'text-amber-700' : 'text-slate-700'}`}>
+                                                            {scan.product_name || scan.barcode}
+                                                        </span>
+                                                    </div>
+                                                    <span className="text-blue-600 font-bold ml-2">×{scan.quantity}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="mt-2 flex items-center gap-1">
+                                    <span className="text-[10px] text-slate-500">Dispositivos:</span>
+                                    {physical.activeUsers.map((user, i) => (
+                                        <span key={i} className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">{user}</span>
+                                    ))}
+                                </div>
+                            </div>
+                        )
+                    }
+                </div >
+            </div >
+
+            {/* SECTION C: Reconciliation Table */}
+            < div className="flex-1 bg-white rounded-xl border border-slate-200 flex flex-col overflow-hidden" >
+                {
+                    theoretical.status !== 'loaded' ? (
+                        /* Waiting State */
+                        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                            <BarChart3 size={48} className="text-slate-300 mb-4" />
+                            <p className="text-lg font-medium text-slate-600">Esperando datos para conciliar</p>
+                            <p className="text-sm text-slate-400 max-w-md mt-1">
+                                Sube el PDF de valuación{physical.status !== 'active' && ' y espera los escaneos de la App de Escritorio'} para ver las diferencias.
                             </p>
                         </div>
                     ) : (
-                        <div className="p-3">
-                            <div className="flex items-center gap-2 mb-2 p-2 bg-blue-50 rounded-lg">
-                                <Wifi size={18} className="text-blue-500" />
-                                <div className="flex-1">
-                                    <p className="font-medium text-blue-800 text-sm">Conexión Activa</p>
-                                    <p className="text-[10px] text-blue-600 flex items-center gap-1">
-                                        <Clock size={9} /> {physical.lastSync}
-                                    </p>
+                        <>
+                            {/* Action Bar: Tabs LEFT | Tools RIGHT (Dumbbell Pattern) */}
+                            <div className="px-4 py-2 border-b border-slate-200 bg-white flex items-center justify-between">
+                                {/* Left: Tabs */}
+                                <div className="flex">
+                                    <button
+                                        onClick={() => { setActiveTab('differences'); setCurrentPage(1); }}
+                                        className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'differences'
+                                            ? 'border-red-500 text-red-700'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                            }`}
+                                    >
+                                        🚨 Discrepancias ({discrepanciesCount})
+                                    </button>
+                                    <button
+                                        onClick={() => { setActiveTab('all'); setCurrentPage(1); }}
+                                        className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'all'
+                                            ? 'border-blue-500 text-blue-700'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                            }`}
+                                    >
+                                        📋 Todos ({totalProducts})
+                                    </button>
+                                    <button
+                                        onClick={() => { setActiveTab('extras'); setCurrentPage(1); }}
+                                        className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'extras'
+                                            ? 'border-amber-500 text-amber-700'
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                            }`}
+                                    >
+                                        🆕 Extras ({extrasCount})
+                                    </button>
                                 </div>
-                                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                            </div>
 
-                            <div className="grid grid-cols-2 gap-2 mb-2">
-                                <div className="bg-blue-50 rounded p-2 text-center">
-                                    <p className="text-lg font-bold text-blue-700">{physical.scannedItems}</p>
-                                    <p className="text-[10px] text-blue-600">Escaneados</p>
-                                </div>
-                                <div className="bg-slate-50 rounded p-2 text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                        <Users size={12} className="text-slate-500" />
-                                        <p className="text-base font-bold text-slate-700">{physical.activeUsers.length}</p>
+                                {/* Right: Search + Density + Tool Icons (Grouped) */}
+                                <div className="flex items-center gap-2">
+                                    {/* Search Input - Enhanced */}
+                                    <div className="relative">
+                                        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input
+                                            type="text"
+                                            placeholder="Buscar por SKU, Producto..."
+                                            value={searchQuery}
+                                            onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+                                            className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm w-64 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
+                                        />
                                     </div>
-                                    <p className="text-[10px] text-slate-500">Usuarios</p>
+
+                                    {/* Separator */}
+                                    <div className="h-8 w-px bg-slate-200"></div>
+
+                                    {/* Tool Buttons */}
+                                    <button
+                                        onClick={exportToExcel}
+                                        className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                                        title="Exportar Excel"
+                                    >
+                                        <FileSpreadsheet size={20} />
+                                    </button>
+                                    <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="Recargar datos">
+                                        <RefreshCw size={20} />
+                                    </button>
                                 </div>
                             </div>
 
-                            {theoretical.status === 'loaded' && (
-                                <div className="mt-2">
-                                    <div className="flex items-center justify-between text-[10px] mb-0.5">
-                                        <span className="text-slate-500">Progreso</span>
-                                        <span className="font-medium text-slate-700">
-                                            {physical.uniqueProducts} / {theoretical.totalItems} SKUs ({Math.round((physical.uniqueProducts / theoretical.totalItems) * 100)}%)
-                                        </span>
-                                    </div>
-                                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                                        <div
-                                            className="h-full rounded-full transition-all duration-500"
-                                            style={{
-                                                width: `${Math.min((physical.uniqueProducts / theoretical.totalItems) * 100, 100)}%`,
-                                                backgroundColor: '#06aef0'
-                                            }}
-                                        ></div>
-                                    </div>
+                            {/* Alert Banner with Integrated KPI */}
+                            <div className={`px-4 py-2 border-b flex items-center justify-between ${highValueDiffs > 0 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
+                                <div className="flex items-center gap-2">
+                                    <AlertCircle size={16} className={highValueDiffs > 0 ? 'text-amber-600' : 'text-red-600'} />
+                                    <span className="text-sm text-slate-700">
+                                        {highValueDiffs > 0
+                                            ? `${highValueDiffs} productos con diferencia mayor a $5,000 MXN`
+                                            : `${discrepanciesCount} productos con diferencias detectadas`
+                                        }
+                                    </span>
                                 </div>
-                            )}
-
-                            {/* Summary Stats */}
-                            <div className="grid grid-cols-3 gap-1 mt-2 text-center">
-                                <div className="bg-blue-50 rounded px-2 py-1">
-                                    <p className="text-sm font-bold text-blue-700">{physical.totalQuantity}</p>
-                                    <p className="text-[9px] text-blue-600">Unidades</p>
-                                </div>
-                                <div className="bg-emerald-50 rounded px-2 py-1">
-                                    <p className="text-sm font-bold text-emerald-700">{physical.uniqueProducts}</p>
-                                    <p className="text-[9px] text-emerald-600">Productos</p>
-                                </div>
-                                <div className={`rounded px-2 py-1 ${physical.unknownItems > 0 ? 'bg-amber-50' : 'bg-slate-50'}`}>
-                                    <p className={`text-sm font-bold ${physical.unknownItems > 0 ? 'text-amber-700' : 'text-slate-500'}`}>{physical.unknownItems}</p>
-                                    <p className={`text-[9px] ${physical.unknownItems > 0 ? 'text-amber-600' : 'text-slate-400'}`}>No catalog</p>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-sm text-slate-600">Pérdida Total:</span>
+                                    <span className="text-lg font-bold text-red-700 tabular-nums">
+                                        ${Math.abs(totalNegativeImpact).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                    </span>
                                 </div>
                             </div>
 
-                            {/* Recent Scans List */}
-                            {physicalScans.length > 0 && (
-                                <div className="mt-2 border-t border-slate-100 pt-2">
-                                    <p className="text-[10px] text-slate-500 mb-1">Últimos escaneos:</p>
-                                    <div className="max-h-24 overflow-y-auto space-y-1">
-                                        {physicalScans.slice(0, 5).map((scan) => (
-                                            <div key={scan.id} className={`flex items-center justify-between text-[10px] px-2 py-1 rounded ${scan.is_unknown ? 'bg-amber-50' : 'bg-slate-50'}`}>
-                                                <div className="flex-1 truncate">
-                                                    <span className={`font-medium ${scan.is_unknown ? 'text-amber-700' : 'text-slate-700'}`}>
-                                                        {scan.product_name || scan.barcode}
-                                                    </span>
-                                                </div>
-                                                <span className="text-blue-600 font-bold ml-2">×{scan.quantity}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="mt-2 flex items-center gap-1">
-                                <span className="text-[10px] text-slate-500">Dispositivos:</span>
-                                {physical.activeUsers.map((user, i) => (
-                                    <span key={i} className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">{user}</span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* SECTION C: Reconciliation Table */}
-            <div className="flex-1 bg-white rounded-xl border border-slate-200 flex flex-col overflow-hidden">
-                {theoretical.status !== 'loaded' ? (
-                    /* Waiting State */
-                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-                        <BarChart3 size={48} className="text-slate-300 mb-4" />
-                        <p className="text-lg font-medium text-slate-600">Esperando datos para conciliar</p>
-                        <p className="text-sm text-slate-400 max-w-md mt-1">
-                            Sube el PDF de valuación{physical.status !== 'active' && ' y espera los escaneos de la App de Escritorio'} para ver las diferencias.
-                        </p>
-                    </div>
-                ) : (
-                    <>
-                        {/* Action Bar: Tabs LEFT | Tools RIGHT (Dumbbell Pattern) */}
-                        <div className="px-4 py-2 border-b border-slate-200 bg-white flex items-center justify-between">
-                            {/* Left: Tabs */}
-                            <div className="flex">
-                                <button
-                                    onClick={() => { setActiveTab('differences'); setCurrentPage(1); }}
-                                    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'differences'
-                                        ? 'border-red-500 text-red-700'
-                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                                        }`}
-                                >
-                                    🚨 Discrepancias ({discrepanciesCount})
-                                </button>
-                                <button
-                                    onClick={() => { setActiveTab('all'); setCurrentPage(1); }}
-                                    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'all'
-                                        ? 'border-blue-500 text-blue-700'
-                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                                        }`}
-                                >
-                                    📋 Todos ({totalProducts})
-                                </button>
-                                <button
-                                    onClick={() => { setActiveTab('extras'); setCurrentPage(1); }}
-                                    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'extras'
-                                        ? 'border-amber-500 text-amber-700'
-                                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                                        }`}
-                                >
-                                    🆕 Extras ({extrasCount})
-                                </button>
-                            </div>
-
-                            {/* Right: Search + Density + Tool Icons (Grouped) */}
-                            <div className="flex items-center gap-2">
-                                {/* Search Input - Enhanced */}
-                                <div className="relative">
-                                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                    <input
-                                        type="text"
-                                        placeholder="Buscar por SKU, Producto..."
-                                        value={searchQuery}
-                                        onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-                                        className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm w-64 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
-                                    />
-                                </div>
-
-                                {/* Separator */}
-                                <div className="h-8 w-px bg-slate-200"></div>
-
-                                {/* Tool Buttons */}
-                                <button
-                                    onClick={exportToExcel}
-                                    className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-                                    title="Exportar Excel"
-                                >
-                                    <FileSpreadsheet size={20} />
-                                </button>
-                                <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="Recargar datos">
-                                    <RefreshCw size={20} />
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Alert Banner with Integrated KPI */}
-                        <div className={`px-4 py-2 border-b flex items-center justify-between ${highValueDiffs > 0 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'}`}>
-                            <div className="flex items-center gap-2">
-                                <AlertCircle size={16} className={highValueDiffs > 0 ? 'text-amber-600' : 'text-red-600'} />
-                                <span className={`text-sm font-medium ${highValueDiffs > 0 ? 'text-amber-800' : 'text-red-800'}`}>
-                                    {highValueDiffs} productos con diferencia mayor a $5,000 MXN
-                                </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-sm text-slate-600">{totalImpact >= 0 ? 'Ganancia Total:' : 'Pérdida Total (Neto):'}</span>
-                                <span className={`text-lg font-bold tabular-nums ${totalImpact >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                                    ${Math.abs(totalImpact).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                                </span>
-                            </div>
-                        </div>
-
-                        {/* Data Grid - Enterprise Style */}
-                        <div className="flex-1 overflow-auto" ref={tableContainerRef}>
-                            <table className="w-full text-sm border-collapse">
-                                <thead className="sticky top-0 z-10">
-                                    {/* Group Headers */}
-                                    <tr className="bg-slate-100 border-b border-slate-300">
-                                        <th colSpan={3} className="px-3 py-1.5 text-left font-semibold text-slate-700 text-xs uppercase tracking-wide">
-                                            Producto
-                                        </th>
-                                        <th className="px-3 py-1.5 text-center font-semibold text-slate-600 text-xs uppercase tracking-wide bg-gray-200 border-l border-slate-300">
-                                            Según PDF (Teórico)
-                                        </th>
-                                        <th className="px-3 py-1.5 text-center font-semibold text-blue-800 text-xs uppercase tracking-wide bg-blue-100 border-l border-slate-300">
-                                            Según Conteo (Físico)
-                                        </th>
-                                        <th colSpan={2} className="px-3 py-1.5 text-center font-semibold text-slate-700 text-xs uppercase tracking-wide border-l border-slate-300">
-                                            Resultado
-                                        </th>
-                                    </tr>
-                                    {/* Column Headers */}
-                                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
-                                        <th className="px-3 py-1.5 text-left font-medium text-xs w-28">SKU</th>
-                                        <th className="px-3 py-1.5 text-left font-medium text-xs">Descripción</th>
-                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-24">P. Unitario</th>
-                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-20 bg-gray-100 border-l border-slate-200">Cant.</th>
-                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-20 bg-blue-50 border-l border-slate-200 text-blue-700">Cant.</th>
-                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-16 border-l border-slate-200">Dif.</th>
-                                        <th className="px-3 py-1.5 text-right font-medium text-xs w-28 border-l border-slate-200">Impacto ($)</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {paginatedItems.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={7} className="px-4 py-12 text-center text-slate-400">
-                                                No hay productos que mostrar en esta pestaña
-                                            </td>
+                            {/* Data Grid - Enterprise Style */}
+                            <div className="flex-1 overflow-auto" ref={tableContainerRef}>
+                                <table className="w-full text-sm border-collapse">
+                                    <thead className="sticky top-0 z-10">
+                                        {/* Group Headers */}
+                                        <tr className="bg-slate-100 border-b border-slate-300">
+                                            <th colSpan={3} className="px-3 py-1.5 text-left font-semibold text-slate-700 text-xs uppercase tracking-wide">
+                                                Producto
+                                            </th>
+                                            <th className="px-3 py-1.5 text-center font-semibold text-slate-600 text-xs uppercase tracking-wide bg-gray-200 border-l border-slate-300">
+                                                Según PDF (Teórico)
+                                            </th>
+                                            <th className="px-3 py-1.5 text-center font-semibold text-blue-800 text-xs uppercase tracking-wide bg-blue-100 border-l border-slate-300">
+                                                Según Conteo (Físico)
+                                            </th>
+                                            <th colSpan={2} className="px-3 py-1.5 text-center font-semibold text-slate-700 text-xs uppercase tracking-wide border-l border-slate-300">
+                                                Resultado
+                                            </th>
                                         </tr>
-                                    ) : (
-                                        paginatedItems.map((item, idx) => (
-                                            <tr
-                                                key={item.sku}
-                                                onClick={() => setSelectedItem(item)}
-                                                className={`border-b border-slate-100 cursor-pointer transition-colors
+                                        {/* Column Headers */}
+                                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                                            <th className="px-3 py-1.5 text-left font-medium text-xs w-28">SKU</th>
+                                            <th className="px-3 py-1.5 text-left font-medium text-xs">Descripción</th>
+                                            <th className="px-3 py-1.5 text-right font-medium text-xs w-24">P. Unitario</th>
+                                            <th className="px-3 py-1.5 text-right font-medium text-xs w-20 bg-gray-100 border-l border-slate-200">Cant.</th>
+                                            <th className="px-3 py-1.5 text-right font-medium text-xs w-20 bg-blue-50 border-l border-slate-200 text-blue-700">Cant.</th>
+                                            <th className="px-3 py-1.5 text-right font-medium text-xs w-16 border-l border-slate-200">Dif.</th>
+                                            <th className="px-3 py-1.5 text-right font-medium text-xs w-28 border-l border-slate-200">Impacto ($)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {paginatedItems.length === 0 ? (
+                                            <tr>
+                                                <td colSpan={7} className="px-4 py-12 text-center text-slate-400">
+                                                    No hay productos que mostrar en esta pestaña
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            paginatedItems.map((item, idx) => (
+                                                <tr
+                                                    key={item.sku}
+                                                    onClick={() => setSelectedItem(item)}
+                                                    className={`border-b border-slate-100 cursor-pointer transition-colors
                                                     ${selectedItem?.sku === item.sku ? 'bg-blue-100 hover:bg-blue-100' : 'hover:bg-slate-50'}
                                                     ${item.difference !== 0 && selectedItem?.sku !== item.sku ? 'bg-red-50/40' : ''}
                                                     ${idx % 2 === 1 && selectedItem?.sku !== item.sku && item.difference === 0 ? 'bg-slate-25' : ''}`}
-                                            >
-                                                {/* SKU - Monospace */}
-                                                <td className="px-3 py-1.5 font-mono text-xs text-slate-600">{item.sku}</td>
-                                                {/* Description */}
-                                                <td className="px-3 py-1.5 text-slate-700 text-xs">{item.name}</td>
-                                                {/* Precio Unitario */}
-                                                <td className="px-3 py-1.5 text-right text-slate-600 tabular-nums text-xs">
-                                                    ${item.unitCost?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '—'}
-                                                </td>
-                                                {/* Teórico - Gray Column Tinting */}
-                                                <td className="px-3 py-1.5 text-right bg-gray-50 text-gray-700 font-medium tabular-nums border-l border-slate-100">
-                                                    {item.theoretical}
-                                                </td>
-                                                {/* Físico - Blue Column Tinting */}
-                                                <td className="px-3 py-1.5 text-right bg-blue-50/70 text-blue-700 font-bold tabular-nums border-l border-slate-100">
-                                                    {item.physical}
-                                                </td>
-                                                {/* Diferencia */}
-                                                <td className={`px-3 py-1.5 text-right font-bold tabular-nums border-l border-slate-100 ${item.difference === 0 ? 'text-emerald-600' :
-                                                    item.difference < 0 ? 'text-red-700' : 'text-amber-600'
-                                                    }`}>
-                                                    {item.difference === 0 ? (
-                                                        <span className="flex items-center justify-end gap-1">
-                                                            <CheckCircle2 size={12} className="text-emerald-500" />
-                                                            <span className="text-emerald-600 text-xs">OK</span>
-                                                        </span>
-                                                    ) : (
-                                                        `${item.difference > 0 ? '+' : ''}${item.difference}`
-                                                    )}
-                                                </td>
-                                                {/* Impacto - Financial Tabular */}
-                                                <td className={`px-3 py-1.5 text-right font-semibold tabular-nums border-l border-slate-100 ${item.impact === 0 ? 'text-slate-400' :
-                                                    item.impact < 0 ? 'text-red-700' : 'text-emerald-600'
-                                                    }`}>
-                                                    {item.impact !== 0 ? `${item.impact < 0 ? '-' : '+'}$${Math.abs(item.impact).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {/* Pagination Footer - Enterprise Style */}
-                        <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
-                            {/* Left: Rows per page */}
-                            <div className="flex items-center gap-2 text-sm text-slate-600">
-                                <span>Filas por página:</span>
-                                <select
-                                    value={itemsPerPage}
-                                    onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-                                    className="border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                >
-                                    <option value={25}>25</option>
-                                    <option value={50}>50</option>
-                                    <option value={100}>100</option>
-                                </select>
+                                                >
+                                                    {/* SKU - Monospace */}
+                                                    <td className="px-3 py-1.5 font-mono text-xs text-slate-600">{item.sku}</td>
+                                                    {/* Description */}
+                                                    <td className="px-3 py-1.5 text-slate-700 text-xs">{item.name}</td>
+                                                    {/* Precio Unitario */}
+                                                    <td className="px-3 py-1.5 text-right text-slate-600 tabular-nums text-xs">
+                                                        ${item.unitCost?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '—'}
+                                                    </td>
+                                                    {/* Teórico - Gray Column Tinting */}
+                                                    <td className="px-3 py-1.5 text-right bg-gray-50 text-gray-700 font-medium tabular-nums border-l border-slate-100">
+                                                        {item.theoretical}
+                                                    </td>
+                                                    {/* Físico - Blue Column Tinting */}
+                                                    <td className="px-3 py-1.5 text-right bg-blue-50/70 text-blue-700 font-bold tabular-nums border-l border-slate-100">
+                                                        {item.physical}
+                                                    </td>
+                                                    {/* Diferencia */}
+                                                    <td className={`px-3 py-1.5 text-right font-bold tabular-nums border-l border-slate-100 ${item.difference === 0 ? 'text-emerald-600' :
+                                                        item.difference < 0 ? 'text-red-700' : 'text-amber-600'
+                                                        }`}>
+                                                        {item.difference === 0 ? (
+                                                            <span className="flex items-center justify-end gap-1">
+                                                                <CheckCircle2 size={12} className="text-emerald-500" />
+                                                                <span className="text-emerald-600 text-xs">OK</span>
+                                                            </span>
+                                                        ) : (
+                                                            `${item.difference > 0 ? '+' : ''}${item.difference}`
+                                                        )}
+                                                    </td>
+                                                    {/* Impacto - Financial Tabular */}
+                                                    <td className={`px-3 py-1.5 text-right font-semibold tabular-nums border-l border-slate-100 ${item.impact === 0 ? 'text-slate-400' :
+                                                        item.impact < 0 ? 'text-red-700' : 'text-emerald-600'
+                                                        }`}>
+                                                        {item.impact !== 0 ? `${item.impact < 0 ? '-' : '+'}$${Math.abs(item.impact).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
                             </div>
 
-                            {/* Center: Info */}
-                            <span className="text-sm text-slate-500 tabular-nums">
-                                {filteredItems.length > 0
-                                    ? `${((currentPage - 1) * itemsPerPage) + 1}–${Math.min(currentPage * itemsPerPage, filteredItems.length)} de ${filteredItems.length}`
-                                    : '0 productos'
-                                }
-                            </span>
+                            {/* Pagination Footer - Enterprise Style */}
+                            <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+                                {/* Left: Rows per page */}
+                                <div className="flex items-center gap-2 text-sm text-slate-600">
+                                    <span>Filas por página:</span>
+                                    <select
+                                        value={itemsPerPage}
+                                        onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                                        className="border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    >
+                                        <option value={25}>25</option>
+                                        <option value={50}>50</option>
+                                        <option value={100}>100</option>
+                                    </select>
+                                </div>
 
-                            {/* Right: Navigation */}
-                            <div className="flex items-center gap-1">
-                                <button
-                                    onClick={() => setCurrentPage(1)}
-                                    disabled={currentPage === 1}
-                                    className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
-                                    title="Primera página"
-                                >
-                                    ««
-                                </button>
-                                <button
-                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                    disabled={currentPage === 1}
-                                    className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
-                                >
-                                    ‹ Anterior
-                                </button>
-                                <span className="px-3 py-1 text-sm font-medium text-slate-700 tabular-nums">
-                                    {currentPage} / {totalPages || 1}
+                                {/* Center: Info */}
+                                <span className="text-sm text-slate-500 tabular-nums">
+                                    {filteredItems.length > 0
+                                        ? `${((currentPage - 1) * itemsPerPage) + 1}–${Math.min(currentPage * itemsPerPage, filteredItems.length)} de ${filteredItems.length}`
+                                        : '0 productos'
+                                    }
                                 </span>
-                                <button
-                                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                    disabled={currentPage === totalPages || totalPages === 0}
-                                    className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
-                                >
-                                    Siguiente ›
-                                </button>
-                                <button
-                                    onClick={() => setCurrentPage(totalPages)}
-                                    disabled={currentPage === totalPages || totalPages === 0}
-                                    className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
-                                    title="Última página"
-                                >
-                                    »»
-                                </button>
+
+                                {/* Right: Navigation */}
+                                <div className="flex items-center gap-1">
+                                    <button
+                                        onClick={() => setCurrentPage(1)}
+                                        disabled={currentPage === 1}
+                                        className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                        title="Primera página"
+                                    >
+                                        ««
+                                    </button>
+                                    <button
+                                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                        disabled={currentPage === 1}
+                                        className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        ‹ Anterior
+                                    </button>
+                                    <span className="px-3 py-1 text-sm font-medium text-slate-700 tabular-nums">
+                                        {currentPage} / {totalPages || 1}
+                                    </span>
+                                    <button
+                                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                        disabled={currentPage === totalPages || totalPages === 0}
+                                        className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        Siguiente ›
+                                    </button>
+                                    <button
+                                        onClick={() => setCurrentPage(totalPages)}
+                                        disabled={currentPage === totalPages || totalPages === 0}
+                                        className="px-2 py-1 text-sm text-slate-600 hover:bg-slate-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                        title="Última página"
+                                    >
+                                        »»
+                                    </button>
+                                </div>
                             </div>
-                        </div>
-                    </>
-                )}
-            </div>
+                        </>
+                    )
+                }
+            </div >
 
             {/* Detail Drawer - Slides from Right (Master-Detail Pattern) */}
-            <div className={`fixed top-0 right-0 h-full bg-white shadow-2xl border-l border-slate-200 transition-all duration-300 ease-in-out z-30 ${selectedItem ? 'w-96 translate-x-0' : 'w-96 translate-x-full'
+            < div className={`fixed top-0 right-0 h-full bg-white shadow-2xl border-l border-slate-200 transition-all duration-300 ease-in-out z-30 ${selectedItem ? 'w-96 translate-x-0' : 'w-96 translate-x-full'
                 }`}>
                 {selectedItem && (
                     <div className="h-full flex flex-col">
@@ -1219,52 +1290,121 @@ const AuditSessionDetail: React.FC = () => {
                         )}
                     </div>
                 )}
-            </div>
+            </div >
 
             {/* Overlay when drawer is open */}
-            {selectedItem && (
-                <div
-                    className="fixed inset-0 bg-black/20 z-20"
-                    onClick={() => setSelectedItem(null)}
-                />
-            )}
+            {
+                selectedItem && (
+                    <div
+                        className="fixed inset-0 bg-black/20 z-20"
+                        onClick={() => setSelectedItem(null)}
+                    />
+                )
+            }
 
             {/* Cancel Confirmation Modal */}
-            {showCancelModal && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-                        <div className="p-6">
-                            <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
-                                <AlertTriangle size={24} className="text-amber-600" />
+            {
+                showCancelModal && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+                            <div className="p-6">
+                                <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+                                    <AlertTriangle size={24} className="text-amber-600" />
+                                </div>
+                                <h3 className="text-lg font-semibold text-slate-800 text-center mb-2">
+                                    ¿Descartar auditoría?
+                                </h3>
+                                <p className="text-sm text-slate-600 text-center">
+                                    Ya procesaste el PDF de valuación. Si cancelas, se perderán los datos procesados y tendrás que volver a empezar.
+                                </p>
                             </div>
-                            <h3 className="text-lg font-semibold text-slate-800 text-center mb-2">
-                                ¿Descartar auditoría?
-                            </h3>
-                            <p className="text-sm text-slate-600 text-center">
-                                Ya procesaste el PDF de valuación. Si cancelas, se perderán los datos procesados y tendrás que volver a empezar.
-                            </p>
-                        </div>
-                        <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end border-t border-slate-200">
-                            <button
-                                onClick={() => setShowCancelModal(false)}
-                                className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800"
-                            >
-                                Seguir editando
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setShowCancelModal(false);
-                                    onBack();
-                                }}
-                                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
-                            >
-                                Sí, descartar
-                            </button>
+                            <div className="px-6 py-4 bg-slate-50 flex gap-3 justify-end border-t border-slate-200">
+                                <button
+                                    onClick={() => setShowCancelModal(false)}
+                                    className="px-4 py-2 text-sm text-slate-600 hover:text-slate-800"
+                                >
+                                    Seguir editando
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowCancelModal(false);
+                                        onBack();
+                                    }}
+                                    className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700"
+                                >
+                                    Sí, descartar
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+            {/* Event Log Modal */}
+            {
+                showEventLog && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/50">
+                        <div className="h-full w-full max-w-md bg-white shadow-xl flex flex-col animate-slide-left">
+                            <div className="p-4 border-b flex items-center justify-between bg-slate-50">
+                                <h3 className="font-semibold text-lg flex items-center gap-2">
+                                    <History size={20} />
+                                    Bitácora de Eventos
+                                </h3>
+                                <button onClick={() => setShowEventLog(false)} className="p-2 hover:bg-slate-200 rounded-full">
+                                    <X size={20} />
+                                </button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-4">
+                                {isLoadingEvents ? (
+                                    <div className="flex justify-center p-8"><Loader2 className="animate-spin text-blue-600" /></div>
+                                ) : (auditEvents || []).length === 0 ? (
+                                    <div className="text-center text-slate-500 py-8">No hay eventos registrados</div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {(auditEvents || []).map((event) => (
+                                            <div key={event.id} className="border rounded-lg p-3 text-sm hover:shadow-sm">
+                                                <div className="flex justify-between items-start mb-1">
+                                                    <span className={`font-medium px-2 py-0.5 rounded text-xs ${event.event_type === 'AUDIT_CREATED' ? 'bg-blue-100 text-blue-700' :
+                                                        event.event_type === 'AUDIT_UPDATED' ? 'bg-amber-100 text-amber-700' :
+                                                            'bg-gray-100 text-gray-700'
+                                                        }`}>
+                                                        {event.event_type.replace('AUDIT_', '')}
+                                                    </span>
+                                                    <span className="text-slate-400 text-xs">
+                                                        {new Date(event.created_at).toLocaleString()}
+                                                    </span>
+                                                </div>
+                                                {event.details && (
+                                                    <div className="mt-2 text-xs text-slate-600 space-y-1">
+                                                        {/* Handle both s3_url (legacy) and s3_key (new) */}
+                                                        {(event.details.s3_url || event.details.s3_key) && (
+                                                            <div className="truncate" title={event.details.s3_url || event.details.s3_key}>
+                                                                PDF: <span className="text-slate-500">{event.details.s3_key ? 'Archivo Privado' : 'Link Público'}</span>
+                                                            </div>
+                                                        )}
+                                                        {event.details.items_count !== undefined && (
+                                                            <div>Items: {event.details.items_count}</div>
+                                                        )}
+                                                        {event.details.action && (
+                                                            <div>Acción: {event.details.action}</div>
+                                                        )}
+                                                        {event.details.store_id && (
+                                                            <div>Store ID: {event.details.store_id}</div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                <div className="mt-2 text-xs text-slate-400 border-t pt-1">
+                                                    Usuario: {event.user_id || 'Sistema'}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 };
 

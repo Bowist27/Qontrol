@@ -82,5 +82,14 @@ export const httpClient = {
             body: formData,
         });
         return handleResponse<T>(res);
+    },
+
+    putMultipart: async <T>(url: string, formData: FormData): Promise<T> => {
+        const res = await fetch(url, {
+            method: 'PUT',
+            headers: getMultipartHeaders(),
+            body: formData,
+        });
+        return handleResponse<T>(res);
     }
 };

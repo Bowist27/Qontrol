@@ -226,8 +226,10 @@ func (h *AuditHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middlewa
 		api.GET("/stores", h.ListStores)
 		api.POST("/audits/parse", h.ParsePDF) // FASE 3: Preview only
 		api.POST("/audits", h.CreateAudit)    // FASE 5: Save after confirm
+		api.PUT("/audits/:id", h.UpdateAudit) // PDF Replacement
 		api.GET("/audits/:id", h.GetAudit)
-		api.DELETE("/audits/:id", h.DeleteAudit) // Cancel/Delete audit
+		api.GET("/audits/:id/events", h.GetAuditEvents) // Audit Logs
+		api.DELETE("/audits/:id", h.DeleteAudit)        // Cancel/Delete audit
 
 		// Physical Scan endpoints (for POS app)
 		api.GET("/audits/active", h.ListActiveAudits)          // Audits available for POS
@@ -368,4 +370,73 @@ func (h *AuditHandler) UndoLastScan(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// Helper to get user ID
+func (h *AuditHandler) getUserIDFromContext(c *gin.Context) *string {
+	val, exists := c.Get("userID")
+	if !exists {
+		return nil
+	}
+	uid, ok := val.(string)
+	if !ok {
+		return nil
+	}
+	return &uid
+}
+
+// UpdateAudit handles PUT /api/audits/:id (PDF Replacement)
+func (h *AuditHandler) UpdateAudit(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "invalid_id", Message: "Invalid ID"})
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "file_required", Message: "PDF file is required"})
+		return
+	}
+
+	f, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "file_error", Message: "Failed to open file"})
+		return
+	}
+	defer f.Close()
+
+	pdfBytes, err := io.ReadAll(f)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "read_error", Message: "Failed to read file"})
+		return
+	}
+
+	userID := h.getUserIDFromContext(c)
+
+	if err := h.service.UpdateAudit(c.Request.Context(), id, pdfBytes, userID); err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "update_failed", Message: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// GetAuditEvents handles GET /api/audits/:id/events
+func (h *AuditHandler) GetAuditEvents(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{Error: "invalid_id", Message: "Invalid ID"})
+		return
+	}
+
+	events, err := h.service.GetAuditEvents(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{Error: "fetch_failed", Message: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"events": events})
 }

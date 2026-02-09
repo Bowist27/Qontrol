@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -13,6 +14,7 @@ import (
 // S3Client defines the interface for object storage
 type S3Client interface {
 	PutObject(ctx context.Context, key string, data []byte, contentType string) (string, error)
+	PresignURL(ctx context.Context, key string) (string, error)
 }
 
 // AWSS3Client implements S3Client using AWS SDK
@@ -36,13 +38,14 @@ func NewAWSS3Client(bucket, region string) (*AWSS3Client, error) {
 	}, nil
 }
 
-// PutObject uploads a file to S3 and returns the public URL
+// PutObject uploads a file to S3 and returns the S3 key (NOT public URL)
 func (c *AWSS3Client) PutObject(ctx context.Context, key string, data []byte, contentType string) (string, error) {
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(c.bucket),
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(data),
 		ContentType: aws.String(contentType),
+		// NO ACL = Private by default
 	}
 
 	_, err := c.client.PutObject(ctx, input)
@@ -50,9 +53,24 @@ func (c *AWSS3Client) PutObject(ctx context.Context, key string, data []byte, co
 		return "", fmt.Errorf("failed to upload to S3: %w", err)
 	}
 
-	// Return the S3 URL
-	url := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", c.bucket, c.region, key)
-	return url, nil
+	// Return only the key, NOT the public URL
+	return key, nil
+}
+
+// PresignURL generates a temporary signed URL for accessing a private S3 object
+func (c *AWSS3Client) PresignURL(ctx context.Context, key string) (string, error) {
+	presignClient := s3.NewPresignClient(c.client)
+
+	req, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(15*time.Minute))
+
+	if err != nil {
+		return "", fmt.Errorf("failed to presign URL: %w", err)
+	}
+
+	return req.URL, nil
 }
 
 // MockS3Client for local development without AWS
@@ -63,7 +81,12 @@ func NewMockS3Client() *MockS3Client {
 	return &MockS3Client{}
 }
 
-// PutObject simulates upload and returns a fake URL
+// PutObject simulates upload and returns a fake key
 func (c *MockS3Client) PutObject(ctx context.Context, key string, data []byte, contentType string) (string, error) {
-	return fmt.Sprintf("https://mock-bucket.s3.amazonaws.com/%s", key), nil
+	return key, nil
+}
+
+// PresignURL simulates a presigned URL
+func (c *MockS3Client) PresignURL(ctx context.Context, key string) (string, error) {
+	return fmt.Sprintf("https://mock-bucket.s3.amazonaws.com/%s?X-Amz-Signature=mock_token_valid_15m", key), nil
 }
