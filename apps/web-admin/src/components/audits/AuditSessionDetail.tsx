@@ -1475,28 +1475,23 @@ const AuditSessionDetail: React.FC = () => {
                                                                             }`}
                                                                         title={event.details.s3_key}
                                                                     >
-                                                                        {event.details.s3_key ? `Archivo Privado (v${event.id})` : 'Archivo no disponible'}
-                                                                    </a>
-                                                                    <div className="text-[10px] text-slate-500 truncate flex items-center gap-1">
                                                                         {(() => {
-                                                                            if (!event.details.s3_key) return 'Sin referencia';
+                                                                            if (!event.details.s3_key) return 'Archivo no disponible';
                                                                             try {
                                                                                 const parts = event.details.s3_key.split('/');
                                                                                 let fileName = parts.pop() || event.details.s3_key;
 
-                                                                                // Robust decoding (max 3 levels to avoid loops)
+                                                                                // Robust decoding
                                                                                 for (let i = 0; i < 3; i++) {
                                                                                     if (!fileName.includes('%')) break;
                                                                                     fileName = decodeURIComponent(fileName);
                                                                                 }
                                                                                 return fileName;
                                                                             } catch {
-                                                                                // Fallback: strip path but show potentially encoded name
-                                                                                const parts = event.details.s3_key.split('/');
-                                                                                return parts.pop() || event.details.s3_key;
+                                                                                return `Archivo Privado (v${event.id})`;
                                                                             }
                                                                         })()}
-                                                                    </div>
+                                                                    </a>
                                                                 </div>
                                                                 {event.details?.s3_url && (
                                                                     <div className="bg-white p-1 rounded-full border border-slate-100 shadow-sm">
