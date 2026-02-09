@@ -1098,9 +1098,6 @@ const AuditSessionDetail: React.FC = () => {
                                             </div>
                                         )}
                                     </div>
-                                    <button className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors" title="Recargar datos">
-                                        <RefreshCw size={20} />
-                                    </button>
                                 </div>
                             </div>
 
