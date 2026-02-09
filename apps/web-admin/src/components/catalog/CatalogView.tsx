@@ -423,13 +423,8 @@ const CatalogView: React.FC = () => {
     try {
       setDeletingId(importId);
       setMenuOpenId(null);
-      // Use discard for pending/reverted, revert for applied (which also removes products)
-      const item = history.find(h => h.id === importId);
-      if (item?.status === 'pending' || item?.status === 'reverted') {
-        await catalogApi.discardImport(importId);
-      } else {
-        await catalogApi.revertImport(importId);
-      }
+      // Use discard for all - backend handles reverting applied imports and restoring initial
+      await catalogApi.discardImport(importId);
       setDeleteConfirmId(null);
       await loadData();
     } catch (err) {
@@ -551,6 +546,9 @@ const CatalogView: React.FC = () => {
                 {history.map((item, index) => {
                   const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
                   const isVigente = item.status === 'applied' && isFirstApplied;
+                  const isInitial = item.file_name?.toLowerCase().includes('inicial');
+                  // Show menu button unless it's the initial that is also vigente
+                  const showMenuButton = !(isVigente && isInitial);
                   
                   const getBadge = () => {
                     if (isVigente) return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500 text-white">Vigente</span>;
@@ -583,7 +581,7 @@ const CatalogView: React.FC = () => {
                             <span className="text-orange-600">{item.price_changes} precios</span>
                           )}
                         </div>
-                        {!isVigente && (
+                        {showMenuButton && (
                           <div className="relative z-10">
                             <button
                               type="button"
@@ -781,7 +779,7 @@ const CatalogView: React.FC = () => {
                   {catalogProducts.map((product) => (
                     <tr key={product.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3 text-sm font-mono text-gray-600">{product.sku}</td>
-                      <td className="px-4 py-3 text-sm">
+                      <td className="px-4 py-3 text-sm text-gray-900">
                         {editingProductId === product.id && editingField === 'name' ? (
                           <input
                             type="text"
@@ -798,9 +796,9 @@ const CatalogView: React.FC = () => {
                         ) : (
                           <span 
                             onClick={() => startEditing(product.id, 'name', product.name)}
-                            className="cursor-pointer hover:text-blue-600 hover:underline"
+                            className="cursor-pointer hover:text-blue-600 hover:underline text-gray-900"
                           >
-                            {product.name}
+                            {product.name || '-'}
                           </span>
                         )}
                       </td>
@@ -850,7 +848,7 @@ const CatalogView: React.FC = () => {
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-sm text-right font-medium">
+                      <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">
                         {editingProductId === product.id && editingField === 'price' ? (
                           <input
                             type="number"
@@ -868,7 +866,7 @@ const CatalogView: React.FC = () => {
                         ) : (
                           <span 
                             onClick={() => startEditing(product.id, 'price', product.last_price || 0)}
-                            className="cursor-pointer hover:text-blue-600 hover:underline tabular-nums"
+                            className="cursor-pointer hover:text-blue-600 hover:underline tabular-nums text-gray-900"
                           >
                             ${(product.last_price || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
                           </span>
@@ -973,7 +971,11 @@ const CatalogView: React.FC = () => {
                 
                 const firstAppliedId = history.find(h => h.status === 'applied')?.id;
                 const isVigente = item.id === firstAppliedId && item.status === 'applied';
-                const canRestore = item.status === 'reverted' && firstAppliedId;
+                const isInitial = item.file_name?.toLowerCase().includes('inicial');
+                // Can restore if not vigente
+                const canRestore = !isVigente;
+                // Can delete if not initial (vigente can be deleted, initial cannot)
+                const canDelete = !isInitial;
                 
                 return (
                   <>
@@ -992,7 +994,7 @@ const CatalogView: React.FC = () => {
                         Restaurar versión
                       </button>
                     )}
-                    {!isVigente && (
+                    {canDelete && (
                       <button
                         onClick={() => {
                           setMenuOpenId(null);
@@ -1183,6 +1185,9 @@ const CatalogView: React.FC = () => {
               {history.map((item, index) => {
                 const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
                 const isVigente = item.status === 'applied' && isFirstApplied;
+                const isInitial = item.file_name?.toLowerCase().includes('inicial');
+                // Show menu button unless it's the initial that is also vigente
+                const showMenuButton = !(isVigente && isInitial);
                 
                 return (
                   <div
@@ -1212,7 +1217,7 @@ const CatalogView: React.FC = () => {
                           <span className="text-orange-600">{item.price_changes} precios</span>
                         )}
                       </div>
-                      {!isVigente && (
+                      {showMenuButton && (
                         <div className="relative z-10">
                           <button
                             type="button"
@@ -1434,7 +1439,11 @@ const CatalogView: React.FC = () => {
               
               const firstAppliedId = history.find(h => h.status === 'applied')?.id;
               const isVigente = item.id === firstAppliedId && item.status === 'applied';
-              const canRestore = item.status === 'reverted' && firstAppliedId;
+              const isInitial = item.file_name?.toLowerCase().includes('inicial');
+              // Can restore if not vigente
+              const canRestore = !isVigente;
+              // Can delete if not initial (vigente can be deleted, initial cannot)
+              const canDelete = !isInitial;
               
               return (
                 <>
@@ -1453,7 +1462,7 @@ const CatalogView: React.FC = () => {
                       Restaurar versión
                     </button>
                   )}
-                  {!isVigente && (
+                  {canDelete && (
                     <button
                       onClick={() => {
                         setMenuOpenId(null);

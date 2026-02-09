@@ -804,7 +804,8 @@ func (r *PostgresRepository) RestoreCatalogImport(ctx context.Context, importID 
 	return tx.Commit()
 }
 
-// DiscardCatalogImport deletes a pending or reverted catalog import and its items
+// DiscardCatalogImport deletes a catalog import and its items
+// If the import is 'applied' (vigente), it first reverts changes and restores the initial import
 func (r *PostgresRepository) DiscardCatalogImport(ctx context.Context, importID int) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -812,14 +813,113 @@ func (r *PostgresRepository) DiscardCatalogImport(ctx context.Context, importID 
 	}
 	defer tx.Rollback()
 
+	// Check the status of the import to delete
+	var status string
+	err = tx.QueryRowContext(ctx, `SELECT status FROM catalog_imports WHERE id = $1`, importID).Scan(&status)
+	if err != nil {
+		return err
+	}
+
+	// If it's applied (vigente), we need to revert changes and restore initial
+	if status == "applied" {
+		// First, revert changes made by this import
+		type revertItem struct {
+			sku      string
+			oldPrice *float64
+		}
+		var revertItems []revertItem
+
+		rows, err := tx.QueryContext(ctx, `
+			SELECT sku, old_price FROM catalog_import_items 
+			WHERE import_id = $1 AND applied = true`, importID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var item revertItem
+			if err := rows.Scan(&item.sku, &item.oldPrice); err != nil {
+				rows.Close()
+				return err
+			}
+			revertItems = append(revertItems, item)
+		}
+		rows.Close()
+
+		// Apply reversions
+		for _, item := range revertItems {
+			if item.oldPrice != nil {
+				_, err = tx.ExecContext(ctx, `UPDATE products SET last_price = $2, last_updated = NOW() WHERE sku = $1`, item.sku, *item.oldPrice)
+				if err != nil {
+					return err
+				}
+			} else {
+				_, err = tx.ExecContext(ctx, `DELETE FROM products WHERE sku = $1`, item.sku)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		// Find the most recent import by date (previous in time) to restore
+		var previousID int
+		err = tx.QueryRowContext(ctx, `
+			SELECT id FROM catalog_imports 
+			WHERE id != $1
+			ORDER BY COALESCE(applied_at, created_at) DESC 
+			LIMIT 1`, importID).Scan(&previousID)
+		
+		if err == nil && previousID > 0 {
+			// Restore the previous import - apply its changes
+			type applyItem struct {
+				sku      string
+				newPrice float64
+			}
+			var applyItems []applyItem
+
+			rows2, err := tx.QueryContext(ctx, `
+				SELECT sku, new_price FROM catalog_import_items 
+				WHERE import_id = $1`, previousID)
+			if err != nil {
+				return err
+			}
+			for rows2.Next() {
+				var item applyItem
+				if err := rows2.Scan(&item.sku, &item.newPrice); err != nil {
+					rows2.Close()
+					return err
+				}
+				applyItems = append(applyItems, item)
+			}
+			rows2.Close()
+
+			// Apply previous import prices
+			for _, item := range applyItems {
+				_, err = tx.ExecContext(ctx, `UPDATE products SET last_price = $2, last_updated = NOW() WHERE sku = $1`, item.sku, item.newPrice)
+				if err != nil {
+					return err
+				}
+			}
+
+			// Mark previous as applied
+			_, err = tx.ExecContext(ctx, `UPDATE catalog_import_items SET applied = true WHERE import_id = $1`, previousID)
+			if err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE catalog_imports SET status = 'applied', applied_at = NOW() WHERE id = $1`, previousID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	// Delete import items first
 	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_import_items WHERE import_id = $1`, importID)
 	if err != nil {
 		return err
 	}
 
-	// Delete import (allow pending or reverted status)
-	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_imports WHERE id = $1 AND status IN ('pending', 'reverted')`, importID)
+	// Delete import (now allow any status)
+	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_imports WHERE id = $1`, importID)
 	if err != nil {
 		return err
 	}
