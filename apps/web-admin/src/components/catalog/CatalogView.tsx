@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { catalogApi, type ValuationProduct, type ValuationSummary, type ImportHistoryItem } from '../../services/catalog.api';
+import { catalogApi, type ValuationProduct, type ValuationSummary, type ImportHistoryItem, type Product } from '../../services/catalog.api';
 
 type FilterType = 'all' | 'price_up' | 'price_down' | 'new' | 'unchanged';
 
@@ -15,9 +15,23 @@ const CatalogView: React.FC = () => {
   // Data state
   const [summary, setSummary] = useState<ValuationSummary | null>(null);
   const [products, setProducts] = useState<ValuationProduct[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
   const [history, setHistory] = useState<ImportHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [catalogStats, setCatalogStats] = useState<{ totalCount: number; totalValue: number }>({ totalCount: 0, totalValue: 0 });
+  
+  // Editing state
+  const [editingProductId, setEditingProductId] = useState<number | null>(null);
+  const [editingField, setEditingField] = useState<'name' | 'barcode' | 'unit' | 'price' | null>(null);
+  const [editValue, setEditValue] = useState<string>('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [catalogSearchTerm, setCatalogSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
   
   // Drag & Drop state
   const [isDragging, setIsDragging] = useState(false);
@@ -53,20 +67,58 @@ const CatalogView: React.FC = () => {
   });
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce search input
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      setDebouncedSearchTerm(catalogSearchTerm);
+      setCurrentPage(1);
+    }, 300);
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [catalogSearchTerm]);
 
   // Load data
   useEffect(() => {
     loadData();
   }, []);
 
+  // Load products whenever pagination or debounced search changes
+  useEffect(() => {
+    loadCatalogProducts();
+  }, [currentPage, itemsPerPage, debouncedSearchTerm]);
+
+  const loadCatalogProducts = async () => {
+    try {
+      const catalogData = await catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm);
+      setCatalogProducts(catalogData.products || []);
+      setCatalogStats({ totalCount: catalogData.total_count || 0, totalValue: catalogData.total_value || 0 });
+    } catch (err) {
+      console.error('Error loading catalog products:', err);
+    }
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      // First load history (this should always work)
-      const historyData = await catalogApi.getImportHistory(10);
+      // Load history and initial catalog products
+      const [historyData, catalogData] = await Promise.all([
+        catalogApi.getImportHistory(10),
+        catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm)
+      ]);
+      
       setHistory(historyData);
+      setCatalogProducts(catalogData.products || []);
+      setCatalogStats({ totalCount: catalogData.total_count || 0, totalValue: catalogData.total_value || 0 });
       
       // Try to get pending valuation - if none exists, that's OK
       try {
@@ -82,7 +134,7 @@ const CatalogView: React.FC = () => {
         const allSkus = new Set(productsData.map(p => p.sku));
         setSelectedProducts(allSkus);
       } catch {
-        // No pending valuation - that's fine, show drag & drop
+        // No pending valuation - that's fine, show catalog table
         setSummary(null);
         setProducts([]);
         setSelectedProducts(new Set());
@@ -387,6 +439,58 @@ const CatalogView: React.FC = () => {
     }
   };
 
+  // Handle inline edit save
+  const handleSaveEdit = async (productId: number) => {
+    const product = catalogProducts.find(p => p.id === productId);
+    if (!product || !editingField) return;
+
+    try {
+      setSavingEdit(true);
+      const updatedData = {
+        name: editingField === 'name' ? editValue : product.name,
+        barcode: editingField === 'barcode' ? editValue : (product.barcode || ''),
+        unit: editingField === 'unit' ? editValue : product.unit,
+        price: editingField === 'price' ? parseFloat(editValue) || 0 : product.last_price,
+      };
+
+      await catalogApi.updateProduct(productId, updatedData);
+      
+      // Update local state
+      setCatalogProducts(prev => prev.map(p => 
+        p.id === productId 
+          ? { ...p, name: updatedData.name, barcode: updatedData.barcode, unit: updatedData.unit, last_price: updatedData.price }
+          : p
+      ));
+      
+      setEditingProductId(null);
+      setEditingField(null);
+      setEditValue('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // Start editing a field
+  const startEditing = (productId: number, field: 'name' | 'barcode' | 'unit' | 'price', currentValue: string | number) => {
+    setEditingProductId(productId);
+    setEditingField(field);
+    setEditValue(String(currentValue));
+  };
+
+  // Cancel editing
+  const cancelEditing = () => {
+    setEditingProductId(null);
+    setEditingField(null);
+    setEditValue('');
+  };
+
+  // Pagination calculations (using server-side total)
+  const totalItems = catalogStats.totalCount;
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+  const startIndex = (currentPage - 1) * itemsPerPage;
+
   // Loading state
   if (loading) {
     return (
@@ -425,7 +529,7 @@ const CatalogView: React.FC = () => {
   // No data state - Show big drag & drop
   if (!summary) {
     return (
-      <div className="h-screen bg-gray-100 flex overflow-hidden">
+      <div className="h-full bg-gray-100 flex overflow-hidden">
         {/* ===== LEFT SIDEBAR - HISTORIAL ===== */}
         <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
           {/* Sidebar Header */}
@@ -578,51 +682,272 @@ const CatalogView: React.FC = () => {
           </div>
         )}
 
-        {/* ===== MAIN CONTENT - BIG DROP ZONE ===== */}
-        <div className="flex-1 flex flex-col overflow-hidden p-6">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,application/pdf"
-            onChange={handleFileInputChange}
-            className="hidden"
-          />
+        {/* ===== MAIN CONTENT - CATALOG TABLE ===== */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Header Bar */}
+          <div className="bg-white border-b border-gray-200 px-6 py-4">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Catálogo Maestro</h1>
+                <p className="text-sm text-gray-500 mt-1">
+                  {catalogStats.totalCount} productos · Valor total: ${(catalogStats.totalValue || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  onChange={handleFileInputChange}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingFile}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-2 font-medium"
+                >
+                  {uploadingFile ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Procesando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Subir Valuación
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+            
+            {/* Search */}
+            <div className="relative">
+              <svg className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Buscar por SKU, nombre o código de barras..."
+                value={catalogSearchTerm}
+                onChange={(e) => setCatalogSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Drag overlay */}
           <div
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`flex-1 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-all ${
-              isDragging 
-                ? 'border-blue-500 bg-blue-50' 
-                : 'border-gray-300 bg-white hover:border-blue-400 hover:bg-gray-50'
-            } ${uploadingFile ? 'opacity-50 pointer-events-none' : ''}`}
+            className={`flex-1 overflow-auto relative ${isDragging ? 'bg-blue-50' : ''}`}
           >
-            {uploadingFile ? (
-              <div className="flex flex-col items-center gap-4">
-                <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600"></div>
-                <p className="text-lg text-gray-600">Procesando reporte de valuación...</p>
-              </div>
-            ) : (
-              <>
-                <div className={`w-24 h-24 rounded-full flex items-center justify-center mb-6 ${
-                  isDragging ? 'bg-blue-100' : 'bg-gray-100'
-                }`}>
-                  <svg className={`w-12 h-12 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            {isDragging && (
+              <div className="absolute inset-0 bg-blue-50/90 flex items-center justify-center z-10 pointer-events-none">
+                <div className="text-center">
+                  <svg className="w-16 h-16 text-blue-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
+                  <p className="text-xl font-semibold text-blue-600">Suelta el archivo aquí</p>
                 </div>
-                <h2 className="text-2xl font-semibold text-gray-800 mb-2">Sube tu Reporte de Valuación</h2>
-                <p className="text-gray-500 mb-6">Arrastra un archivo PDF aquí o haz clic para seleccionar</p>
-                <div className="flex items-center gap-2 text-sm text-gray-400">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span>Solo archivos PDF de reportes de valuación</span>
-                </div>
-              </>
+              </div>
+            )}
+
+            {/* Products Table */}
+            {catalogProducts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                </svg>
+                <h3 className="text-lg font-medium mb-2">No hay productos en el catálogo</h3>
+                <p className="text-sm">Sube un reporte de valuación para comenzar</p>
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead className="bg-gray-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SKU</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código de Barras</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unidad</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Precio</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {catalogProducts.map((product) => (
+                    <tr key={product.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm font-mono text-gray-600">{product.sku}</td>
+                      <td className="px-4 py-3 text-sm">
+                        {editingProductId === product.id && editingField === 'name' ? (
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEdit(product.id);
+                              if (e.key === 'Escape') cancelEditing();
+                            }}
+                            onBlur={() => handleSaveEdit(product.id)}
+                            autoFocus
+                            className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <span 
+                            onClick={() => startEditing(product.id, 'name', product.name)}
+                            className="cursor-pointer hover:text-blue-600 hover:underline"
+                          >
+                            {product.name}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-mono text-gray-500">
+                        {editingProductId === product.id && editingField === 'barcode' ? (
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEdit(product.id);
+                              if (e.key === 'Escape') cancelEditing();
+                            }}
+                            onBlur={() => handleSaveEdit(product.id)}
+                            autoFocus
+                            className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <span 
+                            onClick={() => startEditing(product.id, 'barcode', product.barcode || '')}
+                            className="cursor-pointer hover:text-blue-600 hover:underline"
+                          >
+                            {product.barcode || '—'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-500">
+                        {editingProductId === product.id && editingField === 'unit' ? (
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEdit(product.id);
+                              if (e.key === 'Escape') cancelEditing();
+                            }}
+                            onBlur={() => handleSaveEdit(product.id)}
+                            autoFocus
+                            className="w-24 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <span 
+                            onClick={() => startEditing(product.id, 'unit', product.unit)}
+                            className="cursor-pointer hover:text-blue-600 hover:underline"
+                          >
+                            {product.unit}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right font-medium">
+                        {editingProductId === product.id && editingField === 'price' ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEdit(product.id);
+                              if (e.key === 'Escape') cancelEditing();
+                            }}
+                            onBlur={() => handleSaveEdit(product.id)}
+                            autoFocus
+                            className="w-28 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-right"
+                          />
+                        ) : (
+                          <span 
+                            onClick={() => startEditing(product.id, 'price', product.last_price || 0)}
+                            className="cursor-pointer hover:text-blue-600 hover:underline tabular-nums"
+                          >
+                            ${(product.last_price || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {savingEdit && editingProductId === product.id ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent mx-auto"></div>
+                        ) : (
+                          <button
+                            onClick={() => startEditing(product.id, 'name', product.name)}
+                            className="text-gray-400 hover:text-blue-600 transition-colors"
+                            title="Editar producto"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            
+            {catalogProducts.length === 0 && debouncedSearchTerm && (
+              <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+                <svg className="w-12 h-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm">No se encontraron productos con "{debouncedSearchTerm}"</p>
+              </div>
             )}
           </div>
+
+          {/* Pagination Footer */}
+          {totalItems > 0 && (
+            <div className="px-4 py-2.5 border-t border-gray-200 bg-gray-50 flex items-center justify-end gap-4">
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <span>Filas:</span>
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                  className="border border-gray-200 rounded px-2 py-1 text-sm bg-white"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+
+              <span className="text-sm text-gray-500 tabular-nums">
+                {startIndex + 1}-{Math.min(startIndex + itemsPerPage, totalItems)} de {totalItems}
+              </span>
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-1.5 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-1.5 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Portal Dropdown Menu - No Summary State */}

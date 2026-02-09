@@ -72,6 +72,8 @@ export interface CatalogListResponse {
     products: Product[];
     total_count: number;
     total_value: number;
+    page: number;
+    limit: number;
 }
 
 export interface ImportHistoryResponse {
@@ -124,10 +126,16 @@ interface LatestValuationResponse {
 // API Client
 export const catalogApi = {
     /**
-     * GET /api/catalog - List all products
+     * GET /api/catalog - List products with pagination
      */
-    getProducts: async (): Promise<CatalogListResponse> => {
-        return httpClient.get<CatalogListResponse>(`${API_BASE}/api/catalog`);
+    getProducts: async (page: number = 1, limit: number = 25, search: string = ''): Promise<CatalogListResponse> => {
+        const params = new URLSearchParams();
+        params.append('page', page.toString());
+        params.append('limit', limit.toString());
+        if (search) {
+            params.append('search', search);
+        }
+        return httpClient.get<CatalogListResponse>(`${API_BASE}/api/catalog?${params.toString()}`);
     },
 
     /**
@@ -195,6 +203,13 @@ export const catalogApi = {
      */
     clearCatalog: async (): Promise<{ message: string; deleted_products: number }> => {
         return httpClient.delete<{ message: string; deleted_products: number }>(`${API_BASE}/api/catalog/clear`);
+    },
+
+    /**
+     * PUT /api/catalog/products/:id - Update a product
+     */
+    updateProduct: async (id: number, data: { name: string; barcode: string; unit: string; price: number }): Promise<{ message: string }> => {
+        return httpClient.put<{ message: string }>(`${API_BASE}/api/catalog/products/${id}`, data);
     },
 
     /**

@@ -11,9 +11,11 @@ import (
 type CatalogRepository interface {
 	UpsertProducts(ctx context.Context, products []domain.Product, source string) (*domain.CatalogImportResult, error)
 	GetAllProducts(ctx context.Context) ([]domain.Product, error)
+	GetProductsPaginated(ctx context.Context, page, limit int, search string) ([]domain.Product, int, error)
 	FindProductByBarcode(ctx context.Context, barcode string) (*domain.Product, error)
 	FindProductBySKU(ctx context.Context, sku string) (*domain.Product, error)
 	GetCatalogStats(ctx context.Context) (int, float64, error)
+	UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error
 	// Import history
 	SaveCatalogImport(ctx context.Context, imp *domain.CatalogImport) (int, error)
 	SaveCatalogImportItems(ctx context.Context, importID int, items []domain.CatalogDiffItem) error
@@ -48,6 +50,11 @@ func (s *CatalogService) GetAllProducts(ctx context.Context) ([]domain.Product, 
 	return s.repo.GetAllProducts(ctx)
 }
 
+// GetProductsPaginated returns paginated products with optional search
+func (s *CatalogService) GetProductsPaginated(ctx context.Context, page, limit int, search string) ([]domain.Product, int, error) {
+	return s.repo.GetProductsPaginated(ctx, page, limit, search)
+}
+
 // FindByBarcode finds a product by barcode
 func (s *CatalogService) FindByBarcode(ctx context.Context, barcode string) (*domain.Product, error) {
 	return s.repo.FindProductByBarcode(ctx, barcode)
@@ -56,6 +63,11 @@ func (s *CatalogService) FindByBarcode(ctx context.Context, barcode string) (*do
 // GetCatalogStats returns catalog statistics
 func (s *CatalogService) GetCatalogStats(ctx context.Context) (int, float64, error) {
 	return s.repo.GetCatalogStats(ctx)
+}
+
+// UpdateProduct updates a product's fields
+func (s *CatalogService) UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error {
+	return s.repo.UpdateProduct(ctx, id, name, barcode, unit, price)
 }
 
 // AnalyzeValuationReport compares a valuation report against the current catalog

@@ -29,7 +29,21 @@ func NewCatalogHandler(service *services.CatalogService, pdfParser parser.PDFPar
 
 // ListProducts handles GET /api/catalog
 func (h *CatalogHandler) ListProducts(c *gin.Context) {
-	products, err := h.service.GetAllProducts(c.Request.Context())
+	// Parse query parameters for pagination
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "25")
+	search := c.Query("search")
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 100 {
+		limit = 25
+	}
+
+	products, totalCount, err := h.service.GetProductsPaginated(c.Request.Context(), page, limit, search)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "catalog_error",
@@ -38,12 +52,54 @@ func (h *CatalogHandler) ListProducts(c *gin.Context) {
 		return
 	}
 
-	count, totalValue, _ := h.service.GetCatalogStats(c.Request.Context())
+	_, totalValue, _ := h.service.GetCatalogStats(c.Request.Context())
 
 	c.JSON(http.StatusOK, gin.H{
 		"products":    products,
-		"total_count": count,
+		"total_count": totalCount,
 		"total_value": totalValue,
+		"page":        page,
+		"limit":       limit,
+	})
+}
+
+// UpdateProduct handles PUT /api/catalog/products/:id
+func (h *CatalogHandler) UpdateProduct(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid product ID",
+		})
+		return
+	}
+
+	var req struct {
+		Name    string  `json:"name"`
+		Barcode string  `json:"barcode"`
+		Unit    string  `json:"unit"`
+		Price   float64 `json:"price"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	if err := h.service.UpdateProduct(c.Request.Context(), id, req.Name, req.Barcode, req.Unit, req.Price); err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "update_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Product updated successfully",
 	})
 }
 
@@ -361,6 +417,7 @@ func (h *CatalogHandler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
 	{
 		api.GET("/catalog", h.ListProducts)
+		api.PUT("/catalog/products/:id", h.UpdateProduct)
 		api.POST("/catalog/import", h.ImportCatalog)
 		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)
@@ -383,6 +440,7 @@ func (h *CatalogHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middle
 	api.Use(auth.RequireAuth())
 	{
 		api.GET("/catalog", h.ListProducts)
+		api.PUT("/catalog/products/:id", h.UpdateProduct)
 		api.POST("/catalog/import", h.ImportCatalog)
 		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)

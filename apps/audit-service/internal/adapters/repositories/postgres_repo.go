@@ -330,6 +330,83 @@ func (r *PostgresRepository) GetAllProducts(ctx context.Context) ([]domain.Produ
 	return products, nil
 }
 
+// GetProductsPaginated returns paginated products with optional search
+func (r *PostgresRepository) GetProductsPaginated(ctx context.Context, page, limit int, search string) ([]domain.Product, int, error) {
+	offset := (page - 1) * limit
+	
+	var totalCount int
+	var countQuery string
+	var dataQuery string
+	var args []interface{}
+	
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		countQuery = `SELECT COUNT(*) FROM products WHERE sku ILIKE $1 OR name ILIKE $1 OR COALESCE(barcode, '') ILIKE $1`
+		dataQuery = `
+			SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+			FROM products 
+			WHERE sku ILIKE $1 OR name ILIKE $1 OR COALESCE(barcode, '') ILIKE $1
+			ORDER BY sku
+			LIMIT $2 OFFSET $3`
+		args = []interface{}{searchPattern, limit, offset}
+		
+		err := r.db.QueryRowContext(ctx, countQuery, searchPattern).Scan(&totalCount)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else {
+		countQuery = `SELECT COUNT(*) FROM products`
+		dataQuery = `
+			SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+			FROM products 
+			ORDER BY sku
+			LIMIT $1 OFFSET $2`
+		args = []interface{}{limit, offset}
+		
+		err := r.db.QueryRowContext(ctx, countQuery).Scan(&totalCount)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	
+	rows, err := r.db.QueryContext(ctx, dataQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var products []domain.Product
+	for rows.Next() {
+		var p domain.Product
+		if err := rows.Scan(&p.ID, &p.SKU, &p.Barcode, &p.Name, &p.Unit, &p.LastPrice, &p.LastUpdated, &p.Source, &p.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		products = append(products, p)
+	}
+	return products, totalCount, nil
+}
+
+// UpdateProduct updates a product's fields
+func (r *PostgresRepository) UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE products 
+		SET name = $2, barcode = NULLIF($3, ''), unit = $4, last_price = $5, last_updated = NOW()
+		WHERE id = $1`,
+		id, name, barcode, unit, price)
+	if err != nil {
+		return err
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("product with id %d not found", id)
+	}
+	return nil
+}
+
 // FindProductByBarcode finds a product by its barcode
 func (r *PostgresRepository) FindProductByBarcode(ctx context.Context, barcode string) (*domain.Product, error) {
 	var p domain.Product
