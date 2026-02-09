@@ -149,8 +149,22 @@ export const auditApi = {
     /**
      * DELETE /api/audits/:id - Cancel/Delete an audit
      */
-    deleteAudit: async (sessionId: number): Promise<void> => {
-        return httpClient.delete<void>(`${API_BASE}/api/audits/${sessionId}`);
+    deleteAudit: async (auditId: number): Promise<void> => {
+        return httpClient.delete<void>(`${API_BASE}/api/audits/${auditId}`);
+    },
+
+    /**
+     * PATCH /api/audits/:id/close - Close audit (change status to finalizado)
+     */
+    closeAudit: async (auditId: number): Promise<void> => {
+        return httpClient.patch<void>(`${API_BASE}/api/audits/${auditId}/close`);
+    },
+
+    /**
+     * PATCH /api/audits/:id/reopen - Reopen audit (change status back to activa)
+     */
+    reopenAudit: async (auditId: number): Promise<void> => {
+        return httpClient.patch<void>(`${API_BASE}/api/audits/${auditId}/reopen`);
     },
 
     // ============ CATALOG APIs ============

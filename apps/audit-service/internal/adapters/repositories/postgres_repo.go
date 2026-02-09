@@ -39,6 +39,11 @@ type AuditRepository interface {
 
 	// Update Existing Audit (PDF Replacement)
 	UpdateAuditTheoretical(ctx context.Context, auditID int, items []domain.AuditItem, pdfURL string) error
+
+	// Close and Reopen Audits
+	CloseAudit(ctx context.Context, auditID int, userID string) error
+	ReopenAudit(ctx context.Context, auditID int, userID string) error
+	Delete(ctx context.Context, auditID int) error
 }
 
 // PostgresRepository implements AuditRepository

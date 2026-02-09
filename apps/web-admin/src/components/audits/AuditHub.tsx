@@ -130,9 +130,13 @@ const AuditHub: React.FC = () => {
         else if (s.status === 'waiting_valuation') status = 'WAITING_COUNT';
         else if (s.status === 'IN_PROGRESS' && !s.pdf_url) status = 'WAITING_PDF';
         else if (s.status === 'COUNTING') status = 'IN_PROGRESS';
-        else if (s.status === 'closed' || s.status === 'COMPLETED') status = 'LOCKED_BY_STORE';
+        else if (s.status === 'closed' || s.status === 'COMPLETED' || s.status === 'finalizado') status = 'LOCKED_BY_STORE';
         else if (s.status === 'ARCHIVED') status = 'ARCHIVED';
         else if (s.status === 'CANCELLED') status = 'CANCELLED';
+
+        // If it's finalized but recent, we treat it effectively as "Active" for the purpose of the list,
+        // though the status badge will show it's locked/completed.
+        // This logic will be used in the filtering below.
 
         const theoretical = item.theoretical_skus || 0;
         const scanned = item.scanned_skus || 0;

@@ -179,9 +179,19 @@ func (s *AuditService) GetAuditByID(ctx context.Context, sessionID int) (*domain
 	}, nil
 }
 
-// DeleteAudit removes an audit session and its items
-func (s *AuditService) DeleteAudit(ctx context.Context, sessionID int) error {
-	return s.repo.DeleteSession(ctx, sessionID)
+// DeleteAudit deletes an audit by ID
+func (s *AuditService) DeleteAudit(ctx context.Context, id int) error {
+	return s.repo.Delete(ctx, id)
+}
+
+// CloseAudit closes an audit and logs the event
+func (s *AuditService) CloseAudit(ctx context.Context, auditID int, userID string) error {
+	return s.repo.CloseAudit(ctx, auditID, userID)
+}
+
+// ReopenAudit reopens a closed audit and logs the event
+func (s *AuditService) ReopenAudit(ctx context.Context, auditID int, userID string) error {
+	return s.repo.ReopenAudit(ctx, auditID, userID)
 }
 
 // ===== Physical Scan Methods for POS App =====

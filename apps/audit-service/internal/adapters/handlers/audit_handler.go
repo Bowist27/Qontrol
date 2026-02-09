@@ -204,6 +204,74 @@ func (h *AuditHandler) DeleteAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Audit deleted successfully"})
 }
 
+// CloseAudit handles PATCH /api/audits/:id/close
+func (h *AuditHandler) CloseAudit(c *gin.Context) {
+	auditIDStr := c.Param("id")
+	auditID, err := strconv.Atoi(auditIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	// Get user ID from auth middleware
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "User ID not found in context",
+		})
+		return
+	}
+
+	err = h.service.CloseAudit(c.Request.Context(), auditID, userID.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "close_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Audit closed successfully"})
+}
+
+// ReopenAudit handles PATCH /api/audits/:id/reopen
+func (h *AuditHandler) ReopenAudit(c *gin.Context) {
+	auditIDStr := c.Param("id")
+	auditID, err := strconv.Atoi(auditIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	// Get user ID from auth middleware
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "User ID not found in context",
+		})
+		return
+	}
+
+	err = h.service.ReopenAudit(c.Request.Context(), auditID, userID.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "reopen_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Audit reopened successfully"})
+}
+
 // RegisterRoutes sets up the routes (legacy - unprotected)
 func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
@@ -236,6 +304,8 @@ func (h *AuditHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middlewa
 		api.GET("/audits/:id", h.GetAudit)
 		api.GET("/audits/:id/events", h.GetAuditEvents) // Audit Logs
 		api.DELETE("/audits/:id", h.DeleteAudit)        // Cancel/Delete audit
+		api.PATCH("/audits/:id/close", h.CloseAudit)    // Close audit
+		api.PATCH("/audits/:id/reopen", h.ReopenAudit)  // Reopen audit
 
 		// Physical Scan endpoints (for POS app)
 		api.GET("/audits/active", h.ListActiveAudits)          // Audits available for POS

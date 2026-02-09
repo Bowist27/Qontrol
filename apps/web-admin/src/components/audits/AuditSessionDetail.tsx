@@ -96,6 +96,9 @@ const AuditSessionDetail: React.FC = () => {
     const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
     const [isLoadingEvents, setIsLoadingEvents] = useState(false);
 
+    // Audit Session State (for close/reopen functionality) 
+    const [sessionStatus, setSessionStatus] = useState<'activa' | 'finalizado' | 'IN_PROGRESS'>('activa');
+
     useEffect(() => {
         if (showEventLog && _sessionId) {
             setIsLoadingEvents(true);
@@ -297,6 +300,12 @@ const AuditSessionDetail: React.FC = () => {
                         totalUnits: items.reduce((sum, i) => sum + i.theoretical, 0),
                         totalValue: items.reduce((sum, i) => sum + Math.abs(i.impact), 0)
                     });
+
+                    // Set initial session status from DB
+                    if (data.session.status) {
+                        // Map specific DB statuses if needed, or cast directly if they match
+                        setSessionStatus(data.session.status as any);
+                    }
                 })
                 .catch(err => {
                     console.error('Failed to load audit:', err);
@@ -316,7 +325,7 @@ const AuditSessionDetail: React.FC = () => {
         return 'not_started';
     };
 
-    const auditStatus = getAuditStatus();
+    const displayStatus = getAuditStatus();
 
     // Simulate live updates
     useEffect(() => {
@@ -473,6 +482,46 @@ const AuditSessionDetail: React.FC = () => {
             tableContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
         }
     }, [currentPage]);
+
+    // Handle Close Audit
+    const handleCloseAudit = async () => {
+        if (!_sessionId) return;
+
+        const confirmed = window.confirm(
+            '¿Cerrar esta auditoría? El estado cambiará a "Finalizado" y se registrará en la bitácora.'
+        );
+
+        if (!confirmed) return;
+
+        try {
+            await auditApi.closeAudit(parseInt(_sessionId));
+            await loadAudits();
+            navigate('/dashboard/audits');
+        } catch (err) {
+            console.error('Error closing audit:', err);
+            alert('Error al cerrar la auditoría: ' + (err instanceof Error ? err.message : 'Unknown error'));
+        }
+    };
+
+    // Handle Reopen Audit
+    const handleReopenAudit = async () => {
+        if (!_sessionId) return;
+
+        const confirmed = window.confirm(
+            '¿Reabrir esta auditoría? El estado volverá a "Activa" y se registrará en la bitácora.'
+        );
+
+        if (!confirmed) return;
+
+        try {
+            await auditApi.reopenAudit(parseInt(_sessionId));
+            await loadAudits();
+            navigate('/dashboard/audits');
+        } catch (err) {
+            console.error('Error reopening audit:', err);
+            alert('Error al reabrir la auditoría: ' + (err instanceof Error ? err.message : 'Unknown error'));
+        }
+    };
 
     // FASE 3: Parse PDF (Preview)
     const processFile = async (file: File) => {
@@ -681,20 +730,20 @@ const AuditSessionDetail: React.FC = () => {
                     )}
 
                     {/* Status Badge */}
-                    <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${auditStatus === 'not_started' ? 'bg-slate-100 text-slate-600' :
-                        auditStatus === 'partial' ? 'bg-amber-100 text-amber-700' :
-                            auditStatus === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                    <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${displayStatus === 'not_started' ? 'bg-slate-100 text-slate-600' :
+                        displayStatus === 'partial' ? 'bg-amber-100 text-amber-700' :
+                            displayStatus === 'in_progress' ? 'bg-blue-100 text-blue-700' :
                                 'bg-emerald-100 text-emerald-700'
                         }`}>
-                        <span className={`w-2 h-2 rounded-full ${auditStatus === 'not_started' ? 'bg-slate-400' :
-                            auditStatus === 'partial' ? 'bg-amber-500' :
-                                auditStatus === 'in_progress' ? 'bg-blue-500 animate-pulse' :
+                        <span className={`w-2 h-2 rounded-full ${displayStatus === 'not_started' ? 'bg-slate-400' :
+                            displayStatus === 'partial' ? 'bg-amber-500' :
+                                displayStatus === 'in_progress' ? 'bg-blue-500 animate-pulse' :
                                     'bg-emerald-500'
                             }`}></span>
-                        {auditStatus === 'not_started' && 'Sin Iniciar'}
-                        {auditStatus === 'partial' && 'Parcial'}
-                        {auditStatus === 'in_progress' && 'En Progreso'}
-                        {auditStatus === 'reconciled' && 'Conciliado'}
+                        {displayStatus === 'not_started' && 'Sin Iniciar'}
+                        {displayStatus === 'partial' && 'Parcial'}
+                        {displayStatus === 'in_progress' && 'En Progreso'}
+                        {displayStatus === 'reconciled' && 'Conciliado'}
                     </div>
                 </div>
 
@@ -764,11 +813,14 @@ const AuditSessionDetail: React.FC = () => {
                         /* Actions for existing audits */
                         <div className="flex items-center gap-2">
                             {uploadedFile ? (
+                                /* 1. PENDING FILE SAVE STATE */
                                 <>
                                     <button
-                                        onClick={handleReplaceFile}
-                                        className="px-4 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50"
+                                        onClick={() => setUploadedFile(null)}
+                                        className="px-3 py-2 text-slate-500 hover:bg-slate-50 rounded-lg flex items-center gap-2"
+                                        title="Cancelar subida de archivo"
                                     >
+                                        <X size={16} />
                                         Cancelar
                                     </button>
                                     <button
@@ -777,30 +829,62 @@ const AuditSessionDetail: React.FC = () => {
                                         className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 flex items-center gap-2"
                                     >
                                         {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
-                                        Guardar Cambios
+                                        Guardar Nuevo Archivo
                                     </button>
                                 </>
                             ) : (
-                                <button
-                                    type="button"
-                                    onClick={async () => {
-                                        if (!_sessionId) return;
-                                        if (confirm('¿Estás seguro de que deseas cancelar esta auditoría? Esto eliminará todos los datos asociados.')) {
-                                            try {
-                                                await auditApi.deleteAudit(parseInt(_sessionId));
-                                                alert('Auditoría cancelada exitosamente');
-                                                onBack();
-                                            } catch (err) {
-                                                console.error(err);
-                                                alert('Error al cancelar: ' + (err instanceof Error ? err.message : 'Unknown error'));
+                                /* 2. NORMAL STATE */
+                                <>
+                                    {/* Upload/Replace Button */}
+                                    <button
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="px-3 py-2 border border-slate-300 rounded-lg text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                                        title="Reemplazar archivo PDF"
+                                    >
+                                        <Upload size={16} />
+                                    </button>
+
+                                    {/* Close/Reopen Button Based on Status */}
+                                    {sessionStatus === 'finalizado' ? (
+                                        <button
+                                            onClick={handleReopenAudit}
+                                            className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 flex items-center gap-2"
+                                        >
+                                            <RefreshCw size={16} />
+                                            Reabrir Auditoría
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={handleCloseAudit}
+                                            className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 flex items-center gap-2"
+                                        >
+                                            <CheckCircle2 size={16} />
+                                            Cerrar Auditoría
+                                        </button>
+                                    )}
+
+                                    {/* Cancel/Delete Button */}
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            if (!_sessionId) return;
+                                            if (confirm('¿Estás seguro de que deseas eliminar esta auditoría? Esto eliminará todos los datos asociados.')) {
+                                                try {
+                                                    await auditApi.deleteAudit(parseInt(_sessionId));
+                                                    alert('Auditoría eliminada exitosamente');
+                                                    onBack();
+                                                } catch (err) {
+                                                    console.error(err);
+                                                    alert('Error al cancelar: ' + (err instanceof Error ? err.message : 'Unknown error'));
+                                                }
                                             }
-                                        }
-                                    }}
-                                    className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 flex items-center gap-2"
-                                >
-                                    <X size={16} />
-                                    Cancelar Auditoría
-                                </button>
+                                        }}
+                                        className="px-4 py-2 bg-red-100 text-red-700 rounded-lg font-medium hover:bg-red-200 flex items-center gap-2"
+                                    >
+                                        <X size={16} />
+                                        Eliminar
+                                    </button>
+                                </>
                             )}
                         </div>
                     )}
