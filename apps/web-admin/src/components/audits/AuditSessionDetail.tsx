@@ -14,6 +14,7 @@ import {
     ChevronDown, Store, Save, Loader2
 } from 'lucide-react';
 import { auditApi, type Store as StoreType, type PhysicalScan, type AuditEvent } from '../../services/audit.api';
+import { useAudit } from '../../context/AuditContext';
 
 // Types
 type AuditStatus = 'not_started' | 'partial' | 'in_progress' | 'reconciled' | 'locked';
@@ -64,6 +65,7 @@ const formatCurrencyCompact = (value: number): string => {
 
 
 const AuditSessionDetail: React.FC = () => {
+    const { loadAudits } = useAudit();
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     const location = useLocation();
@@ -627,6 +629,7 @@ const AuditSessionDetail: React.FC = () => {
                                     try {
                                         // Call API to Create Audit (Saves to DB)
                                         await auditApi.createAudit(selectedStoreId, uploadedFile);
+                                        await loadAudits(); // Refresh context
                                         alert('Auditoría creada exitosamente');
                                         onBack();
                                     } catch (err) {
