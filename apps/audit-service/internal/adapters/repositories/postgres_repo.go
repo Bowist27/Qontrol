@@ -1253,6 +1253,12 @@ func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain
 		return nil, err
 	}
 
+	// Transition status to COUNTING when first scan is added
+	_, _ = r.db.ExecContext(ctx,
+		`UPDATE audit_sessions SET status = 'COUNTING' WHERE id = $1 AND status IN ('IN_PROGRESS', 'REVIEW_PENDING')`,
+		req.AuditID,
+	)
+
 	// Lookup product info from catalog (search by barcode first, then by SKU)
 	var sku, productName sql.NullString
 	productQuery := `SELECT sku, name FROM products WHERE barcode = $1 LIMIT 1`

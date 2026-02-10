@@ -180,6 +180,16 @@ const AuditHub: React.FC = () => {
         setCurrentPage(1);
     }, [activeTab, focusFilter, filterStore, filterDateFrom, filterDateTo, sortField, sortDir]);
 
+    // Auto-refresh audits every 30s while this page is visible
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (!document.hidden) {
+                loadAudits();
+            }
+        }, 30000);
+        return () => clearInterval(interval);
+    }, [loadAudits]);
+
     // Helper to check if closed more than 24h ago
     const isClosedOver24h = (closedAt?: string): boolean => {
         if (!closedAt) return false;
