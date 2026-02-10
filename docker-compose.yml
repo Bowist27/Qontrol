@@ -42,7 +42,7 @@ services:
       redis:
         condition: service_started
     ports:
-      - "8080:8080"
+      - "8082:8080"
 
   audit-service:
     build: ./apps/audit-service

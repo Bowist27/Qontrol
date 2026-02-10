@@ -129,6 +129,17 @@ app.on('ready', async () => {
             return productRepo.count();
         });
 
+        ipcMain.handle('products:create', async (_event, product: { sku: string; barcode: string | null; name: string; unit: string; last_price: number | null }) => {
+            console.log('IPC: products:create', product.sku);
+            try {
+                const saved = productRepo.saveOne(product);
+                return { success: true, product: saved };
+            } catch (err: any) {
+                console.error('Failed to create product:', err);
+                return { success: false, error: err.message };
+            }
+        });
+
         // --- Audit IPC Handlers ---
         ipcMain.handle('audit:createSession', async (_event, { storeId, storeName }) => {
             if (!currentUser) {

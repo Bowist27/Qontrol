@@ -121,6 +121,17 @@ electron_1.app.on('ready', () => __awaiter(void 0, void 0, void 0, function* () 
         electron_1.ipcMain.handle('products:count', (_event) => __awaiter(void 0, void 0, void 0, function* () {
             return productRepo.count();
         }));
+        electron_1.ipcMain.handle('products:create', (_event, product) => __awaiter(void 0, void 0, void 0, function* () {
+            console.log('IPC: products:create', product.sku);
+            try {
+                const saved = productRepo.saveOne(product);
+                return { success: true, product: saved };
+            }
+            catch (err) {
+                console.error('Failed to create product:', err);
+                return { success: false, error: err.message };
+            }
+        }));
         // --- Audit IPC Handlers ---
         electron_1.ipcMain.handle('audit:createSession', (_event_1, _a) => __awaiter(void 0, [_event_1, _a], void 0, function* (_event, { storeId, storeName }) {
             if (!currentUser) {

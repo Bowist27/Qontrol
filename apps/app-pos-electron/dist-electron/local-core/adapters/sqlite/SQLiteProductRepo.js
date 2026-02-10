@@ -62,6 +62,29 @@ class SQLiteProductRepo {
         const stmt = this.db.prepare('SELECT * FROM products ORDER BY name');
         return stmt.all();
     }
+    saveOne(product) {
+        const stmt = this.db.prepare(`
+            INSERT OR REPLACE INTO products (sku, barcode, name, unit, last_price, created_at)
+            VALUES (@sku, @barcode, @name, @unit, @last_price, @created_at)
+        `);
+        const result = stmt.run({
+            sku: product.sku,
+            barcode: product.barcode || null,
+            name: product.name || product.sku,
+            unit: product.unit || 'pz',
+            last_price: product.last_price || null,
+            created_at: new Date().toISOString()
+        });
+        return {
+            id: result.lastInsertRowid,
+            sku: product.sku,
+            barcode: product.barcode || null,
+            name: product.name || product.sku,
+            unit: product.unit || 'pz',
+            last_price: product.last_price || null,
+            created_at: new Date().toISOString()
+        };
+    }
     saveBatch(products) {
         const insert = this.db.prepare(`
             INSERT OR REPLACE INTO products (

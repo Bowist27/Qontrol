@@ -13,6 +13,7 @@ electron_1.contextBridge.exposeInMainWorld('products', {
     sync: () => electron_1.ipcRenderer.invoke('products:sync'),
     search: (query) => electron_1.ipcRenderer.invoke('products:search', query),
     count: () => electron_1.ipcRenderer.invoke('products:count'),
+    create: (product) => electron_1.ipcRenderer.invoke('products:create', product),
 });
 // Expose audit API to renderer
 electron_1.contextBridge.exposeInMainWorld('audit', {

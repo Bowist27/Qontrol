@@ -6,5 +6,6 @@ export interface ProductRepository {
     search(query: string): Product[];
     count(): number;
     saveBatch(products: Product[]): ProductSyncStats;
+    saveOne(product: Omit<Product, 'id' | 'created_at'>): Product;
     getAll(): Product[];
 }

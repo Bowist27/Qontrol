@@ -25,8 +25,11 @@ export class AuthApiAdapter {
      * Determine the API base URL based on environment
      */
     private getBaseUrl(): string {
-        // In production, use the current origin (EC2 IP)
-        // In development, use localhost
+        // Use VITE_AUTH_API_URL for direct connection to auth-service
+        // In production behind Nginx, use origin (Nginx proxies /api/auth/* -> auth-service)
+        if (import.meta.env.VITE_AUTH_API_URL) {
+            return import.meta.env.VITE_AUTH_API_URL;
+        }
         if (import.meta.env.VITE_API_URL) {
             return import.meta.env.VITE_API_URL;
         }
@@ -34,15 +37,25 @@ export class AuthApiAdapter {
     }
 
     /**
-     * POST /api/auth/login
-     * Sends credentials to Nginx -> auth-service
+     * Determines if connecting directly to auth-service (dev) or via Nginx (prod)
+     * Direct: routes are /login, /logout
+     * Via Nginx: routes are /api/auth/login, /api/auth/logout
+     */
+    private isDirectConnection(): boolean {
+        return !!(import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL);
+    }
+
+    /**
+     * POST /login (direct) or /api/auth/login (via Nginx)
+     * Sends credentials to auth-service
      * 
      * @throws AuthError with backend error details
      */
     async login(credentials: LoginCredentials): Promise<LoginResponse> {
+        const path = this.isDirectConnection() ? '/login' : '/api/auth/login';
         try {
             const response = await this.api.post<LoginResponse>(
-                '/api/auth/login',
+                path,
                 credentials
             );
             return response.data;
@@ -70,12 +83,13 @@ export class AuthApiAdapter {
     }
 
     /**
-     * POST /api/auth/logout
+     * POST /logout (direct) or /api/auth/logout (via Nginx)
      * Invalidates the session in Redis
      */
     async logout(token: string): Promise<void> {
+        const path = this.isDirectConnection() ? '/logout' : '/api/auth/logout';
         try {
-            await this.api.post('/api/auth/logout', null, {
+            await this.api.post(path, null, {
                 headers: {
                     Authorization: `Bearer ${token}`,
                 },

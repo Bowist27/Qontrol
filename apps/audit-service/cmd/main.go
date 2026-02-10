@@ -102,6 +102,9 @@ func main() {
 	auditHandler.RegisterRoutesWithAuth(router, authMiddleware)
 	catalogHandler.RegisterRoutesWithAuth(router, authMiddleware)
 
+	// POS-specific catalog route (no JWT - POS authenticates locally)
+	router.POST("/api/pos/catalog/products", catalogHandler.CreateProduct)
+
 	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
