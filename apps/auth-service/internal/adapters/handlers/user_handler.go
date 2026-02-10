@@ -272,7 +272,7 @@ func (h *UserHandler) CreateStore(c *gin.Context) {
 		return
 	}
 
-	store, err := h.repo.CreateStore(c.Request.Context(), req.Name)
+	store, err := h.repo.CreateStore(c.Request.Context(), req.Name, req.ZoneID)
 	if err != nil {
 		log.Printf("Error creating store: %v", err)
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
@@ -306,7 +306,7 @@ func (h *UserHandler) UpdateStore(c *gin.Context) {
 		return
 	}
 
-	store, err := h.repo.UpdateStore(c.Request.Context(), id, req.Name, req.Status)
+	store, err := h.repo.UpdateStore(c.Request.Context(), id, req.Name, req.Status, req.ZoneID)
 	if err != nil {
 		log.Printf("Error updating store: %v", err)
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
@@ -487,4 +487,152 @@ func (h *UserHandler) DeleteRole(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Rol eliminado exitosamente"})
+}
+
+// =====================================================
+// ZONES & PRICE LISTS HANDLERS
+// =====================================================
+
+// ListPriceLists handles GET /price-lists
+func (h *UserHandler) ListPriceLists(c *gin.Context) {
+	priceLists, err := h.repo.GetAllPriceLists(c.Request.Context())
+	if err != nil {
+		log.Printf("Error listing price lists: %v", err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al obtener listas de precios",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"price_lists": priceLists})
+}
+
+// ListZones handles GET /zones
+func (h *UserHandler) ListZones(c *gin.Context) {
+	zones, err := h.repo.GetAllZones(c.Request.Context())
+	if err != nil {
+		log.Printf("Error listing zones: %v", err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al obtener zonas",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"zones": zones})
+}
+
+// GetZone handles GET /zones/:id
+func (h *UserHandler) GetZone(c *gin.Context) {
+	idStr := c.Param("id")
+	var id int
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "ID de zona inválido",
+		})
+		return
+	}
+
+	zone, err := h.repo.GetZoneByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, domain.ErrorResponse{
+			Error:   "not_found",
+			Message: "Zona no encontrada",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, zone)
+}
+
+// CreateZone handles POST /zones
+func (h *UserHandler) CreateZone(c *gin.Context) {
+	var req domain.CreateZoneRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "Nombre de zona es requerido",
+		})
+		return
+	}
+
+	zone, err := h.repo.CreateZone(c.Request.Context(), req.Name, req.SupervisorIDs, req.PriceListID)
+	if err != nil {
+		log.Printf("Error creating zone: %v", err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al crear zona",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, zone)
+}
+
+// UpdateZone handles PUT /zones/:id
+func (h *UserHandler) UpdateZone(c *gin.Context) {
+	idStr := c.Param("id")
+	var id int
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "ID de zona inválido",
+		})
+		return
+	}
+
+	var req domain.UpdateZoneRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "Datos de zona inválidos",
+		})
+		return
+	}
+
+	zone, err := h.repo.UpdateZone(c.Request.Context(), id, req.Name, req.SupervisorIDs, req.PriceListID, req.Status)
+	if err != nil {
+		log.Printf("Error updating zone: %v", err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al actualizar zona",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, zone)
+}
+
+// DeleteZone handles DELETE /zones/:id
+func (h *UserHandler) DeleteZone(c *gin.Context) {
+	idStr := c.Param("id")
+	var id int
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "ID de zona inválido",
+		})
+		return
+	}
+
+	if err := h.repo.DeleteZone(c.Request.Context(), id); err != nil {
+		log.Printf("Error deleting zone: %v", err)
+		// Check if zone has stores
+		if err.Error() != "" && len(err.Error()) > 4 && err.Error()[:4] == "zone" {
+			c.JSON(http.StatusConflict, domain.ErrorResponse{
+				Error:   "zone_in_use",
+				Message: "No se puede eliminar la zona porque tiene sucursales asignadas",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al eliminar zona",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Zona eliminada exitosamente"})
 }

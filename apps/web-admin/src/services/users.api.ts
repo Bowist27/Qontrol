@@ -17,6 +17,30 @@ export interface Store {
     id: number;
     name: string;
     status: boolean;
+    zone_id?: number;
+    zone_name?: string;
+}
+
+export interface ZoneSupervisor {
+    user_id: string;
+    full_name: string;
+}
+
+export interface Zone {
+    id: number;
+    name: string;
+    supervisors: ZoneSupervisor[];
+    price_list_id?: number;
+    price_list_name?: string;
+    status: boolean;
+    store_count: number;
+}
+
+export interface PriceList {
+    id: number;
+    name: string;
+    adjustment_percent: number;
+    description?: string;
 }
 
 export interface Role {
@@ -80,10 +104,25 @@ export interface UpdateRoleRequest {
 
 export interface CreateStoreRequest {
     name: string;
+    zone_id?: number;
 }
 
 export interface UpdateStoreRequest {
     name: string;
+    status: boolean;
+    zone_id?: number;
+}
+
+export interface CreateZoneRequest {
+    name: string;
+    supervisor_ids?: string[];
+    price_list_id?: number;
+}
+
+export interface UpdateZoneRequest {
+    name: string;
+    supervisor_ids?: string[];
+    price_list_id?: number;
     status: boolean;
 }
 
@@ -192,6 +231,40 @@ export const usersApi = {
 
     async deleteRole(id: number): Promise<void> {
         return httpClient.delete<void>(`${API_BASE}/roles/${id}`);
+    },
+
+    // =====================================================
+    // ZONES
+    // =====================================================
+
+    async getZones(): Promise<Zone[]> {
+        const data = await httpClient.get<{ zones: Zone[] }>(`${API_BASE}/zones`);
+        return data.zones || [];
+    },
+
+    async getZone(id: number): Promise<Zone> {
+        return httpClient.get<Zone>(`${API_BASE}/zones/${id}`);
+    },
+
+    async createZone(data: CreateZoneRequest): Promise<Zone> {
+        return httpClient.post<Zone>(`${API_BASE}/zones`, data);
+    },
+
+    async updateZone(id: number, data: UpdateZoneRequest): Promise<Zone> {
+        return httpClient.put<Zone>(`${API_BASE}/zones/${id}`, data);
+    },
+
+    async deleteZone(id: number): Promise<void> {
+        return httpClient.delete<void>(`${API_BASE}/zones/${id}`);
+    },
+
+    // =====================================================
+    // PRICE LISTS
+    // =====================================================
+
+    async getPriceLists(): Promise<PriceList[]> {
+        const data = await httpClient.get<{ price_lists: PriceList[] }>(`${API_BASE}/price-lists`);
+        return data.price_lists || [];
     },
 };
 
