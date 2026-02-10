@@ -17,12 +17,10 @@ import {
     MapPin,
     Building2,
     Users,
-    DollarSign,
 } from 'lucide-react';
 import usersApi, {
     type Store as StoreType,
     type Zone,
-    type PriceList,
     type User,
 } from '../../services/users.api';
 
@@ -82,12 +80,11 @@ export default function StoresView() {
 function ZonasTab() {
     const [zones, setZones] = useState<Zone[]>([]);
     const [users, setUsers] = useState<User[]>([]);
-    const [priceLists, setPriceLists] = useState<PriceList[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
     const [editingZone, setEditingZone] = useState<Zone | null>(null);
-    const [formData, setFormData] = useState({ name: '', supervisor_id: '', price_list_id: 0 });
+    const [formData, setFormData] = useState({ name: '', supervisor_id: '' });
     const [saving, setSaving] = useState(false);
     const [deleteModal, setDeleteModal] = useState<{ id: number; name: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -95,14 +92,12 @@ function ZonasTab() {
     const loadData = useCallback(async () => {
         try {
             setLoading(true);
-            const [zonesData, usersData, priceListsData] = await Promise.all([
+            const [zonesData, usersData] = await Promise.all([
                 usersApi.getZones(),
                 usersApi.getUsers(),
-                usersApi.getPriceLists(),
             ]);
             setZones(zonesData);
             setUsers(usersData);
-            setPriceLists(priceListsData);
         } catch (error) {
             console.error('Error loading data:', error);
         } finally {
@@ -120,7 +115,7 @@ function ZonasTab() {
 
     const openCreateModal = () => {
         setEditingZone(null);
-        setFormData({ name: '', supervisor_id: '', price_list_id: 0 });
+        setFormData({ name: '', supervisor_id: '' });
         setShowModal(true);
     };
 
@@ -129,7 +124,6 @@ function ZonasTab() {
         setFormData({
             name: zone.name,
             supervisor_id: zone.supervisor_id || '',
-            price_list_id: zone.price_list_id || 0,
         });
         setShowModal(true);
     };
@@ -137,7 +131,7 @@ function ZonasTab() {
     const closeModal = () => {
         setShowModal(false);
         setEditingZone(null);
-        setFormData({ name: '', supervisor_id: '', price_list_id: 0 });
+        setFormData({ name: '', supervisor_id: '' });
     };
 
     const handleSave = async () => {
@@ -152,7 +146,6 @@ function ZonasTab() {
                 await usersApi.updateZone(editingZone.id, {
                     name: formData.name.trim(),
                     supervisor_id: formData.supervisor_id || undefined,
-                    price_list_id: formData.price_list_id || undefined,
                     status: editingZone.status,
                 });
             } else {
@@ -160,7 +153,6 @@ function ZonasTab() {
                 await usersApi.createZone({
                     name: formData.name.trim(),
                     supervisor_id: formData.supervisor_id || undefined,
-                    price_list_id: formData.price_list_id || undefined,
                 });
             }
 
@@ -196,7 +188,6 @@ function ZonasTab() {
             await usersApi.updateZone(zone.id, {
                 name: zone.name,
                 supervisor_id: zone.supervisor_id || undefined,
-                price_list_id: zone.price_list_id || undefined,
                 status: !zone.status,
             });
             await loadData();
@@ -258,9 +249,6 @@ function ZonasTab() {
                             <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                 Supervisor
                             </th>
-                            <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                                Lista de Precios
-                            </th>
                             <th className="text-center px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                 Sucursales
                             </th>
@@ -275,7 +263,7 @@ function ZonasTab() {
                     <tbody className="divide-y divide-slate-100">
                         {filteredZones.length === 0 ? (
                             <tr>
-                                <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
+                                <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                                     {searchTerm ? 'No se encontraron zonas' : 'No hay zonas registradas'}
                                 </td>
                             </tr>
@@ -293,11 +281,6 @@ function ZonasTab() {
                                     <td className="px-6 py-4">
                                         <span className="text-slate-600">
                                             {zone.supervisor_name || <span className="text-slate-400 italic">Sin asignar</span>}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        <span className="text-slate-600">
-                                            {zone.price_list_name || 'Estándar'}
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 text-center">
@@ -408,24 +391,6 @@ function ZonasTab() {
                                     {users.map((user) => (
                                         <option key={user.id} value={user.id}>
                                             {user.first_name} {user.last_name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    <DollarSign className="w-3.5 h-3.5 inline mr-1" />
-                                    Lista de Precios
-                                </label>
-                                <select
-                                    value={formData.price_list_id}
-                                    onChange={(e) => setFormData({ ...formData, price_list_id: parseInt(e.target.value) || 0 })}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-900 bg-white"
-                                >
-                                    <option value="0">Estándar (sin ajuste)</option>
-                                    {priceLists.map((pl) => (
-                                        <option key={pl.id} value={pl.id}>
-                                            {pl.name} ({pl.adjustment_percent > 0 ? '+' : ''}{pl.adjustment_percent}%)
                                         </option>
                                     ))}
                                 </select>
