@@ -213,6 +213,13 @@ export const catalogApi = {
     },
 
     /**
+     * DELETE /api/catalog/products/:id - Delete a product
+     */
+    deleteProduct: async (id: number): Promise<{ message: string }> => {
+        return httpClient.delete<{ message: string }>(`${API_BASE}/api/catalog/products/${id}`);
+    },
+
+    /**
      * GET /api/catalog/valuation/latest - Get latest pending valuation
      */
     getLatestValuationSummary: async (): Promise<ValuationSummary> => {

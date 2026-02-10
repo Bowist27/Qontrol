@@ -58,6 +58,13 @@ const CatalogView: React.FC = () => {
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const menuButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   
+  // Product menu state (separate from history menu)
+  const [productMenuOpenId, setProductMenuOpenId] = useState<number | null>(null);
+  const [productMenuPosition, setProductMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [deleteProductConfirmId, setDeleteProductConfirmId] = useState<number | null>(null);
+  const [deletingProductId, setDeletingProductId] = useState<number | null>(null);
+  const productMenuButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+  
   // Undo state
   const [undoState, setUndoState] = useState<UndoState>({
     show: false,
@@ -481,6 +488,32 @@ const CatalogView: React.FC = () => {
     setEditValue('');
   };
 
+  // Delete a product
+  const handleDeleteProduct = async (productId: number) => {
+    try {
+      setDeletingProductId(productId);
+      await catalogApi.deleteProduct(productId);
+      
+      // Update local state
+      setCatalogProducts(prev => prev.filter(p => p.id !== productId));
+      setCatalogStats(prev => ({ ...prev, totalCount: prev.totalCount - 1 }));
+      
+      setDeleteProductConfirmId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al eliminar');
+    } finally {
+      setDeletingProductId(null);
+    }
+  };
+
+  // Open product menu
+  const openProductMenu = (productId: number, buttonRef: HTMLButtonElement | null) => {
+    if (!buttonRef) return;
+    const rect = buttonRef.getBoundingClientRect();
+    setProductMenuPosition({ top: rect.bottom + 4, left: rect.right - 120 });
+    setProductMenuOpenId(productId);
+  };
+
   // Pagination calculations (using server-side total)
   const totalItems = catalogStats.totalCount;
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
@@ -865,14 +898,25 @@ const CatalogView: React.FC = () => {
                       <td className="px-4 py-3 text-center">
                         {savingEdit && editingProductId === product.id ? (
                           <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent mx-auto"></div>
+                        ) : deletingProductId === product.id ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-red-600 border-t-transparent mx-auto"></div>
                         ) : (
                           <button
-                            onClick={() => startEditing(product.id, 'name', product.name)}
-                            className="text-gray-400 hover:text-blue-600 transition-colors"
-                            title="Editar producto"
+                            ref={(el) => { if (el) productMenuButtonRefs.current.set(product.id, el); }}
+                            onClick={() => {
+                              if (productMenuOpenId === product.id) {
+                                setProductMenuOpenId(null);
+                                setProductMenuPosition(null);
+                              } else {
+                                openProductMenu(product.id, productMenuButtonRefs.current.get(product.id) || null);
+                              }
+                            }}
+                            className="text-gray-400 hover:text-gray-600 transition-colors p-1"
                           >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                              <circle cx="12" cy="5" r="1.5" />
+                              <circle cx="12" cy="12" r="1.5" />
+                              <circle cx="12" cy="19" r="1.5" />
                             </svg>
                           </button>
                         )}
@@ -1097,6 +1141,90 @@ const CatalogView: React.FC = () => {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
                       </svg>
                       Sí, restaurar
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Product Menu Portal - No Summary State */}
+        {productMenuOpenId && productMenuPosition && createPortal(
+          <div 
+            className="fixed inset-0"
+            style={{ zIndex: 9998 }}
+            onClick={() => { setProductMenuOpenId(null); setProductMenuPosition(null); }}
+          >
+            <div 
+              className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1"
+              style={{ 
+                top: productMenuPosition.top, 
+                left: productMenuPosition.left,
+                zIndex: 9999,
+                minWidth: 120
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => {
+                  setProductMenuOpenId(null);
+                  setProductMenuPosition(null);
+                  setDeleteProductConfirmId(productMenuOpenId);
+                }}
+                className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Eliminar
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+
+        {/* Delete Product Confirmation Modal - No Summary State */}
+        {deleteProductConfirmId && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">¿Eliminar este producto?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Esta acción eliminará permanentemente el producto del catálogo.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => setDeleteProductConfirmId(null)}
+                  disabled={deletingProductId !== null}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleDeleteProduct(deleteProductConfirmId)}
+                  disabled={deletingProductId !== null}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {deletingProductId === deleteProductConfirmId ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Eliminando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Sí, eliminar
                     </>
                   )}
                 </button>

@@ -407,6 +407,23 @@ func (r *PostgresRepository) UpdateProduct(ctx context.Context, id int, name str
 	return nil
 }
 
+// DeleteProduct deletes a product by ID
+func (r *PostgresRepository) DeleteProduct(ctx context.Context, id int) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM products WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("product with id %d not found", id)
+	}
+	return nil
+}
+
 // FindProductByBarcode finds a product by its barcode
 func (r *PostgresRepository) FindProductByBarcode(ctx context.Context, barcode string) (*domain.Product, error) {
 	var p domain.Product

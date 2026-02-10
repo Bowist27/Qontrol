@@ -103,6 +103,31 @@ func (h *CatalogHandler) UpdateProduct(c *gin.Context) {
 	})
 }
 
+// DeleteProduct handles DELETE /api/catalog/products/:id
+func (h *CatalogHandler) DeleteProduct(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid product ID",
+		})
+		return
+	}
+
+	if err := h.service.DeleteProduct(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "delete_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Product deleted successfully",
+	})
+}
+
 // ImportCatalog handles POST /api/catalog/import
 func (h *CatalogHandler) ImportCatalog(c *gin.Context) {
 	file, header, err := c.Request.FormFile("file")
@@ -418,6 +443,7 @@ func (h *CatalogHandler) RegisterRoutes(router *gin.Engine) {
 	{
 		api.GET("/catalog", h.ListProducts)
 		api.PUT("/catalog/products/:id", h.UpdateProduct)
+		api.DELETE("/catalog/products/:id", h.DeleteProduct)
 		api.POST("/catalog/import", h.ImportCatalog)
 		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)
@@ -441,6 +467,7 @@ func (h *CatalogHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middle
 	{
 		api.GET("/catalog", h.ListProducts)
 		api.PUT("/catalog/products/:id", h.UpdateProduct)
+		api.DELETE("/catalog/products/:id", h.DeleteProduct)
 		api.POST("/catalog/import", h.ImportCatalog)
 		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)

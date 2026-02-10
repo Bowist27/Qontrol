@@ -16,6 +16,7 @@ type CatalogRepository interface {
 	FindProductBySKU(ctx context.Context, sku string) (*domain.Product, error)
 	GetCatalogStats(ctx context.Context) (int, float64, error)
 	UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error
+	DeleteProduct(ctx context.Context, id int) error
 	// Import history
 	SaveCatalogImport(ctx context.Context, imp *domain.CatalogImport) (int, error)
 	SaveCatalogImportItems(ctx context.Context, importID int, items []domain.CatalogDiffItem) error
@@ -68,6 +69,11 @@ func (s *CatalogService) GetCatalogStats(ctx context.Context) (int, float64, err
 // UpdateProduct updates a product's fields
 func (s *CatalogService) UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error {
 	return s.repo.UpdateProduct(ctx, id, name, barcode, unit, price)
+}
+
+// DeleteProduct deletes a product by ID
+func (s *CatalogService) DeleteProduct(ctx context.Context, id int) error {
+	return s.repo.DeleteProduct(ctx, id)
 }
 
 // AnalyzeValuationReport compares a valuation report against the current catalog
