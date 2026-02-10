@@ -79,6 +79,7 @@ func main() {
 	protected.Use(authMiddleware.RequireAuth())
 	{
 		r.GET("/users/sync", authHandler.SyncUsers)
+		r.GET("/products/sync", productHandler.SyncProducts)
 
 		// User management routes (IAM)
 		protected.GET("/users", userHandler.ListUsers)
@@ -97,7 +98,6 @@ func main() {
 		protected.DELETE("/stores/:id", userHandler.DeleteStore)
 
 		// Products routes (for POS sync)
-		protected.GET("/products/sync", productHandler.SyncProducts)
 		protected.GET("/products", productHandler.ListProducts)
 
 		// Roles management routes
