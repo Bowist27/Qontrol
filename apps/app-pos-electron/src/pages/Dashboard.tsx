@@ -199,32 +199,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout, onNavigate }) =>
                     </p>
                 </div>
 
-                {/* Permissions Display */}
-                <div className="mb-8 p-4 bg-slate-800 rounded-xl border border-slate-700">
-                    <div className="flex items-center gap-2 mb-3">
-                        <div className="w-2 h-2 bg-emerald-400 rounded-full"></div>
-                        <span className="text-sm font-medium text-slate-300">Tus permisos activos</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                        {user?.permissions?.length ? (
-                            user.permissions.map((perm) => (
-                                <span
-                                    key={perm}
-                                    className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                                        perm.startsWith('web:')
-                                            ? 'bg-purple-500/20 text-purple-400'
-                                            : 'bg-emerald-500/20 text-emerald-400'
-                                    }`}
-                                >
-                                    {perm}
-                                </span>
-                            ))
-                        ) : (
-                            <span className="text-sm text-slate-500">Sin permisos asignados</span>
-                        )}
-                    </div>
-                </div>
-
                 {/* Menu Grid */}
                 {availableOptions.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

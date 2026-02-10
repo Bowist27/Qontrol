@@ -294,6 +294,7 @@ func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 
 // RegisterRoutesWithAuth sets up routes with authentication middleware
 func (h *AuditHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middleware.AuthMiddleware) {
+	// Protected routes (require JWT - for web-admin)
 	api := router.Group("/api")
 	api.Use(auth.RequireAuth())
 	{
@@ -306,13 +307,16 @@ func (h *AuditHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middlewa
 		api.DELETE("/audits/:id", h.DeleteAudit)        // Cancel/Delete audit
 		api.PATCH("/audits/:id/close", h.CloseAudit)    // Close audit
 		api.PATCH("/audits/:id/reopen", h.ReopenAudit)  // Reopen audit
+	}
 
-		// Physical Scan endpoints (for POS app)
-		api.GET("/audits/active", h.ListActiveAudits)          // Audits available for POS
-		api.POST("/audits/:id/scans", h.AddScan)               // Add scan from POS
-		api.GET("/audits/:id/scans", h.GetScans)               // Get all scans
-		api.GET("/audits/:id/scans/summary", h.GetScanSummary) // Get summary
-		api.DELETE("/audits/:id/scans/last", h.UndoLastScan)   // Undo last scan
+	// POS device routes (no JWT - POS authenticates locally via SQLite)
+	pos := router.Group("/api")
+	{
+		pos.GET("/audits/active", h.ListActiveAudits)          // Audits available for POS
+		pos.POST("/audits/:id/scans", h.AddScan)               // Add scan from POS
+		pos.GET("/audits/:id/scans", h.GetScans)               // Get all scans
+		pos.GET("/audits/:id/scans/summary", h.GetScanSummary) // Get summary
+		pos.DELETE("/audits/:id/scans/last", h.UndoLastScan)   // Undo last scan
 	}
 }
 
