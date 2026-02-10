@@ -523,7 +523,7 @@ interface NewUserFormProps {
 function NewUserForm({ roles, stores: _stores, onCancel, onSave }: NewUserFormProps) {
     const [formData, setFormData] = useState({
         email: '',
-        password: '',
+        password: 'Test123!', // Default password - user will receive email to change it
         first_name: '',
         last_name: '',
         role_id: roles[0]?.id || 1,
@@ -534,7 +534,7 @@ function NewUserForm({ roles, stores: _stores, onCancel, onSave }: NewUserFormPr
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.email || !formData.password || !formData.first_name) {
+        if (!formData.email || !formData.first_name) {
             alert('Completa los campos requeridos');
             return;
         }
@@ -551,61 +551,62 @@ function NewUserForm({ roles, stores: _stores, onCancel, onSave }: NewUserFormPr
 
     return (
         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-            <form onSubmit={handleSubmit} className="grid grid-cols-6 gap-4">
-                <input
-                    type="text"
-                    placeholder="Nombre *"
-                    value={formData.first_name}
-                    onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
-                    className="col-span-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <input
-                    type="text"
-                    placeholder="Apellido"
-                    value={formData.last_name}
-                    onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
-                    className="col-span-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <input
-                    type="email"
-                    placeholder="Email *"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="col-span-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <input
-                    type="password"
-                    placeholder="Contraseña *"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="col-span-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <select
-                    value={formData.role_id}
-                    onChange={(e) => setFormData({ ...formData, role_id: Number(e.target.value) })}
-                    className="col-span-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                    {roles.map((role) => (
-                        <option key={role.id} value={role.id}>
-                            {role.name}
-                        </option>
-                    ))}
-                </select>
-                <div className="col-span-1 flex gap-2">
-                    <button
-                        type="submit"
-                        disabled={saving}
-                        className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
+            <form onSubmit={handleSubmit} className="space-y-3">
+                <div className="grid grid-cols-5 gap-4">
+                    <input
+                        type="text"
+                        placeholder="Nombre *"
+                        value={formData.first_name}
+                        onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+                        className="col-span-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <input
+                        type="text"
+                        placeholder="Apellido"
+                        value={formData.last_name}
+                        onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+                        className="col-span-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <input
+                        type="email"
+                        placeholder="Email *"
+                        value={formData.email}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        className="col-span-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <select
+                        value={formData.role_id}
+                        onChange={(e) => setFormData({ ...formData, role_id: Number(e.target.value) })}
+                        className="col-span-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                        {saving ? 'Guardando...' : 'Crear'}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onCancel}
-                        className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors"
-                    >
-                        <X className="w-4 h-4" />
-                    </button>
+                        {roles.map((role) => (
+                            <option key={role.id} value={role.id}>
+                                {role.name}
+                            </option>
+                        ))}
+                    </select>
+                    <div className="col-span-1 flex gap-2">
+                        <button
+                            type="submit"
+                            disabled={saving}
+                            className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                        >
+                            {saving ? 'Guardando...' : 'Crear'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onCancel}
+                            className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-500 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                    <svg className="w-4 h-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Se enviará un correo de activación al usuario para que establezca su contraseña.</span>
                 </div>
             </form>
         </div>

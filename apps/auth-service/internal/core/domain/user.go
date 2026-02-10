@@ -96,9 +96,10 @@ type UserSyncDTO struct {
 }
 
 // CreateUserRequest represents the request to create a new user
+// Password is no longer required - the system assigns Test123! and sends a reset email
 type CreateUserRequest struct {
 	Email       string   `json:"email" binding:"required,email"`
-	Password    string   `json:"password" binding:"required,min=6"`
+	Password    string   `json:"password"`               // Optional - defaults to Test123!
 	FirstName   string   `json:"first_name" binding:"required"`
 	LastName    string   `json:"last_name" binding:"required"`
 	RoleID      int      `json:"role_id" binding:"required"`
@@ -113,7 +114,7 @@ type UpdateUserRequest struct {
 	FirstName   string   `json:"first_name"`
 	LastName    string   `json:"last_name"`
 	RoleID      int      `json:"role_id"`
-	IsActive    bool     `json:"is_active"`
+	IsActive    *bool    `json:"is_active"`
 	StoreIDs    []int    `json:"store_ids"`
 	Permissions []string `json:"permissions"`
 }
@@ -167,4 +168,17 @@ type UpdateZoneRequest struct {
 	SupervisorIDs []string `json:"supervisor_ids"`
 	PriceListID   *int     `json:"price_list_id"`
 	Status        bool     `json:"status"`
+}
+
+// ResetPasswordRequest represents the request to reset a password via token
+type ResetPasswordRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+// ValidateTokenRequest represents the request to validate a reset token
+type ValidateTokenResponse struct {
+	Valid     bool   `json:"valid"`
+	Email     string `json:"email,omitempty"`
+	FirstName string `json:"first_name,omitempty"`
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/comex/auth-service/internal/core/services"
 	"github.com/comex/auth-service/internal/infrastructure/cache"
 	"github.com/comex/auth-service/internal/infrastructure/crypto"
+	"github.com/comex/auth-service/internal/infrastructure/email"
 	jwtPkg "github.com/comex/auth-service/internal/infrastructure/jwt"
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
@@ -56,7 +57,8 @@ func main() {
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
 	authMiddleware := middleware.NewAuthMiddleware(authService, jwtManager)
-	userHandler := handlers.NewUserHandler(userRepo)
+	emailService := email.NewEmailService()
+	userHandler := handlers.NewUserHandler(userRepo, emailService)
 	productHandler := handlers.NewProductHandler(db)
 
 	// Setup Gin router
@@ -73,6 +75,10 @@ func main() {
 	// Auth routes (Public)
 	r.POST("/login", authHandler.Login)
 	r.POST("/logout", authHandler.Logout) // Logout requires token but handles it inside
+
+	// Password reset routes (Public - no auth required)
+	r.GET("/reset-password/validate", userHandler.ValidateResetToken)
+	r.POST("/reset-password", userHandler.ResetPassword)
 
 	// Protected Routes
 	protected := r.Group("/")

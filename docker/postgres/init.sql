@@ -257,7 +257,7 @@ INSERT INTO users (id, email, password_hash, first_name, last_name, role_id, is_
 VALUES (
     'a0000000-0000-0000-0000-000000000002',
     'gerente@qontrol.com',
-    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$8OKPOMEHMpMjbT0ADTgZ9i23sxdvLJLZYGV0X5kj08Y',
+    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$8O+ZiLzwYGLvNOuUE6gVJ3vn1Ymr2wyGcLCnxOzdCcI',
     'Juan',
     'García',
     2,
@@ -269,7 +269,7 @@ INSERT INTO users (id, email, password_hash, first_name, last_name, role_id, is_
 VALUES (
     'a0000000-0000-0000-0000-000000000003',
     'vendedor@qontrol.com',
-    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$8OKPOMEHMpMjbT0ADTgZ9i23sxdvLJLZYGV0X5kj08Y',
+    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$8O+ZiLzwYGLvNOuUE6gVJ3vn1Ymr2wyGcLCnxOzdCcI',
     'María',
     'López',
     3,
@@ -281,7 +281,7 @@ INSERT INTO users (id, email, password_hash, first_name, last_name, role_id, is_
 VALUES (
     'a0000000-0000-0000-0000-000000000004',
     'baneado@qontrol.com',
-    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$DPGehdPjWaWK2+lR2HAbQ7wp/GoRwh/caZQrbTtxV/g',
+    '$argon2id$v=19$m=65536,t=3,p=4$cW9udHJvbHNhbHQxMjM0NQ$kFKRWHy2PPGehdPjWaWK2+lR2HAbQ7wp/GoRwh/caZQ',
     'Pedro',
     'Martínez',
     3,

@@ -1,8 +1,10 @@
 package crypto
 
 import (
+	cryptoRand "crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"strings"
@@ -95,9 +97,9 @@ func (h *Argon2Hasher) Verify(encodedHash, password string) bool {
 // Hash creates a new Argon2id hash of the password (for creating users)
 func (h *Argon2Hasher) Hash(password string) (string, error) {
 	salt := make([]byte, h.saltLength)
-	// In production, use crypto/rand to generate salt
-	// For now, using a simple salt for the test user
-	copy(salt, []byte("somesalt12345678"))
+	if _, err := cryptoRand.Read(salt); err != nil {
+		return "", fmt.Errorf("failed to generate random salt: %w", err)
+	}
 
 	hash := argon2.IDKey(
 		[]byte(password),
@@ -120,4 +122,13 @@ func (h *Argon2Hasher) Hash(password string) (string, error) {
 func HashPassword(password string) (string, error) {
 	hasher := NewArgon2Hasher()
 	return hasher.Hash(password)
+}
+
+// GenerateSecureToken generates a cryptographically secure random token (hex encoded)
+func GenerateSecureToken(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := cryptoRand.Read(bytes); err != nil {
+		return "", fmt.Errorf("failed to generate secure token: %w", err)
+	}
+	return hex.EncodeToString(bytes), nil
 }
