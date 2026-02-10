@@ -558,7 +558,7 @@ func (h *UserHandler) CreateZone(c *gin.Context) {
 		return
 	}
 
-	zone, err := h.repo.CreateZone(c.Request.Context(), req.Name, req.SupervisorID, req.PriceListID)
+	zone, err := h.repo.CreateZone(c.Request.Context(), req.Name, req.SupervisorIDs, req.PriceListID)
 	if err != nil {
 		log.Printf("Error creating zone: %v", err)
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
@@ -592,7 +592,7 @@ func (h *UserHandler) UpdateZone(c *gin.Context) {
 		return
 	}
 
-	zone, err := h.repo.UpdateZone(c.Request.Context(), id, req.Name, req.SupervisorID, req.PriceListID, req.Status)
+	zone, err := h.repo.UpdateZone(c.Request.Context(), id, req.Name, req.SupervisorIDs, req.PriceListID, req.Status)
 	if err != nil {
 		log.Printf("Error updating zone: %v", err)
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{

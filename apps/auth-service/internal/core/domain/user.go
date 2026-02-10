@@ -63,16 +63,21 @@ type PriceList struct {
 	Description       string  `json:"description"`
 }
 
+// ZoneSupervisor represents a supervisor assigned to a zone
+type ZoneSupervisor struct {
+	UserID   string `json:"user_id"`
+	FullName string `json:"full_name"`
+}
+
 // Zone represents a geographical zone (like a role for stores)
 type Zone struct {
-	ID             int        `json:"id"`
-	Name           string     `json:"name"`
-	SupervisorID   *string    `json:"supervisor_id,omitempty"`
-	SupervisorName string     `json:"supervisor_name,omitempty"`
-	PriceListID    *int       `json:"price_list_id,omitempty"`
-	PriceListName  string     `json:"price_list_name,omitempty"`
-	Status         bool       `json:"status"`
-	StoreCount     int        `json:"store_count,omitempty"`
+	ID            int              `json:"id"`
+	Name          string           `json:"name"`
+	Supervisors   []ZoneSupervisor `json:"supervisors"`
+	PriceListID   *int             `json:"price_list_id,omitempty"`
+	PriceListName string           `json:"price_list_name,omitempty"`
+	Status        bool             `json:"status"`
+	StoreCount    int              `json:"store_count,omitempty"`
 }
 
 // UserSyncDTO is used for offline synchronization
@@ -151,15 +156,15 @@ type UpdateStoreRequest struct {
 
 // CreateZoneRequest represents the request to create a zone
 type CreateZoneRequest struct {
-	Name         string  `json:"name" binding:"required"`
-	SupervisorID *string `json:"supervisor_id"`
-	PriceListID  *int    `json:"price_list_id"`
+	Name          string   `json:"name" binding:"required"`
+	SupervisorIDs []string `json:"supervisor_ids"`
+	PriceListID   *int     `json:"price_list_id"`
 }
 
 // UpdateZoneRequest represents the request to update a zone
 type UpdateZoneRequest struct {
-	Name         string  `json:"name" binding:"required"`
-	SupervisorID *string `json:"supervisor_id"`
-	PriceListID  *int    `json:"price_list_id"`
-	Status       bool    `json:"status"`
+	Name          string   `json:"name" binding:"required"`
+	SupervisorIDs []string `json:"supervisor_ids"`
+	PriceListID   *int     `json:"price_list_id"`
+	Status        bool     `json:"status"`
 }

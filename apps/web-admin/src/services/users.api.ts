@@ -21,11 +21,15 @@ export interface Store {
     zone_name?: string;
 }
 
+export interface ZoneSupervisor {
+    user_id: string;
+    full_name: string;
+}
+
 export interface Zone {
     id: number;
     name: string;
-    supervisor_id?: string;
-    supervisor_name?: string;
+    supervisors: ZoneSupervisor[];
     price_list_id?: number;
     price_list_name?: string;
     status: boolean;
@@ -111,13 +115,13 @@ export interface UpdateStoreRequest {
 
 export interface CreateZoneRequest {
     name: string;
-    supervisor_id?: string;
+    supervisor_ids?: string[];
     price_list_id?: number;
 }
 
 export interface UpdateZoneRequest {
     name: string;
-    supervisor_id?: string;
+    supervisor_ids?: string[];
     price_list_id?: number;
     status: boolean;
 }

@@ -84,7 +84,7 @@ function ZonasTab() {
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
     const [editingZone, setEditingZone] = useState<Zone | null>(null);
-    const [formData, setFormData] = useState({ name: '', supervisor_id: '' });
+    const [formData, setFormData] = useState<{ name: string; supervisor_ids: string[] }>({ name: '', supervisor_ids: [] });
     const [saving, setSaving] = useState(false);
     const [deleteModal, setDeleteModal] = useState<{ id: number; name: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -115,7 +115,7 @@ function ZonasTab() {
 
     const openCreateModal = () => {
         setEditingZone(null);
-        setFormData({ name: '', supervisor_id: '' });
+        setFormData({ name: '', supervisor_ids: [] });
         setShowModal(true);
     };
 
@@ -123,7 +123,7 @@ function ZonasTab() {
         setEditingZone(zone);
         setFormData({
             name: zone.name,
-            supervisor_id: zone.supervisor_id || '',
+            supervisor_ids: zone.supervisors?.map(s => s.user_id) || [],
         });
         setShowModal(true);
     };
@@ -131,7 +131,7 @@ function ZonasTab() {
     const closeModal = () => {
         setShowModal(false);
         setEditingZone(null);
-        setFormData({ name: '', supervisor_id: '' });
+        setFormData({ name: '', supervisor_ids: [] });
     };
 
     const handleSave = async () => {
@@ -145,14 +145,14 @@ function ZonasTab() {
                 // Update
                 await usersApi.updateZone(editingZone.id, {
                     name: formData.name.trim(),
-                    supervisor_id: formData.supervisor_id || undefined,
+                    supervisor_ids: formData.supervisor_ids.length > 0 ? formData.supervisor_ids : undefined,
                     status: editingZone.status,
                 });
             } else {
                 // Create
                 await usersApi.createZone({
                     name: formData.name.trim(),
-                    supervisor_id: formData.supervisor_id || undefined,
+                    supervisor_ids: formData.supervisor_ids.length > 0 ? formData.supervisor_ids : undefined,
                 });
             }
 
@@ -187,7 +187,7 @@ function ZonasTab() {
         try {
             await usersApi.updateZone(zone.id, {
                 name: zone.name,
-                supervisor_id: zone.supervisor_id || undefined,
+                supervisor_ids: zone.supervisors?.map(s => s.user_id),
                 status: !zone.status,
             });
             await loadData();
@@ -279,9 +279,18 @@ function ZonasTab() {
                                         </div>
                                     </td>
                                     <td className="px-6 py-4">
-                                        <span className="text-slate-600">
-                                            {zone.supervisor_name || <span className="text-slate-400 italic">Sin asignar</span>}
-                                        </span>
+                                        {zone.supervisors && zone.supervisors.length > 0 ? (
+                                            <div className="flex flex-wrap gap-1">
+                                                {zone.supervisors.map((s) => (
+                                                    <span key={s.user_id} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs">
+                                                        <Users className="w-3 h-3" />
+                                                        {s.full_name}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <span className="text-slate-400 italic">Sin asignar</span>
+                                        )}
                                     </td>
                                     <td className="px-6 py-4 text-center">
                                         <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 rounded-full text-sm">
@@ -378,22 +387,36 @@ function ZonasTab() {
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
                                     <Users className="w-3.5 h-3.5 inline mr-1" />
-                                    Supervisor
+                                    Supervisores
                                 </label>
-                                <select
-                                    value={formData.supervisor_id}
-                                    onChange={(e) => setFormData({ ...formData, supervisor_id: e.target.value })}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-900 bg-white"
-                                >
-                                    <option value="">Sin asignar</option>
-                                    {users.map((user) => (
-                                        <option key={user.id} value={user.id}>
-                                            {user.first_name} {user.last_name}
-                                        </option>
-                                    ))}
-                                </select>
+                                <div className="max-h-48 overflow-y-auto border border-gray-300 rounded-lg p-2 space-y-1">
+                                    {users.length === 0 ? (
+                                        <p className="text-sm text-gray-400 italic p-2">No hay usuarios disponibles</p>
+                                    ) : (
+                                        users.map((user) => (
+                                            <label key={user.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formData.supervisor_ids.includes(user.id)}
+                                                    onChange={(e) => {
+                                                        if (e.target.checked) {
+                                                            setFormData({ ...formData, supervisor_ids: [...formData.supervisor_ids, user.id] });
+                                                        } else {
+                                                            setFormData({ ...formData, supervisor_ids: formData.supervisor_ids.filter(id => id !== user.id) });
+                                                        }
+                                                    }}
+                                                    className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                                                />
+                                                <span className="text-sm text-gray-700">{user.first_name} {user.last_name}</span>
+                                            </label>
+                                        ))
+                                    )}
+                                </div>
+                                {formData.supervisor_ids.length > 0 && (
+                                    <p className="mt-1 text-xs text-gray-500">{formData.supervisor_ids.length} supervisor(es) seleccionado(s)</p>
+                                )}
                             </div>
                         </div>
 
