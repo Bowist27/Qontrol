@@ -5,11 +5,12 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  envDir: '../../',
   server: {
     proxy: {
-      // Proxy API requests directly to auth-service (Docker en 8081)
+      // Proxy API requests directly to auth-service (Docker en 8082)
       '/api/auth': {
-        target: 'http://localhost:8081',
+        target: 'http://localhost:8082',
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path.replace(/^\/api\/auth/, ''),
