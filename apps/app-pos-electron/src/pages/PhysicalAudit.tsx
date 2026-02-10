@@ -1029,11 +1029,11 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 {/* ===== RIGHT PANEL: HISTORIAL (scan history table) ===== */}
                 <div className="w-3/5 flex flex-col bg-black">
                     {/* Table header */}
-                    <div className="bg-gray-900 border-b border-gray-700 px-3 py-1.5 flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-gray-500 shrink-0">
-                        <span className="w-14">HORA</span>
-                        <span className="w-24">SKU</span>
+                    <div className="bg-gray-900 border-b border-gray-700 px-3 py-2 flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-gray-500 shrink-0">
+                        <span className="w-16">HORA</span>
+                        <span className="w-28">SKU</span>
                         <span className="flex-1">PRODUCTO</span>
-                        <span className="w-12 text-right">CANT.</span>
+                        <span className="w-14 text-right">CANT.</span>
                     </div>
 
                     {/* Scan rows - dense table */}
@@ -1066,22 +1066,22 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                             return items.map((item, index) => (
                                 <div 
                                     key={item.key}
-                                    className={`flex items-center gap-2 px-3 py-1.5 border-b border-gray-900 text-sm font-mono transition-colors
+                                    className={`flex items-center gap-2 px-3 py-2 border-b border-gray-900 text-sm font-mono transition-colors
                                         ${index === 0 ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-900'}
                                         ${item.is_unknown ? 'border-l-2 border-l-amber-600' : ''}`}
                                 >
-                                    <span className="w-14 text-[11px] text-gray-600 tabular-nums shrink-0">
+                                    <span className="w-16 text-sm text-gray-600 tabular-nums shrink-0">
                                         {item.lastTime ? new Date(item.lastTime).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--'}
                                     </span>
-                                    <span className={`w-24 text-[11px] shrink-0 ${item.is_unknown ? 'text-amber-500' : 'text-blue-400'}`}>
+                                    <span className={`w-28 text-sm shrink-0 ${item.is_unknown ? 'text-amber-500' : 'text-blue-400'}`}>
                                         {item.sku || item.barcode.substring(0, 12)}
                                     </span>
-                                    <span className={`flex-1 truncate text-[12px] ${index === 0 ? 'text-white' : 'text-gray-300'}`}>
+                                    <span className={`flex-1 truncate text-sm ${index === 0 ? 'text-white' : 'text-gray-300'}`}>
                                         {item.product_name}
                                         {item.is_unknown && ' ⚠'}
                                     </span>
-                                    <span className={`w-12 text-right font-bold tabular-nums ${
-                                        index === 0 ? 'text-green-400 text-base' : 'text-gray-400'
+                                    <span className={`w-14 text-right font-bold tabular-nums ${
+                                        index === 0 ? 'text-green-400 text-lg' : 'text-gray-400 text-base'
                                     }`}>
                                         {item.quantity}
                                     </span>
@@ -1093,7 +1093,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                             <div className="flex flex-col items-center justify-center h-full text-gray-700">
                                 <div className="text-4xl mb-3 opacity-30">📦</div>
                                 <div className="text-xs font-mono uppercase tracking-widest">Sin escaneos</div>
-                                <div className="text-[10px] font-mono text-gray-800 mt-1">
+                                <div className="text-xs font-mono text-gray-800 mt-1">
                                     Usa la pistola o [F7] manual
                                 </div>
                             </div>
@@ -1105,26 +1105,26 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             {/* ===== FOOTER COMMAND BAR (DOS/BIOS style) ===== */}
             <div className="bg-gray-900 border-t border-gray-700 px-4 py-2 flex items-center gap-6 shrink-0">
                 <div className="flex items-center gap-1">
-                    <span className="bg-yellow-500 text-black text-[10px] font-mono font-bold px-1.5 py-0.5">F2</span>
-                    <span className="text-gray-300 text-[11px] font-mono">Cantidad</span>
+                    <span className="bg-yellow-500 text-black text-xs font-mono font-bold px-2 py-0.5 rounded">F2</span>
+                    <span className="text-gray-300 text-sm font-mono">Cantidad</span>
                 </div>
                 <div className="flex items-center gap-1">
-                    <span className="bg-yellow-500 text-black text-[10px] font-mono font-bold px-1.5 py-0.5">F3</span>
-                    <span className="text-gray-300 text-[11px] font-mono">Deshacer</span>
+                    <span className="bg-yellow-500 text-black text-xs font-mono font-bold px-2 py-0.5 rounded">F3</span>
+                    <span className="text-gray-300 text-sm font-mono">Deshacer</span>
                 </div>
                 <div className="flex items-center gap-1">
-                    <span className="bg-yellow-500 text-black text-[10px] font-mono font-bold px-1.5 py-0.5">F7</span>
-                    <span className="text-gray-300 text-[11px] font-mono">Manual</span>
+                    <span className="bg-yellow-500 text-black text-xs font-mono font-bold px-2 py-0.5 rounded">F7</span>
+                    <span className="text-gray-300 text-sm font-mono">Manual</span>
                 </div>
                 <div className="flex items-center gap-1">
-                    <span className="bg-yellow-500 text-black text-[10px] font-mono font-bold px-1.5 py-0.5">ESC</span>
-                    <span className="text-gray-300 text-[11px] font-mono">Cancelar</span>
+                    <span className="bg-yellow-500 text-black text-xs font-mono font-bold px-2 py-0.5 rounded">ESC</span>
+                    <span className="text-gray-300 text-sm font-mono">Cancelar</span>
                 </div>
                 <div className="flex-1"></div>
                 {isSending && (
-                    <span className="text-blue-400 text-[10px] font-mono animate-pulse uppercase">Enviando...</span>
+                    <span className="text-blue-400 text-xs font-mono animate-pulse uppercase">Enviando...</span>
                 )}
-                <span className="text-gray-600 text-[10px] font-mono">
+                <span className="text-gray-600 text-xs font-mono">
                     {new Date().toLocaleDateString('es-MX')}
                 </span>
             </div>
