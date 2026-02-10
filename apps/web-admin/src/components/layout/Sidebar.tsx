@@ -4,7 +4,7 @@
  */
 
 import { NavLink } from 'react-router-dom';
-import { BarChart3, Package, ClipboardList, FileSpreadsheet, Users, LogOut, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
+import { BarChart3, Package, ClipboardList, FileSpreadsheet, Users, Store, LogOut, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { SystemHealth } from '../../types';
 
 interface SidebarProps {
@@ -31,6 +31,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     const configItems = [
         { path: '/dashboard/catalog', label: 'Catálogo Maestro', icon: FileSpreadsheet },
         { path: '/dashboard/users', label: 'Usuarios (IAM)', icon: Users },
+        { path: '/dashboard/stores', label: 'Tiendas', icon: Store },
     ];
 
     return (

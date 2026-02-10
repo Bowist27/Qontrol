@@ -113,3 +113,14 @@ type ErrorResponse struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 }
+
+// CreateStoreRequest represents the request to create a store
+type CreateStoreRequest struct {
+	Name string `json:"name" binding:"required"`
+}
+
+// UpdateStoreRequest represents the request to update a store
+type UpdateStoreRequest struct {
+	Name   string `json:"name" binding:"required"`
+	Status bool   `json:"status"`
+}

@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/comex/auth-service/internal/core/domain"
@@ -592,6 +593,67 @@ func (r *PostgresUserRepo) GetAllStores(ctx context.Context) ([]domain.Store, er
 	}
 
 	return stores, rows.Err()
+}
+
+// GetStoreByID retrieves a store by ID
+func (r *PostgresUserRepo) GetStoreByID(ctx context.Context, id int) (*domain.Store, error) {
+	query := `SELECT id, name, status FROM stores WHERE id = $1`
+	
+	var store domain.Store
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&store.ID, &store.Name, &store.Status)
+	if err != nil {
+		return nil, err
+	}
+	return &store, nil
+}
+
+// CreateStore creates a new store
+func (r *PostgresUserRepo) CreateStore(ctx context.Context, name string) (*domain.Store, error) {
+	query := `INSERT INTO stores (name, status) VALUES ($1, true) RETURNING id, name, status`
+	
+	var store domain.Store
+	err := r.db.QueryRowContext(ctx, query, name).Scan(&store.ID, &store.Name, &store.Status)
+	if err != nil {
+		return nil, err
+	}
+	return &store, nil
+}
+
+// UpdateStore updates an existing store
+func (r *PostgresUserRepo) UpdateStore(ctx context.Context, id int, name string, status bool) (*domain.Store, error) {
+	query := `UPDATE stores SET name = $1, status = $2 WHERE id = $3 RETURNING id, name, status`
+	
+	var store domain.Store
+	err := r.db.QueryRowContext(ctx, query, name, status, id).Scan(&store.ID, &store.Name, &store.Status)
+	if err != nil {
+		return nil, err
+	}
+	return &store, nil
+}
+
+// DeleteStore deletes a store by ID
+func (r *PostgresUserRepo) DeleteStore(ctx context.Context, id int) error {
+	// First check if the store is assigned to any user
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_stores WHERE store_id = $1`, id).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("store is assigned to %d user(s)", count)
+	}
+	
+	// Check if store is used in any audit
+	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_sessions WHERE store_id = $1`, id).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("store is used in %d audit(s)", count)
+	}
+	
+	_, err = r.db.ExecContext(ctx, `DELETE FROM stores WHERE id = $1`, id)
+	return err
 }
 
 // Save creates or updates a user (legacy method for interface compatibility)

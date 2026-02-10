@@ -78,6 +78,15 @@ export interface UpdateRoleRequest {
     permissions: string[];
 }
 
+export interface CreateStoreRequest {
+    name: string;
+}
+
+export interface UpdateStoreRequest {
+    name: string;
+    status: boolean;
+}
+
 // Available permissions
 export const AVAILABLE_PERMISSIONS = {
     web: [
@@ -142,6 +151,22 @@ export const usersApi = {
     async getStores(): Promise<Store[]> {
         const data = await httpClient.get<{ stores: Store[] }>(`${API_BASE}/stores`);
         return data.stores || [];
+    },
+
+    async getStore(id: number): Promise<Store> {
+        return httpClient.get<Store>(`${API_BASE}/stores/${id}`);
+    },
+
+    async createStore(data: CreateStoreRequest): Promise<Store> {
+        return httpClient.post<Store>(`${API_BASE}/stores`, data);
+    },
+
+    async updateStore(id: number, data: UpdateStoreRequest): Promise<Store> {
+        return httpClient.put<Store>(`${API_BASE}/stores/${id}`, data);
+    },
+
+    async deleteStore(id: number): Promise<void> {
+        return httpClient.delete<void>(`${API_BASE}/stores/${id}`);
     },
 
     // =====================================================

@@ -237,6 +237,120 @@ func (h *UserHandler) ListStores(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"stores": stores})
 }
 
+// GetStore handles GET /stores/:id
+func (h *UserHandler) GetStore(c *gin.Context) {
+	idStr := c.Param("id")
+	var id int
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "ID de tienda inválido",
+		})
+		return
+	}
+
+	store, err := h.repo.GetStoreByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, domain.ErrorResponse{
+			Error:   "not_found",
+			Message: "Tienda no encontrada",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, store)
+}
+
+// CreateStore handles POST /stores
+func (h *UserHandler) CreateStore(c *gin.Context) {
+	var req domain.CreateStoreRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "Nombre de tienda es requerido",
+		})
+		return
+	}
+
+	store, err := h.repo.CreateStore(c.Request.Context(), req.Name)
+	if err != nil {
+		log.Printf("Error creating store: %v", err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al crear tienda",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, store)
+}
+
+// UpdateStore handles PUT /stores/:id
+func (h *UserHandler) UpdateStore(c *gin.Context) {
+	idStr := c.Param("id")
+	var id int
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "ID de tienda inválido",
+		})
+		return
+	}
+
+	var req domain.UpdateStoreRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "Datos de tienda inválidos",
+		})
+		return
+	}
+
+	store, err := h.repo.UpdateStore(c.Request.Context(), id, req.Name, req.Status)
+	if err != nil {
+		log.Printf("Error updating store: %v", err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al actualizar tienda",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, store)
+}
+
+// DeleteStore handles DELETE /stores/:id
+func (h *UserHandler) DeleteStore(c *gin.Context) {
+	idStr := c.Param("id")
+	var id int
+	if _, err := fmt.Sscanf(idStr, "%d", &id); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "ID de tienda inválido",
+		})
+		return
+	}
+
+	if err := h.repo.DeleteStore(c.Request.Context(), id); err != nil {
+		log.Printf("Error deleting store: %v", err)
+		// Check if store is in use
+		if err.Error() != "" && (err.Error()[:5] == "store") {
+			c.JSON(http.StatusConflict, domain.ErrorResponse{
+				Error:   "store_in_use",
+				Message: "No se puede eliminar la tienda porque está asignada a usuarios o tiene auditorías",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al eliminar tienda",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Tienda eliminada exitosamente"})
+}
+
 // =====================================================
 // ROLE HANDLERS
 // =====================================================
