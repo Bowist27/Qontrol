@@ -22,11 +22,6 @@ const CatalogView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [catalogStats, setCatalogStats] = useState<{ totalCount: number; totalValue: number }>({ totalCount: 0, totalValue: 0 });
   
-  // Editing state
-  const [editingProductId, setEditingProductId] = useState<number | null>(null);
-  const [editingField, setEditingField] = useState<'name' | 'barcode' | 'unit' | 'price' | null>(null);
-  const [editValue, setEditValue] = useState<string>('');
-  const [savingEdit, setSavingEdit] = useState(false);
   const [catalogSearchTerm, setCatalogSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   
@@ -86,6 +81,11 @@ const CatalogView: React.FC = () => {
     unit: 'PZ',
     price: 0
   });
+  
+  // Edit product modal state
+  const [editModalProduct, setEditModalProduct] = useState<Product | null>(null);
+  const [editFormData, setEditFormData] = useState({ name: '', barcode: '', unit: '', price: 0 });
+  const [savingEditModal, setSavingEditModal] = useState(false);
   
   // Undo state
   const [undoState, setUndoState] = useState<UndoState>({
@@ -499,54 +499,54 @@ const CatalogView: React.FC = () => {
     }
   };
 
-  // Handle inline edit save
-  const handleSaveEdit = async (productId: number) => {
-    const product = catalogProducts.find(p => p.id === productId);
-    if (!product || !editingField) return;
+  // Open edit modal for a product
+  const openEditModal = (product: Product) => {
+    setEditModalProduct(product);
+    setEditFormData({
+      name: product.name,
+      barcode: product.barcode || '',
+      unit: product.unit,
+      price: product.last_price || 0
+    });
+    setProductMenuOpenId(null);
+    setProductMenuPosition(null);
+  };
+
+  // Close edit modal
+  const closeEditModal = () => {
+    setEditModalProduct(null);
+    setEditFormData({ name: '', barcode: '', unit: '', price: 0 });
+  };
+
+  // Save edit from modal
+  const handleSaveEditModal = async () => {
+    if (!editModalProduct) return;
 
     try {
-      setSavingEdit(true);
-      const updatedData = {
-        name: editingField === 'name' ? editValue : product.name,
-        barcode: editingField === 'barcode' ? editValue : (product.barcode || ''),
-        unit: editingField === 'unit' ? editValue : product.unit,
-        price: editingField === 'price' ? parseFloat(editValue) || 0 : product.last_price,
-      };
-
-      await catalogApi.updateProduct(productId, updatedData);
+      setSavingEditModal(true);
+      await catalogApi.updateProduct(editModalProduct.id, {
+        name: editFormData.name,
+        barcode: editFormData.barcode,
+        unit: editFormData.unit,
+        price: editFormData.price
+      });
       
       // Update local state
       setCatalogProducts(prev => prev.map(p => 
-        p.id === productId 
-          ? { ...p, name: updatedData.name, barcode: updatedData.barcode, unit: updatedData.unit, last_price: updatedData.price }
+        p.id === editModalProduct.id 
+          ? { ...p, name: editFormData.name, barcode: editFormData.barcode, unit: editFormData.unit, last_price: editFormData.price }
           : p
       ));
       
       // Reload product changes to show the update in manual history
       loadProductChanges();
       
-      setEditingProductId(null);
-      setEditingField(null);
-      setEditValue('');
+      closeEditModal();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al guardar');
     } finally {
-      setSavingEdit(false);
+      setSavingEditModal(false);
     }
-  };
-
-  // Start editing a field
-  const startEditing = (productId: number, field: 'name' | 'barcode' | 'unit' | 'price', currentValue: string | number) => {
-    setEditingProductId(productId);
-    setEditingField(field);
-    setEditValue(String(currentValue));
-  };
-
-  // Cancel editing
-  const cancelEditing = () => {
-    setEditingProductId(null);
-    setEditingField(null);
-    setEditValue('');
   };
 
   // Delete a product
@@ -1029,102 +1029,19 @@ const CatalogView: React.FC = () => {
                     <tr key={product.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3 text-sm font-mono text-gray-600">{product.sku}</td>
                       <td className="px-4 py-3 text-sm text-gray-900">
-                        {editingProductId === product.id && editingField === 'name' ? (
-                          <input
-                            type="text"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveEdit(product.id);
-                              if (e.key === 'Escape') cancelEditing();
-                            }}
-                            onBlur={() => handleSaveEdit(product.id)}
-                            autoFocus
-                            className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        ) : (
-                          <span 
-                            onClick={() => startEditing(product.id, 'name', product.name)}
-                            className="cursor-pointer hover:text-blue-600 hover:underline text-gray-900"
-                          >
-                            {product.name || '-'}
-                          </span>
-                        )}
+                        {product.name || '-'}
                       </td>
                       <td className="px-4 py-3 text-sm font-mono text-gray-500">
-                        {editingProductId === product.id && editingField === 'barcode' ? (
-                          <input
-                            type="text"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveEdit(product.id);
-                              if (e.key === 'Escape') cancelEditing();
-                            }}
-                            onBlur={() => handleSaveEdit(product.id)}
-                            autoFocus
-                            className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        ) : (
-                          <span 
-                            onClick={() => startEditing(product.id, 'barcode', product.barcode || '')}
-                            className="cursor-pointer hover:text-blue-600 hover:underline"
-                          >
-                            {product.barcode || '—'}
-                          </span>
-                        )}
+                        {product.barcode || '—'}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500">
-                        {editingProductId === product.id && editingField === 'unit' ? (
-                          <input
-                            type="text"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveEdit(product.id);
-                              if (e.key === 'Escape') cancelEditing();
-                            }}
-                            onBlur={() => handleSaveEdit(product.id)}
-                            autoFocus
-                            className="w-24 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        ) : (
-                          <span 
-                            onClick={() => startEditing(product.id, 'unit', product.unit)}
-                            className="cursor-pointer hover:text-blue-600 hover:underline"
-                          >
-                            {product.unit}
-                          </span>
-                        )}
+                        {product.unit}
                       </td>
-                      <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">
-                        {editingProductId === product.id && editingField === 'price' ? (
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveEdit(product.id);
-                              if (e.key === 'Escape') cancelEditing();
-                            }}
-                            onBlur={() => handleSaveEdit(product.id)}
-                            autoFocus
-                            className="w-28 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-right"
-                          />
-                        ) : (
-                          <span 
-                            onClick={() => startEditing(product.id, 'price', product.last_price || 0)}
-                            className="cursor-pointer hover:text-blue-600 hover:underline tabular-nums text-gray-900"
-                          >
-                            ${(product.last_price || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                          </span>
-                        )}
+                      <td className="px-4 py-3 text-sm text-right font-medium text-gray-900 tabular-nums">
+                        ${(product.last_price || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        {savingEdit && editingProductId === product.id ? (
-                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent mx-auto"></div>
-                        ) : deletingProductId === product.id ? (
+                        {deletingProductId === product.id ? (
                           <div className="animate-spin rounded-full h-4 w-4 border-2 border-red-600 border-t-transparent mx-auto"></div>
                         ) : (
                           <button
@@ -1394,6 +1311,18 @@ const CatalogView: React.FC = () => {
             >
               <button
                 onClick={() => {
+                  const product = catalogProducts.find(p => p.id === productMenuOpenId);
+                  if (product) openEditModal(product);
+                }}
+                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Modificar
+              </button>
+              <button
+                onClick={() => {
                   setProductMenuOpenId(null);
                   setProductMenuPosition(null);
                   setDeleteProductConfirmId(productMenuOpenId);
@@ -1458,6 +1387,97 @@ const CatalogView: React.FC = () => {
             </div>
           </div>
         )}
+
+      {/* Edit Product Modal */}
+      {editModalProduct && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Modificar Producto</h3>
+                <p className="text-sm text-gray-500">SKU: {editModalProduct.sku}</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <input
+                  type="text"
+                  value={editFormData.name}
+                  onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                  placeholder="Nombre del producto"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
+                <input
+                  type="text"
+                  value={editFormData.barcode}
+                  onChange={(e) => setEditFormData({ ...editFormData, barcode: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                  placeholder="Código de barras"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Unidad *</label>
+                <input
+                  type="text"
+                  value={editFormData.unit}
+                  onChange={(e) => setEditFormData({ ...editFormData, unit: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                  placeholder="Ej: PZ, KG, LT"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Precio</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editFormData.price}
+                  onChange={(e) => setEditFormData({ ...editFormData, price: parseFloat(e.target.value) || 0 })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={closeEditModal}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveEditModal}
+                disabled={savingEditModal || !editFormData.name.trim() || !editFormData.unit.trim()}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                {savingEditModal ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Guardando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Guardar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Product Modal */}
       {showAddProductModal && (
