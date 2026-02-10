@@ -1482,7 +1482,7 @@ const CatalogView: React.FC = () => {
                   type="text"
                   value={newProduct.sku}
                   onChange={(e) => setNewProduct({ ...newProduct, sku: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                   placeholder="Ej: PROD001"
                 />
               </div>
@@ -1492,7 +1492,7 @@ const CatalogView: React.FC = () => {
                   type="text"
                   value={newProduct.name}
                   onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                   placeholder="Nombre del producto"
                 />
               </div>
@@ -1502,7 +1502,7 @@ const CatalogView: React.FC = () => {
                   type="text"
                   value={newProduct.barcode}
                   onChange={(e) => setNewProduct({ ...newProduct, barcode: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                   placeholder="Opcional"
                 />
               </div>
@@ -1512,7 +1512,7 @@ const CatalogView: React.FC = () => {
                   <select
                     value={newProduct.unit}
                     onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                   >
                     <option value="PZ">Pieza (PZ)</option>
                     <option value="KG">Kilogramo (KG)</option>
@@ -1529,7 +1529,7 @@ const CatalogView: React.FC = () => {
                     min="0"
                     value={newProduct.price}
                     onChange={(e) => setNewProduct({ ...newProduct, price: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                     placeholder="0.00"
                   />
                 </div>
@@ -2331,7 +2331,7 @@ const CatalogView: React.FC = () => {
                   type="text"
                   value={newProduct.sku}
                   onChange={(e) => setNewProduct({ ...newProduct, sku: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                   placeholder="Ej: PROD001"
                 />
               </div>
@@ -2341,7 +2341,7 @@ const CatalogView: React.FC = () => {
                   type="text"
                   value={newProduct.name}
                   onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                   placeholder="Nombre del producto"
                 />
               </div>
@@ -2351,7 +2351,7 @@ const CatalogView: React.FC = () => {
                   type="text"
                   value={newProduct.barcode}
                   onChange={(e) => setNewProduct({ ...newProduct, barcode: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                   placeholder="Opcional"
                 />
               </div>
@@ -2361,7 +2361,7 @@ const CatalogView: React.FC = () => {
                   <select
                     value={newProduct.unit}
                     onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                   >
                     <option value="PZ">Pieza (PZ)</option>
                     <option value="KG">Kilogramo (KG)</option>
@@ -2378,7 +2378,7 @@ const CatalogView: React.FC = () => {
                     min="0"
                     value={newProduct.price}
                     onChange={(e) => setNewProduct({ ...newProduct, price: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
                     placeholder="0.00"
                   />
                 </div>
