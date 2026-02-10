@@ -14,9 +14,14 @@ type CatalogRepository interface {
 	GetProductsPaginated(ctx context.Context, page, limit int, search string) ([]domain.Product, int, error)
 	FindProductByBarcode(ctx context.Context, barcode string) (*domain.Product, error)
 	FindProductBySKU(ctx context.Context, sku string) (*domain.Product, error)
+	GetProductByID(ctx context.Context, id int) (*domain.Product, error)
 	GetCatalogStats(ctx context.Context) (int, float64, error)
+	CreateProduct(ctx context.Context, product *domain.Product) (int, error)
 	UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error
 	DeleteProduct(ctx context.Context, id int) error
+	// Product changes history
+	SaveProductChange(ctx context.Context, change *domain.ProductChange) error
+	GetProductChanges(ctx context.Context, limit int) ([]domain.ProductChange, error)
 	// Import history
 	SaveCatalogImport(ctx context.Context, imp *domain.CatalogImport) (int, error)
 	SaveCatalogImportItems(ctx context.Context, importID int, items []domain.CatalogDiffItem) error
@@ -61,19 +66,120 @@ func (s *CatalogService) FindByBarcode(ctx context.Context, barcode string) (*do
 	return s.repo.FindProductByBarcode(ctx, barcode)
 }
 
+// GetProductByID finds a product by ID
+func (s *CatalogService) GetProductByID(ctx context.Context, id int) (*domain.Product, error) {
+	return s.repo.GetProductByID(ctx, id)
+}
+
 // GetCatalogStats returns catalog statistics
 func (s *CatalogService) GetCatalogStats(ctx context.Context) (int, float64, error) {
 	return s.repo.GetCatalogStats(ctx)
 }
 
-// UpdateProduct updates a product's fields
-func (s *CatalogService) UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error {
-	return s.repo.UpdateProduct(ctx, id, name, barcode, unit, price)
+// CreateProduct creates a new product and logs the change
+func (s *CatalogService) CreateProduct(ctx context.Context, product *domain.Product, userEmail, userName string) (int, error) {
+	id, err := s.repo.CreateProduct(ctx, product)
+	if err != nil {
+		return 0, err
+	}
+
+	// Log the change
+	change := &domain.ProductChange{
+		ProductID:   id,
+		ProductSKU:  product.SKU,
+		ProductName: product.Name,
+		Action:      "create",
+		NewValues: map[string]interface{}{
+			"sku":     product.SKU,
+			"name":    product.Name,
+			"barcode": product.Barcode,
+			"unit":    product.Unit,
+			"price":   product.LastPrice,
+		},
+		UserEmail: userEmail,
+		UserName:  userName,
+	}
+	_ = s.repo.SaveProductChange(ctx, change)
+
+	return id, nil
 }
 
-// DeleteProduct deletes a product by ID
-func (s *CatalogService) DeleteProduct(ctx context.Context, id int) error {
-	return s.repo.DeleteProduct(ctx, id)
+// UpdateProduct updates a product's fields and logs the change
+func (s *CatalogService) UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64, userEmail, userName string) error {
+	// Get current values before update
+	oldProduct, err := s.repo.GetProductByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	err = s.repo.UpdateProduct(ctx, id, name, barcode, unit, price)
+	if err != nil {
+		return err
+	}
+
+	// Log the change
+	change := &domain.ProductChange{
+		ProductID:   id,
+		ProductSKU:  oldProduct.SKU,
+		ProductName: name,
+		Action:      "update",
+		OldValues: map[string]interface{}{
+			"name":    oldProduct.Name,
+			"barcode": oldProduct.Barcode,
+			"unit":    oldProduct.Unit,
+			"price":   oldProduct.LastPrice,
+		},
+		NewValues: map[string]interface{}{
+			"name":    name,
+			"barcode": barcode,
+			"unit":    unit,
+			"price":   price,
+		},
+		UserEmail: userEmail,
+		UserName:  userName,
+	}
+	_ = s.repo.SaveProductChange(ctx, change)
+
+	return nil
+}
+
+// DeleteProduct deletes a product by ID and logs the change
+func (s *CatalogService) DeleteProduct(ctx context.Context, id int, userEmail, userName string) error {
+	// Get current values before delete
+	oldProduct, err := s.repo.GetProductByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	err = s.repo.DeleteProduct(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	// Log the change
+	change := &domain.ProductChange{
+		ProductID:   id,
+		ProductSKU:  oldProduct.SKU,
+		ProductName: oldProduct.Name,
+		Action:      "delete",
+		OldValues: map[string]interface{}{
+			"sku":     oldProduct.SKU,
+			"name":    oldProduct.Name,
+			"barcode": oldProduct.Barcode,
+			"unit":    oldProduct.Unit,
+			"price":   oldProduct.LastPrice,
+		},
+		UserEmail: userEmail,
+		UserName:  userName,
+	}
+	_ = s.repo.SaveProductChange(ctx, change)
+
+	return nil
+}
+
+// GetProductChanges returns the history of manual product changes
+func (s *CatalogService) GetProductChanges(ctx context.Context, limit int) ([]domain.ProductChange, error) {
+	return s.repo.GetProductChanges(ctx, limit)
 }
 
 // AnalyzeValuationReport compares a valuation report against the current catalog

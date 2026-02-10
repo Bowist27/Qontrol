@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { catalogApi, type ValuationProduct, type ValuationSummary, type ImportHistoryItem, type Product } from '../../services/catalog.api';
+import { catalogApi, type ValuationProduct, type ValuationSummary, type ImportHistoryItem, type Product, type ProductChange, type CreateProductRequest } from '../../services/catalog.api';
 
 type FilterType = 'all' | 'price_up' | 'price_down' | 'new' | 'unchanged';
+type HistoryTabType = 'imports' | 'changes';
 
 interface UndoState {
   show: boolean;
@@ -65,6 +66,27 @@ const CatalogView: React.FC = () => {
   const [deletingProductId, setDeletingProductId] = useState<number | null>(null);
   const productMenuButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   
+  // Manual changes history state
+  const [productChanges, setProductChanges] = useState<ProductChange[]>([]);
+  const [historyTab, setHistoryTab] = useState<HistoryTabType>('imports');
+  
+  // Sidebar pagination state
+  const [importsPage, setImportsPage] = useState(1);
+  const [importsPerPage, setImportsPerPage] = useState(10);
+  const [changesPage, setChangesPage] = useState(1);
+  const [changesPerPage, setChangesPerPage] = useState(10);
+  
+  // Add product modal state
+  const [showAddProductModal, setShowAddProductModal] = useState(false);
+  const [addingProduct, setAddingProduct] = useState(false);
+  const [newProduct, setNewProduct] = useState<CreateProductRequest>({
+    sku: '',
+    name: '',
+    barcode: '',
+    unit: 'PZ',
+    price: 0
+  });
+  
   // Undo state
   const [undoState, setUndoState] = useState<UndoState>({
     show: false,
@@ -117,15 +139,18 @@ const CatalogView: React.FC = () => {
       setLoading(true);
       setError(null);
       
-      // Load history and initial catalog products
-      const [historyData, catalogData] = await Promise.all([
-        catalogApi.getImportHistory(10),
-        catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm)
+      // Load history, product changes, and initial catalog products
+      // Get more items for pagination (up to 200)
+      const [historyData, catalogData, changesData] = await Promise.all([
+        catalogApi.getImportHistory(200),
+        catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm),
+        catalogApi.getProductChanges(1, 200)
       ]);
       
       setHistory(historyData);
       setCatalogProducts(catalogData.products || []);
       setCatalogStats({ totalCount: catalogData.total_count || 0, totalValue: catalogData.total_value || 0 });
+      setProductChanges(changesData.changes || []);
       
       // Try to get pending valuation - if none exists, that's OK
       try {
@@ -151,6 +176,39 @@ const CatalogView: React.FC = () => {
       setError(err instanceof Error ? err.message : 'Error loading catalog data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Load product changes (for refreshing after operations)
+  const loadProductChanges = async () => {
+    try {
+      const changesData = await catalogApi.getProductChanges(1, 50);
+      setProductChanges(changesData.changes || []);
+    } catch (err) {
+      console.error('Error loading product changes:', err);
+    }
+  };
+
+  // Handle adding a new product
+  const handleAddProduct = async () => {
+    if (!newProduct.sku || !newProduct.name) {
+      return;
+    }
+    
+    try {
+      setAddingProduct(true);
+      await catalogApi.createProduct(newProduct);
+      
+      // Reload data to show new product
+      await loadData();
+      
+      // Reset form and close modal
+      setNewProduct({ sku: '', name: '', barcode: '', unit: 'PZ', price: 0 });
+      setShowAddProductModal(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al agregar producto');
+    } finally {
+      setAddingProduct(false);
     }
   };
 
@@ -464,6 +522,9 @@ const CatalogView: React.FC = () => {
           : p
       ));
       
+      // Reload product changes to show the update in manual history
+      loadProductChanges();
+      
       setEditingProductId(null);
       setEditingField(null);
       setEditValue('');
@@ -497,6 +558,9 @@ const CatalogView: React.FC = () => {
       // Update local state
       setCatalogProducts(prev => prev.filter(p => p.id !== productId));
       setCatalogStats(prev => ({ ...prev, totalCount: prev.totalCount - 1 }));
+      
+      // Reload product changes to show the delete in manual history
+      loadProductChanges();
       
       setDeleteProductConfirmId(null);
     } catch (err) {
@@ -561,23 +625,43 @@ const CatalogView: React.FC = () => {
         {/* ===== LEFT SIDEBAR - HISTORIAL ===== */}
         <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
           {/* Sidebar Header */}
-          <div className="p-4 border-b border-gray-200 flex items-center gap-2">
-            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <h2 className="font-semibold text-gray-900">Historial</h2>
+          <div className="p-4 border-b border-gray-200">
+            <div className="flex items-center gap-2 mb-3">
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <h2 className="font-semibold text-gray-900">Historial</h2>
+            </div>
+            {/* Tabs */}
+            <div className="flex border-b border-gray-200">
+              <button
+                onClick={() => setHistoryTab('imports')}
+                className={`flex-1 text-xs py-2 font-medium ${historyTab === 'imports' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                PDF Imports
+              </button>
+              <button
+                onClick={() => setHistoryTab('changes')}
+                className={`flex-1 text-xs py-2 font-medium ${historyTab === 'changes' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Cambios
+              </button>
+            </div>
           </div>
 
           {/* History List */}
           <div className="flex-1 overflow-y-auto overflow-x-visible p-2">
+            {historyTab === 'imports' ? (
+              <>
             {history.length === 0 ? (
               <div className="p-4 text-center text-gray-500 text-sm">
                 No hay historial
               </div>
             ) : (
               <div className="space-y-2">
-                {history.map((item, index) => {
-                  const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
+                {history.slice((importsPage - 1) * importsPerPage, importsPage * importsPerPage).map((item, index) => {
+                  const globalIndex = (importsPage - 1) * importsPerPage + index;
+                  const isFirstApplied = globalIndex === history.findIndex(h => h.status === 'applied');
                   const isVigente = item.status === 'applied' && isFirstApplied;
                   const isInitial = item.file_name?.toLowerCase().includes('inicial');
                   // Show menu button unless it's the initial that is also vigente
@@ -645,6 +729,139 @@ const CatalogView: React.FC = () => {
                     </div>
                   );
                 })}
+              </div>
+            )}
+              </>
+            ) : (
+              /* Manual Changes Tab */
+              productChanges.length === 0 ? (
+                <div className="p-4 text-center text-gray-500 text-sm">
+                  No hay cambios manuales
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {productChanges.slice((changesPage - 1) * changesPerPage, changesPage * changesPerPage).map((change) => {
+                    const getActionBadge = () => {
+                      if (change.action === 'create') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500 text-white">Creado</span>;
+                      if (change.action === 'update') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-500 text-white">Editado</span>;
+                      return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-500 text-white">Eliminado</span>;
+                    };
+                    
+                    return (
+                      <div
+                        key={change.id}
+                        className="p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <div className="flex-1">
+                            <div className="text-xs text-gray-500 mb-1">{change.time_ago}</div>
+                            <div className="text-xs text-gray-700">
+                              <span className="text-blue-600">▲</span> {change.user_name || change.user_email}
+                            </div>
+                          </div>
+                          {getActionBadge()}
+                        </div>
+                        <div className="text-xs font-medium text-gray-900 truncate">{change.product_name}</div>
+                        <div className="text-xs text-gray-500">SKU: {change.product_sku}</div>
+                        {change.action === 'update' && change.old_values && change.new_values && (
+                          <div className="mt-1 text-xs text-gray-500">
+                            {Object.keys(change.new_values).map(key => (
+                              <div key={key}>
+                                {key}: {String(change.old_values?.[key])} → {String(change.new_values?.[key])}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            )}
+          </div>
+          
+          {/* Pagination Footer */}
+          <div className="p-2 border-t border-gray-200 bg-gray-50">
+            {historyTab === 'imports' && history.length > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1">
+                  <span className="text-gray-700 font-medium">Filas:</span>
+                  <select
+                    value={importsPerPage}
+                    onChange={(e) => { setImportsPerPage(Number(e.target.value)); setImportsPage(1); }}
+                    className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white text-gray-700"
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-600">
+                    {Math.min((importsPage - 1) * importsPerPage + 1, history.length)}-{Math.min(importsPage * importsPerPage, history.length)} de {history.length}
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setImportsPage(p => Math.max(1, p - 1))}
+                      disabled={importsPage === 1}
+                      className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => setImportsPage(p => Math.min(Math.ceil(history.length / importsPerPage), p + 1))}
+                      disabled={importsPage >= Math.ceil(history.length / importsPerPage)}
+                      className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {historyTab === 'changes' && productChanges.length > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1">
+                  <span className="text-gray-700 font-medium">Filas:</span>
+                  <select
+                    value={changesPerPage}
+                    onChange={(e) => { setChangesPerPage(Number(e.target.value)); setChangesPage(1); }}
+                    className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white text-gray-700"
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-600">
+                    {Math.min((changesPage - 1) * changesPerPage + 1, productChanges.length)}-{Math.min(changesPage * changesPerPage, productChanges.length)} de {productChanges.length}
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setChangesPage(p => Math.max(1, p - 1))}
+                      disabled={changesPage === 1}
+                      className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => setChangesPage(p => Math.min(Math.ceil(productChanges.length / changesPerPage), p + 1))}
+                      disabled={changesPage >= Math.ceil(productChanges.length / changesPerPage)}
+                      className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -736,6 +953,15 @@ const CatalogView: React.FC = () => {
                   onChange={handleFileInputChange}
                   className="hidden"
                 />
+                <button
+                  onClick={() => setShowAddProductModal(true)}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2 font-medium"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Agregar Producto
+                </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploadingFile}
@@ -1285,23 +1511,43 @@ const CatalogView: React.FC = () => {
       {/* ===== LEFT SIDEBAR - HISTORIAL ===== */}
       <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
         {/* Sidebar Header */}
-        <div className="p-4 border-b border-gray-200 flex items-center gap-2">
-          <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <h2 className="font-semibold text-gray-900">Historial</h2>
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex items-center gap-2 mb-3">
+            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h2 className="font-semibold text-gray-900">Historial</h2>
+          </div>
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200">
+            <button
+              onClick={() => setHistoryTab('imports')}
+              className={`flex-1 text-xs py-2 font-medium ${historyTab === 'imports' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              PDF Imports
+            </button>
+            <button
+              onClick={() => setHistoryTab('changes')}
+              className={`flex-1 text-xs py-2 font-medium ${historyTab === 'changes' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Cambios
+            </button>
+          </div>
         </div>
 
         {/* History List */}
         <div className="flex-1 overflow-y-auto overflow-x-visible p-2">
+          {historyTab === 'imports' ? (
+            <>
           {history.length === 0 ? (
             <div className="p-4 text-center text-gray-500 text-sm">
               No hay historial
             </div>
           ) : (
             <div className="space-y-2">
-              {history.map((item, index) => {
-                const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
+              {history.slice((importsPage - 1) * importsPerPage, importsPage * importsPerPage).map((item, index) => {
+                const globalIndex = (importsPage - 1) * importsPerPage + index;
+                const isFirstApplied = globalIndex === history.findIndex(h => h.status === 'applied');
                 const isVigente = item.status === 'applied' && isFirstApplied;
                 const isInitial = item.file_name?.toLowerCase().includes('inicial');
                 // Show menu button unless it's the initial that is also vigente
@@ -1366,6 +1612,139 @@ const CatalogView: React.FC = () => {
                   </div>
                 );
               })}
+            </div>
+          )}
+            </>
+          ) : (
+            /* Manual Changes Tab */
+            productChanges.length === 0 ? (
+              <div className="p-4 text-center text-gray-500 text-sm">
+                No hay cambios manuales
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {productChanges.slice((changesPage - 1) * changesPerPage, changesPage * changesPerPage).map((change) => {
+                  const getActionBadge = () => {
+                    if (change.action === 'create') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500 text-white">Creado</span>;
+                    if (change.action === 'update') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-500 text-white">Editado</span>;
+                    return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-500 text-white">Eliminado</span>;
+                  };
+                  
+                  return (
+                    <div
+                      key={change.id}
+                      className="p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <div className="flex-1">
+                          <div className="text-xs text-gray-500 mb-1">{change.time_ago}</div>
+                          <div className="text-xs text-gray-700">
+                            <span className="text-blue-600">▲</span> {change.user_name || change.user_email}
+                          </div>
+                        </div>
+                        {getActionBadge()}
+                      </div>
+                      <div className="text-xs font-medium text-gray-900 truncate">{change.product_name}</div>
+                      <div className="text-xs text-gray-500">SKU: {change.product_sku}</div>
+                      {change.action === 'update' && change.old_values && change.new_values && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          {Object.keys(change.new_values).map(key => (
+                            <div key={key}>
+                              {key}: {String(change.old_values?.[key])} → {String(change.new_values?.[key])}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          )}
+        </div>
+        
+        {/* Pagination Footer */}
+        <div className="p-2 border-t border-gray-200 bg-gray-50">
+          {historyTab === 'imports' && history.length > 0 && (
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1">
+                <span className="text-gray-700 font-medium">Filas:</span>
+                <select
+                  value={importsPerPage}
+                  onChange={(e) => { setImportsPerPage(Number(e.target.value)); setImportsPage(1); }}
+                  className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white text-gray-700"
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-600">
+                  {Math.min((importsPage - 1) * importsPerPage + 1, history.length)}-{Math.min(importsPage * importsPerPage, history.length)} de {history.length}
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setImportsPage(p => Math.max(1, p - 1))}
+                    disabled={importsPage === 1}
+                    className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setImportsPage(p => Math.min(Math.ceil(history.length / importsPerPage), p + 1))}
+                    disabled={importsPage >= Math.ceil(history.length / importsPerPage)}
+                    className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {historyTab === 'changes' && productChanges.length > 0 && (
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1">
+                <span className="text-gray-700 font-medium">Filas:</span>
+                <select
+                  value={changesPerPage}
+                  onChange={(e) => { setChangesPerPage(Number(e.target.value)); setChangesPage(1); }}
+                  className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white text-gray-700"
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-600">
+                  {Math.min((changesPage - 1) * changesPerPage + 1, productChanges.length)}-{Math.min(changesPage * changesPerPage, productChanges.length)} de {productChanges.length}
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setChangesPage(p => Math.max(1, p - 1))}
+                    disabled={changesPage === 1}
+                    className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setChangesPage(p => Math.min(Math.ceil(productChanges.length / changesPerPage), p + 1))}
+                    disabled={changesPage >= Math.ceil(productChanges.length / changesPerPage)}
+                    className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -1816,6 +2195,118 @@ const CatalogView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Add Product Modal */}
+      {showAddProductModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Agregar Producto</h3>
+                <p className="text-sm text-gray-500">Crear un nuevo producto en el catálogo</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">SKU *</label>
+                <input
+                  type="text"
+                  value={newProduct.sku}
+                  onChange={(e) => setNewProduct({ ...newProduct, sku: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  placeholder="Ej: PROD001"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <input
+                  type="text"
+                  value={newProduct.name}
+                  onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  placeholder="Nombre del producto"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
+                <input
+                  type="text"
+                  value={newProduct.barcode}
+                  onChange={(e) => setNewProduct({ ...newProduct, barcode: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  placeholder="Opcional"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Unidad</label>
+                  <select
+                    value={newProduct.unit}
+                    onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  >
+                    <option value="PZ">Pieza (PZ)</option>
+                    <option value="KG">Kilogramo (KG)</option>
+                    <option value="LT">Litro (LT)</option>
+                    <option value="MT">Metro (MT)</option>
+                    <option value="CJ">Caja (CJ)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Precio</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newProduct.price}
+                    onChange={(e) => setNewProduct({ ...newProduct, price: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => {
+                  setShowAddProductModal(false);
+                  setNewProduct({ sku: '', name: '', barcode: '', unit: 'PZ', price: 0 });
+                }}
+                disabled={addingProduct}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleAddProduct}
+                disabled={addingProduct || !newProduct.sku || !newProduct.name}
+                className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+              >
+                {addingProduct ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Guardando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Agregar Producto
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

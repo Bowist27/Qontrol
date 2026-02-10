@@ -56,6 +56,35 @@ func NewPostgresRepository(db *sql.DB) *PostgresRepository {
 	return &PostgresRepository{db: db}
 }
 
+// timeAgo returns a human-readable time difference string
+func timeAgo(t time.Time) string {
+	diff := time.Since(t)
+	switch {
+	case diff < time.Minute:
+		return "hace unos segundos"
+	case diff < time.Hour:
+		mins := int(diff.Minutes())
+		if mins == 1 {
+			return "hace 1 minuto"
+		}
+		return fmt.Sprintf("hace %d minutos", mins)
+	case diff < 24*time.Hour:
+		hours := int(diff.Hours())
+		if hours == 1 {
+			return "hace 1 hora"
+		}
+		return fmt.Sprintf("hace %d horas", hours)
+	case diff < 48*time.Hour:
+		return "ayer"
+	default:
+		days := int(diff.Hours() / 24)
+		if days < 7 {
+			return fmt.Sprintf("hace %d días", days)
+		}
+		return t.Format("02/01/2006")
+	}
+}
+
 // FindAllStores returns all active stores
 func (r *PostgresRepository) FindAllStores(ctx context.Context) ([]domain.Store, error) {
 	query := `SELECT id, name, status, created_at FROM stores WHERE status = true ORDER BY name`
@@ -422,6 +451,86 @@ func (r *PostgresRepository) DeleteProduct(ctx context.Context, id int) error {
 		return fmt.Errorf("product with id %d not found", id)
 	}
 	return nil
+}
+
+// GetProductByID finds a product by its ID
+func (r *PostgresRepository) GetProductByID(ctx context.Context, id int) (*domain.Product, error) {
+	var p domain.Product
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+		FROM products WHERE id = $1`, id).
+		Scan(&p.ID, &p.SKU, &p.Barcode, &p.Name, &p.Unit, &p.LastPrice, &p.LastUpdated, &p.Source, &p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// CreateProduct creates a new product
+func (r *PostgresRepository) CreateProduct(ctx context.Context, product *domain.Product) (int, error) {
+	var id int
+	err := r.db.QueryRowContext(ctx, `
+		INSERT INTO products (sku, barcode, name, unit, last_price, source, last_updated, created_at)
+		VALUES ($1, NULLIF($2, ''), $3, $4, $5, 'Manual', NOW(), NOW())
+		RETURNING id`,
+		product.SKU, product.Barcode, product.Name, product.Unit, product.LastPrice).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// SaveProductChange saves a product change to the audit log
+func (r *PostgresRepository) SaveProductChange(ctx context.Context, change *domain.ProductChange) error {
+	oldValuesJSON, _ := json.Marshal(change.OldValues)
+	newValuesJSON, _ := json.Marshal(change.NewValues)
+	
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO product_changes (product_id, product_sku, product_name, action, old_values, new_values, user_email, user_name, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+		change.ProductID, change.ProductSKU, change.ProductName, change.Action, oldValuesJSON, newValuesJSON, change.UserEmail, change.UserName)
+	return err
+}
+
+// GetProductChanges returns the history of manual product changes
+func (r *PostgresRepository) GetProductChanges(ctx context.Context, limit int) ([]domain.ProductChange, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, COALESCE(product_id, 0), product_sku, product_name, action, 
+		       COALESCE(old_values::text, '{}'), COALESCE(new_values::text, '{}'), 
+		       user_email, user_name, created_at
+		FROM product_changes
+		ORDER BY created_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var changes []domain.ProductChange
+	for rows.Next() {
+		var c domain.ProductChange
+		var oldValuesStr, newValuesStr string
+		err := rows.Scan(&c.ID, &c.ProductID, &c.ProductSKU, &c.ProductName, &c.Action,
+			&oldValuesStr, &newValuesStr, &c.UserEmail, &c.UserName, &c.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+
+		// Parse JSON values
+		json.Unmarshal([]byte(oldValuesStr), &c.OldValues)
+		json.Unmarshal([]byte(newValuesStr), &c.NewValues)
+
+		// Calculate time ago
+		c.TimeAgo = timeAgo(c.CreatedAt)
+
+		changes = append(changes, c)
+	}
+
+	return changes, nil
 }
 
 // FindProductByBarcode finds a product by its barcode

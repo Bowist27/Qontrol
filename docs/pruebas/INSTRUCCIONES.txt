@@ -5,13 +5,23 @@
 REQUISITOS:
 - Tener Node.js instalado (comando 'node' disponible).
 - Tener el backend (auth-service) corriendo en localhost:8080.
+- Tener el backend (audit-service) corriendo en localhost:8085.
 
 -------------------------------------------------------------------
- OPCIÓN 1: EJECUTAR LA PRUEBA DE LOGOUT (ESPECÍFICA)
+ OPCIÓN 1: EJECUTAR PRUEBAS ESPECÍFICAS
 -------------------------------------------------------------------
-Para probar específicamente la HU09 (Logout Seguro), ejecuta:
 
+Para HU09 (Logout Seguro):
     node docs/pruebas/test_hu09_logout.js
+
+Para HU10 (Dashboard de Auditorías):
+    node docs/pruebas/test_hu10_audits.js
+
+Para HU11 (Ciclo de Vida de Auditoría):
+    node docs/pruebas/test_hu11_audit_lifecycle.js
+
+Para HU12 (Catálogo Maestro):
+    node docs/pruebas/test_hu12_catalog.js
 
 -------------------------------------------------------------------
  OPCIÓN 2: EJECUTAR TODAS LAS PRUEBAS DE LA CARPETA (MASIVO)
