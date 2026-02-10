@@ -56,6 +56,35 @@ func NewPostgresRepository(db *sql.DB) *PostgresRepository {
 	return &PostgresRepository{db: db}
 }
 
+// timeAgo returns a human-readable time difference string
+func timeAgo(t time.Time) string {
+	diff := time.Since(t)
+	switch {
+	case diff < time.Minute:
+		return "hace unos segundos"
+	case diff < time.Hour:
+		mins := int(diff.Minutes())
+		if mins == 1 {
+			return "hace 1 minuto"
+		}
+		return fmt.Sprintf("hace %d minutos", mins)
+	case diff < 24*time.Hour:
+		hours := int(diff.Hours())
+		if hours == 1 {
+			return "hace 1 hora"
+		}
+		return fmt.Sprintf("hace %d horas", hours)
+	case diff < 48*time.Hour:
+		return "ayer"
+	default:
+		days := int(diff.Hours() / 24)
+		if days < 7 {
+			return fmt.Sprintf("hace %d días", days)
+		}
+		return t.Format("02/01/2006")
+	}
+}
+
 // FindAllStores returns all active stores
 func (r *PostgresRepository) FindAllStores(ctx context.Context) ([]domain.Store, error) {
 	query := `SELECT id, name, status, created_at FROM stores WHERE status = true ORDER BY name`
@@ -328,6 +357,180 @@ func (r *PostgresRepository) GetAllProducts(ctx context.Context) ([]domain.Produ
 		products = append(products, p)
 	}
 	return products, nil
+}
+
+// GetProductsPaginated returns paginated products with optional search
+func (r *PostgresRepository) GetProductsPaginated(ctx context.Context, page, limit int, search string) ([]domain.Product, int, error) {
+	offset := (page - 1) * limit
+	
+	var totalCount int
+	var countQuery string
+	var dataQuery string
+	var args []interface{}
+	
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		countQuery = `SELECT COUNT(*) FROM products WHERE sku ILIKE $1 OR name ILIKE $1 OR COALESCE(barcode, '') ILIKE $1`
+		dataQuery = `
+			SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+			FROM products 
+			WHERE sku ILIKE $1 OR name ILIKE $1 OR COALESCE(barcode, '') ILIKE $1
+			ORDER BY sku
+			LIMIT $2 OFFSET $3`
+		args = []interface{}{searchPattern, limit, offset}
+		
+		err := r.db.QueryRowContext(ctx, countQuery, searchPattern).Scan(&totalCount)
+		if err != nil {
+			return nil, 0, err
+		}
+	} else {
+		countQuery = `SELECT COUNT(*) FROM products`
+		dataQuery = `
+			SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+			FROM products 
+			ORDER BY sku
+			LIMIT $1 OFFSET $2`
+		args = []interface{}{limit, offset}
+		
+		err := r.db.QueryRowContext(ctx, countQuery).Scan(&totalCount)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	
+	rows, err := r.db.QueryContext(ctx, dataQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var products []domain.Product
+	for rows.Next() {
+		var p domain.Product
+		if err := rows.Scan(&p.ID, &p.SKU, &p.Barcode, &p.Name, &p.Unit, &p.LastPrice, &p.LastUpdated, &p.Source, &p.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		products = append(products, p)
+	}
+	return products, totalCount, nil
+}
+
+// UpdateProduct updates a product's fields
+func (r *PostgresRepository) UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE products 
+		SET name = $2, barcode = NULLIF($3, ''), unit = $4, last_price = $5, last_updated = NOW()
+		WHERE id = $1`,
+		id, name, barcode, unit, price)
+	if err != nil {
+		return err
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("product with id %d not found", id)
+	}
+	return nil
+}
+
+// DeleteProduct deletes a product by ID
+func (r *PostgresRepository) DeleteProduct(ctx context.Context, id int) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM products WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("product with id %d not found", id)
+	}
+	return nil
+}
+
+// GetProductByID finds a product by its ID
+func (r *PostgresRepository) GetProductByID(ctx context.Context, id int) (*domain.Product, error) {
+	var p domain.Product
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+		FROM products WHERE id = $1`, id).
+		Scan(&p.ID, &p.SKU, &p.Barcode, &p.Name, &p.Unit, &p.LastPrice, &p.LastUpdated, &p.Source, &p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// CreateProduct creates a new product
+func (r *PostgresRepository) CreateProduct(ctx context.Context, product *domain.Product) (int, error) {
+	var id int
+	err := r.db.QueryRowContext(ctx, `
+		INSERT INTO products (sku, barcode, name, unit, last_price, source, last_updated, created_at)
+		VALUES ($1, NULLIF($2, ''), $3, $4, $5, 'Manual', NOW(), NOW())
+		RETURNING id`,
+		product.SKU, product.Barcode, product.Name, product.Unit, product.LastPrice).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// SaveProductChange saves a product change to the audit log
+func (r *PostgresRepository) SaveProductChange(ctx context.Context, change *domain.ProductChange) error {
+	oldValuesJSON, _ := json.Marshal(change.OldValues)
+	newValuesJSON, _ := json.Marshal(change.NewValues)
+	
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO product_changes (product_id, product_sku, product_name, action, old_values, new_values, user_email, user_name, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+		change.ProductID, change.ProductSKU, change.ProductName, change.Action, oldValuesJSON, newValuesJSON, change.UserEmail, change.UserName)
+	return err
+}
+
+// GetProductChanges returns the history of manual product changes
+func (r *PostgresRepository) GetProductChanges(ctx context.Context, limit int) ([]domain.ProductChange, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, COALESCE(product_id, 0), product_sku, product_name, action, 
+		       COALESCE(old_values::text, '{}'), COALESCE(new_values::text, '{}'), 
+		       user_email, user_name, created_at
+		FROM product_changes
+		ORDER BY created_at DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var changes []domain.ProductChange
+	for rows.Next() {
+		var c domain.ProductChange
+		var oldValuesStr, newValuesStr string
+		err := rows.Scan(&c.ID, &c.ProductID, &c.ProductSKU, &c.ProductName, &c.Action,
+			&oldValuesStr, &newValuesStr, &c.UserEmail, &c.UserName, &c.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+
+		// Parse JSON values
+		json.Unmarshal([]byte(oldValuesStr), &c.OldValues)
+		json.Unmarshal([]byte(newValuesStr), &c.NewValues)
+
+		// Calculate time ago
+		c.TimeAgo = timeAgo(c.CreatedAt)
+
+		changes = append(changes, c)
+	}
+
+	return changes, nil
 }
 
 // FindProductByBarcode finds a product by its barcode
@@ -727,7 +930,8 @@ func (r *PostgresRepository) RestoreCatalogImport(ctx context.Context, importID 
 	return tx.Commit()
 }
 
-// DiscardCatalogImport deletes a pending catalog import and its items
+// DiscardCatalogImport deletes a catalog import and its items
+// If the import is 'applied' (vigente), it first reverts changes and restores the initial import
 func (r *PostgresRepository) DiscardCatalogImport(ctx context.Context, importID int) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -735,19 +939,153 @@ func (r *PostgresRepository) DiscardCatalogImport(ctx context.Context, importID 
 	}
 	defer tx.Rollback()
 
+	// Check the status of the import to delete
+	var status string
+	err = tx.QueryRowContext(ctx, `SELECT status FROM catalog_imports WHERE id = $1`, importID).Scan(&status)
+	if err != nil {
+		return err
+	}
+
+	// If it's applied (vigente), we need to revert changes and restore initial
+	if status == "applied" {
+		// First, revert changes made by this import
+		type revertItem struct {
+			sku      string
+			oldPrice *float64
+		}
+		var revertItems []revertItem
+
+		rows, err := tx.QueryContext(ctx, `
+			SELECT sku, old_price FROM catalog_import_items 
+			WHERE import_id = $1 AND applied = true`, importID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var item revertItem
+			if err := rows.Scan(&item.sku, &item.oldPrice); err != nil {
+				rows.Close()
+				return err
+			}
+			revertItems = append(revertItems, item)
+		}
+		rows.Close()
+
+		// Apply reversions
+		for _, item := range revertItems {
+			if item.oldPrice != nil {
+				_, err = tx.ExecContext(ctx, `UPDATE products SET last_price = $2, last_updated = NOW() WHERE sku = $1`, item.sku, *item.oldPrice)
+				if err != nil {
+					return err
+				}
+			} else {
+				_, err = tx.ExecContext(ctx, `DELETE FROM products WHERE sku = $1`, item.sku)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		// Find the most recent import by date (previous in time) to restore
+		var previousID int
+		err = tx.QueryRowContext(ctx, `
+			SELECT id FROM catalog_imports 
+			WHERE id != $1
+			ORDER BY COALESCE(applied_at, created_at) DESC 
+			LIMIT 1`, importID).Scan(&previousID)
+		
+		if err == nil && previousID > 0 {
+			// Restore the previous import - apply its changes
+			type applyItem struct {
+				sku      string
+				newPrice float64
+			}
+			var applyItems []applyItem
+
+			rows2, err := tx.QueryContext(ctx, `
+				SELECT sku, new_price FROM catalog_import_items 
+				WHERE import_id = $1`, previousID)
+			if err != nil {
+				return err
+			}
+			for rows2.Next() {
+				var item applyItem
+				if err := rows2.Scan(&item.sku, &item.newPrice); err != nil {
+					rows2.Close()
+					return err
+				}
+				applyItems = append(applyItems, item)
+			}
+			rows2.Close()
+
+			// Apply previous import prices
+			for _, item := range applyItems {
+				_, err = tx.ExecContext(ctx, `UPDATE products SET last_price = $2, last_updated = NOW() WHERE sku = $1`, item.sku, item.newPrice)
+				if err != nil {
+					return err
+				}
+			}
+
+			// Mark previous as applied
+			_, err = tx.ExecContext(ctx, `UPDATE catalog_import_items SET applied = true WHERE import_id = $1`, previousID)
+			if err != nil {
+				return err
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE catalog_imports SET status = 'applied', applied_at = NOW() WHERE id = $1`, previousID)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	// Delete import items first
 	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_import_items WHERE import_id = $1`, importID)
 	if err != nil {
 		return err
 	}
 
-	// Delete import
-	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_imports WHERE id = $1 AND status = 'pending'`, importID)
+	// Delete import (now allow any status)
+	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_imports WHERE id = $1`, importID)
 	if err != nil {
 		return err
 	}
 
 	return tx.Commit()
+}
+
+// ClearCatalog deletes all products and import history
+func (r *PostgresRepository) ClearCatalog(ctx context.Context) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	// Delete all import items
+	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_import_items`)
+	if err != nil {
+		return 0, err
+	}
+
+	// Delete all imports
+	_, err = tx.ExecContext(ctx, `DELETE FROM catalog_imports`)
+	if err != nil {
+		return 0, err
+	}
+
+	// Delete all products
+	result, err := tx.ExecContext(ctx, `DELETE FROM products`)
+	if err != nil {
+		return 0, err
+	}
+
+	deleted, _ := result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return deleted, nil
 }
 
 // GetLatestPendingImport returns the most recent pending import with its items

@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { catalogApi, type ValuationProduct, type ValuationSummary, type ImportHistoryItem } from '../../services/catalog.api';
+import { createPortal } from 'react-dom';
+import { catalogApi, type ValuationProduct, type ValuationSummary, type ImportHistoryItem, type Product, type ProductChange, type CreateProductRequest } from '../../services/catalog.api';
 
 type FilterType = 'all' | 'price_up' | 'price_down' | 'new' | 'unchanged';
+type HistoryTabType = 'imports' | 'changes';
 
 interface UndoState {
   show: boolean;
@@ -14,9 +16,23 @@ const CatalogView: React.FC = () => {
   // Data state
   const [summary, setSummary] = useState<ValuationSummary | null>(null);
   const [products, setProducts] = useState<ValuationProduct[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
   const [history, setHistory] = useState<ImportHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [catalogStats, setCatalogStats] = useState<{ totalCount: number; totalValue: number }>({ totalCount: 0, totalValue: 0 });
+  
+  // Editing state
+  const [editingProductId, setEditingProductId] = useState<number | null>(null);
+  const [editingField, setEditingField] = useState<'name' | 'barcode' | 'unit' | 'price' | null>(null);
+  const [editValue, setEditValue] = useState<string>('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [catalogSearchTerm, setCatalogSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
   
   // Drag & Drop state
   const [isDragging, setIsDragging] = useState(false);
@@ -34,6 +50,42 @@ const CatalogView: React.FC = () => {
   const [applying, setApplying] = useState(false);
   const [showDetails, setShowDetails] = useState(true);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [restoreConfirmId, setRestoreConfirmId] = useState<number | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [restoringId, setRestoringId] = useState<number | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const menuButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+  
+  // Product menu state (separate from history menu)
+  const [productMenuOpenId, setProductMenuOpenId] = useState<number | null>(null);
+  const [productMenuPosition, setProductMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const [deleteProductConfirmId, setDeleteProductConfirmId] = useState<number | null>(null);
+  const [deletingProductId, setDeletingProductId] = useState<number | null>(null);
+  const productMenuButtonRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+  
+  // Manual changes history state
+  const [productChanges, setProductChanges] = useState<ProductChange[]>([]);
+  const [historyTab, setHistoryTab] = useState<HistoryTabType>('imports');
+  
+  // Sidebar pagination state
+  const [importsPage, setImportsPage] = useState(1);
+  const [importsPerPage, setImportsPerPage] = useState(10);
+  const [changesPage, setChangesPage] = useState(1);
+  const [changesPerPage, setChangesPerPage] = useState(10);
+  
+  // Add product modal state
+  const [showAddProductModal, setShowAddProductModal] = useState(false);
+  const [addingProduct, setAddingProduct] = useState(false);
+  const [newProduct, setNewProduct] = useState<CreateProductRequest>({
+    sku: '',
+    name: '',
+    barcode: '',
+    unit: 'PZ',
+    price: 0
+  });
   
   // Undo state
   const [undoState, setUndoState] = useState<UndoState>({
@@ -44,20 +96,61 @@ const CatalogView: React.FC = () => {
   });
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce search input
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      setDebouncedSearchTerm(catalogSearchTerm);
+      setCurrentPage(1);
+    }, 300);
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [catalogSearchTerm]);
 
   // Load data
   useEffect(() => {
     loadData();
   }, []);
 
+  // Load products whenever pagination or debounced search changes
+  useEffect(() => {
+    loadCatalogProducts();
+  }, [currentPage, itemsPerPage, debouncedSearchTerm]);
+
+  const loadCatalogProducts = async () => {
+    try {
+      const catalogData = await catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm);
+      setCatalogProducts(catalogData.products || []);
+      setCatalogStats({ totalCount: catalogData.total_count || 0, totalValue: catalogData.total_value || 0 });
+    } catch (err) {
+      console.error('Error loading catalog products:', err);
+    }
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
       
-      // First load history (this should always work)
-      const historyData = await catalogApi.getImportHistory(10);
+      // Load history, product changes, and initial catalog products
+      // Get more items for pagination (up to 200)
+      const [historyData, catalogData, changesData] = await Promise.all([
+        catalogApi.getImportHistory(200),
+        catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm),
+        catalogApi.getProductChanges(1, 200)
+      ]);
+      
       setHistory(historyData);
+      setCatalogProducts(catalogData.products || []);
+      setCatalogStats({ totalCount: catalogData.total_count || 0, totalValue: catalogData.total_value || 0 });
+      setProductChanges(changesData.changes || []);
       
       // Try to get pending valuation - if none exists, that's OK
       try {
@@ -73,7 +166,7 @@ const CatalogView: React.FC = () => {
         const allSkus = new Set(productsData.map(p => p.sku));
         setSelectedProducts(allSkus);
       } catch {
-        // No pending valuation - that's fine, show drag & drop
+        // No pending valuation - that's fine, show catalog table
         setSummary(null);
         setProducts([]);
         setSelectedProducts(new Set());
@@ -83,6 +176,39 @@ const CatalogView: React.FC = () => {
       setError(err instanceof Error ? err.message : 'Error loading catalog data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Load product changes (for refreshing after operations)
+  const loadProductChanges = async () => {
+    try {
+      const changesData = await catalogApi.getProductChanges(1, 50);
+      setProductChanges(changesData.changes || []);
+    } catch (err) {
+      console.error('Error loading product changes:', err);
+    }
+  };
+
+  // Handle adding a new product
+  const handleAddProduct = async () => {
+    if (!newProduct.sku || !newProduct.name) {
+      return;
+    }
+    
+    try {
+      setAddingProduct(true);
+      await catalogApi.createProduct(newProduct);
+      
+      // Reload data to show new product
+      await loadData();
+      
+      // Reset form and close modal
+      setNewProduct({ sku: '', name: '', barcode: '', unit: 'PZ', price: 0 });
+      setShowAddProductModal(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al agregar producto');
+    } finally {
+      setAddingProduct(false);
     }
   };
 
@@ -269,6 +395,24 @@ const CatalogView: React.FC = () => {
     }
   };
 
+  // Handle clear entire catalog
+  const handleClearCatalog = async () => {
+    try {
+      setClearing(true);
+      await catalogApi.clearCatalog();
+      setShowClearConfirm(false);
+      setSummary(null);
+      setProducts([]);
+      setHistory([]);
+      setSelectedProducts(new Set());
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al borrar el catálogo');
+    } finally {
+      setClearing(false);
+    }
+  };
+
   // Format helpers
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('es-MX', {
@@ -327,13 +471,117 @@ const CatalogView: React.FC = () => {
   // Handle revert/restore from history - moved up to be available in all states
   const handleRevertFromHistory = async (importId: number) => {
     try {
+      setRestoringId(importId);
       setMenuOpenId(null);
       await catalogApi.restoreImport(importId);
+      setRestoreConfirmId(null);
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al restaurar');
+    } finally {
+      setRestoringId(null);
     }
   };
+
+  // Handle delete individual import from history
+  const handleDeleteImport = async (importId: number) => {
+    try {
+      setDeletingId(importId);
+      setMenuOpenId(null);
+      // Use discard for all - backend handles reverting applied imports and restoring initial
+      await catalogApi.discardImport(importId);
+      setDeleteConfirmId(null);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al eliminar');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  // Handle inline edit save
+  const handleSaveEdit = async (productId: number) => {
+    const product = catalogProducts.find(p => p.id === productId);
+    if (!product || !editingField) return;
+
+    try {
+      setSavingEdit(true);
+      const updatedData = {
+        name: editingField === 'name' ? editValue : product.name,
+        barcode: editingField === 'barcode' ? editValue : (product.barcode || ''),
+        unit: editingField === 'unit' ? editValue : product.unit,
+        price: editingField === 'price' ? parseFloat(editValue) || 0 : product.last_price,
+      };
+
+      await catalogApi.updateProduct(productId, updatedData);
+      
+      // Update local state
+      setCatalogProducts(prev => prev.map(p => 
+        p.id === productId 
+          ? { ...p, name: updatedData.name, barcode: updatedData.barcode, unit: updatedData.unit, last_price: updatedData.price }
+          : p
+      ));
+      
+      // Reload product changes to show the update in manual history
+      loadProductChanges();
+      
+      setEditingProductId(null);
+      setEditingField(null);
+      setEditValue('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  // Start editing a field
+  const startEditing = (productId: number, field: 'name' | 'barcode' | 'unit' | 'price', currentValue: string | number) => {
+    setEditingProductId(productId);
+    setEditingField(field);
+    setEditValue(String(currentValue));
+  };
+
+  // Cancel editing
+  const cancelEditing = () => {
+    setEditingProductId(null);
+    setEditingField(null);
+    setEditValue('');
+  };
+
+  // Delete a product
+  const handleDeleteProduct = async (productId: number) => {
+    try {
+      setDeletingProductId(productId);
+      await catalogApi.deleteProduct(productId);
+      
+      // Update local state
+      setCatalogProducts(prev => prev.filter(p => p.id !== productId));
+      setCatalogStats(prev => ({ ...prev, totalCount: prev.totalCount - 1 }));
+      
+      // Reload product changes to show the delete in manual history
+      loadProductChanges();
+      
+      setDeleteProductConfirmId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al eliminar');
+    } finally {
+      setDeletingProductId(null);
+    }
+  };
+
+  // Open product menu
+  const openProductMenu = (productId: number, buttonRef: HTMLButtonElement | null) => {
+    if (!buttonRef) return;
+    const rect = buttonRef.getBoundingClientRect();
+    setProductMenuPosition({ top: rect.bottom + 4, left: rect.right - 120 });
+    setProductMenuOpenId(productId);
+  };
+
+  // Pagination calculations (using server-side total)
+  const totalItems = catalogStats.totalCount;
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+  const startIndex = (currentPage - 1) * itemsPerPage;
 
   // Loading state
   if (loading) {
@@ -373,29 +621,51 @@ const CatalogView: React.FC = () => {
   // No data state - Show big drag & drop
   if (!summary) {
     return (
-      <div className="h-screen bg-gray-100 flex overflow-hidden">
+      <div className="h-full bg-gray-100 flex overflow-hidden">
         {/* ===== LEFT SIDEBAR - HISTORIAL ===== */}
         <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
           {/* Sidebar Header */}
-          <div className="p-4 border-b border-gray-200 flex items-center gap-2">
-            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <h2 className="font-semibold text-gray-900">Historial</h2>
+          <div className="p-4 border-b border-gray-200">
+            <div className="flex items-center gap-2 mb-3">
+              <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <h2 className="font-semibold text-gray-900">Historial</h2>
+            </div>
+            {/* Tabs */}
+            <div className="flex border-b border-gray-200">
+              <button
+                onClick={() => setHistoryTab('imports')}
+                className={`flex-1 text-xs py-2 font-medium ${historyTab === 'imports' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                PDF Imports
+              </button>
+              <button
+                onClick={() => setHistoryTab('changes')}
+                className={`flex-1 text-xs py-2 font-medium ${historyTab === 'changes' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Cambios
+              </button>
+            </div>
           </div>
 
           {/* History List */}
-          <div className="flex-1 overflow-y-auto p-2">
+          <div className="flex-1 overflow-y-auto overflow-x-visible p-2">
+            {historyTab === 'imports' ? (
+              <>
             {history.length === 0 ? (
               <div className="p-4 text-center text-gray-500 text-sm">
                 No hay historial
               </div>
             ) : (
               <div className="space-y-2">
-                {history.map((item, index) => {
-                  const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
+                {history.slice((importsPage - 1) * importsPerPage, importsPage * importsPerPage).map((item, index) => {
+                  const globalIndex = (importsPage - 1) * importsPerPage + index;
+                  const isFirstApplied = globalIndex === history.findIndex(h => h.status === 'applied');
                   const isVigente = item.status === 'applied' && isFirstApplied;
-                  const canRestore = !isVigente && item.status !== 'pending';
+                  const isInitial = item.file_name?.toLowerCase().includes('inicial');
+                  // Show menu button unless it's the initial that is also vigente
+                  const showMenuButton = !(isVigente && isInitial);
                   
                   const getBadge = () => {
                     if (isVigente) return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500 text-white">Vigente</span>;
@@ -428,32 +698,31 @@ const CatalogView: React.FC = () => {
                             <span className="text-orange-600">{item.price_changes} precios</span>
                           )}
                         </div>
-                        {canRestore && (
-                          <div className="relative">
+                        {showMenuButton && (
+                          <div className="relative z-10">
                             <button
+                              type="button"
+                              ref={(el) => { if (el) menuButtonRefs.current.set(item.id, el); }}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setMenuOpenId(menuOpenId === item.id ? null : item.id);
+                                e.preventDefault();
+                                console.log('Menu button clicked for item:', item.id);
+                                if (menuOpenId === item.id) {
+                                  setMenuOpenId(null);
+                                  setMenuPosition(null);
+                                } else {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const left = Math.max(10, Math.min(rect.left, window.innerWidth - 170));
+                                  setMenuPosition({ top: rect.bottom + 4, left });
+                                  setMenuOpenId(item.id);
+                                }
                               }}
-                              className="p-1 hover:bg-gray-200 rounded transition-colors"
+                              className="p-1.5 hover:bg-gray-200 rounded transition-colors cursor-pointer"
                             >
-                              <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                              <svg className="w-4 h-4 text-gray-500 pointer-events-none" fill="currentColor" viewBox="0 0 20 20">
                                 <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" />
                               </svg>
                             </button>
-                            {menuOpenId === item.id && (
-                              <div className="absolute right-0 top-6 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 min-w-[160px]">
-                                <button
-                                  onClick={() => handleRevertFromHistory(item.id)}
-                                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                                >
-                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                                  </svg>
-                                  Restaurar versión
-                                </button>
-                              </div>
-                            )}
                           </div>
                         )}
                       </div>
@@ -462,55 +731,845 @@ const CatalogView: React.FC = () => {
                 })}
               </div>
             )}
+              </>
+            ) : (
+              /* Manual Changes Tab */
+              productChanges.length === 0 ? (
+                <div className="p-4 text-center text-gray-500 text-sm">
+                  No hay cambios manuales
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {productChanges.slice((changesPage - 1) * changesPerPage, changesPage * changesPerPage).map((change) => {
+                    const getActionBadge = () => {
+                      if (change.action === 'create') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500 text-white">Creado</span>;
+                      if (change.action === 'update') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-500 text-white">Editado</span>;
+                      return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-500 text-white">Eliminado</span>;
+                    };
+                    
+                    return (
+                      <div
+                        key={change.id}
+                        className="p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <div className="flex-1">
+                            <div className="text-xs text-gray-500 mb-1">{change.time_ago}</div>
+                            <div className="text-xs text-gray-700">
+                              <span className="text-blue-600">▲</span> {change.user_name || change.user_email}
+                            </div>
+                          </div>
+                          {getActionBadge()}
+                        </div>
+                        <div className="text-xs font-medium text-gray-900 truncate">{change.product_name}</div>
+                        <div className="text-xs text-gray-500">SKU: {change.product_sku}</div>
+                        {change.action === 'update' && change.old_values && change.new_values && (
+                          <div className="mt-1 text-xs text-gray-500">
+                            {Object.keys(change.new_values).map(key => (
+                              <div key={key}>
+                                {key}: {String(change.old_values?.[key])} → {String(change.new_values?.[key])}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            )}
+          </div>
+          
+          {/* Pagination Footer */}
+          <div className="p-2 border-t border-gray-200 bg-gray-50">
+            {historyTab === 'imports' && history.length > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1">
+                  <span className="text-gray-700 font-medium">Filas:</span>
+                  <select
+                    value={importsPerPage}
+                    onChange={(e) => { setImportsPerPage(Number(e.target.value)); setImportsPage(1); }}
+                    className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white text-gray-700"
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-600">
+                    {Math.min((importsPage - 1) * importsPerPage + 1, history.length)}-{Math.min(importsPage * importsPerPage, history.length)} de {history.length}
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setImportsPage(p => Math.max(1, p - 1))}
+                      disabled={importsPage === 1}
+                      className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => setImportsPage(p => Math.min(Math.ceil(history.length / importsPerPage), p + 1))}
+                      disabled={importsPage >= Math.ceil(history.length / importsPerPage)}
+                      className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {historyTab === 'changes' && productChanges.length > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1">
+                  <span className="text-gray-700 font-medium">Filas:</span>
+                  <select
+                    value={changesPerPage}
+                    onChange={(e) => { setChangesPerPage(Number(e.target.value)); setChangesPage(1); }}
+                    className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white text-gray-700"
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-600">
+                    {Math.min((changesPage - 1) * changesPerPage + 1, productChanges.length)}-{Math.min(changesPage * changesPerPage, productChanges.length)} de {productChanges.length}
+                  </span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setChangesPage(p => Math.max(1, p - 1))}
+                      disabled={changesPage === 1}
+                      className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => setChangesPage(p => Math.min(Math.ceil(productChanges.length / changesPerPage), p + 1))}
+                      disabled={changesPage >= Math.ceil(productChanges.length / changesPerPage)}
+                      className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* ===== MAIN CONTENT - BIG DROP ZONE ===== */}
-        <div className="flex-1 flex flex-col overflow-hidden p-6">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,application/pdf"
-            onChange={handleFileInputChange}
-            className="hidden"
-          />
+        {/* Clear Catalog Confirmation Modal */}
+        {showClearConfirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">¿Borrar todo el catálogo?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Esta acción eliminará <strong>todos los productos</strong> y el <strong>historial de importaciones</strong>. 
+                    El archivo Excel (LISTADF.xlsx) no se verá afectado y podrás volver a importarlo.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => setShowClearConfirm(false)}
+                  disabled={clearing}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleClearCatalog}
+                  disabled={clearing}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {clearing ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Borrando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Sí, borrar todo
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===== MAIN CONTENT - CATALOG TABLE ===== */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Header Bar */}
+          <div className="bg-white border-b border-gray-200 px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-6">
+                <h1 className="text-2xl font-bold text-gray-900">Catálogo Maestro</h1>
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-blue-50 rounded-full">
+                  <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                  <span className="text-sm font-semibold text-blue-700">{catalogStats.totalCount.toLocaleString('es-MX')}</span>
+                  <span className="text-sm text-blue-600">productos</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {/* Search */}
+                <div className="relative">
+                  <svg className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    placeholder="Buscar..."
+                    value={catalogSearchTerm}
+                    onChange={(e) => setCatalogSearchTerm(e.target.value)}
+                    className="w-64 pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  />
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  onChange={handleFileInputChange}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => setShowAddProductModal(true)}
+                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center gap-2 font-medium"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Agregar Producto
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingFile}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-2 font-medium"
+                >
+                  {uploadingFile ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Procesando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Actualizar Catálogo
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Drag overlay */}
           <div
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`flex-1 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center cursor-pointer transition-all ${
-              isDragging 
-                ? 'border-blue-500 bg-blue-50' 
-                : 'border-gray-300 bg-white hover:border-blue-400 hover:bg-gray-50'
-            } ${uploadingFile ? 'opacity-50 pointer-events-none' : ''}`}
+            className={`flex-1 overflow-auto relative ${isDragging ? 'bg-blue-50' : ''}`}
           >
-            {uploadingFile ? (
-              <div className="flex flex-col items-center gap-4">
-                <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600"></div>
-                <p className="text-lg text-gray-600">Procesando reporte de valuación...</p>
-              </div>
-            ) : (
-              <>
-                <div className={`w-24 h-24 rounded-full flex items-center justify-center mb-6 ${
-                  isDragging ? 'bg-blue-100' : 'bg-gray-100'
-                }`}>
-                  <svg className={`w-12 h-12 ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            {isDragging && (
+              <div className="absolute inset-0 bg-blue-50/90 flex items-center justify-center z-10 pointer-events-none">
+                <div className="text-center">
+                  <svg className="w-16 h-16 text-blue-500 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
+                  <p className="text-xl font-semibold text-blue-600">Suelta el archivo aquí</p>
                 </div>
-                <h2 className="text-2xl font-semibold text-gray-800 mb-2">Sube tu Reporte de Valuación</h2>
-                <p className="text-gray-500 mb-6">Arrastra un archivo PDF aquí o haz clic para seleccionar</p>
-                <div className="flex items-center gap-2 text-sm text-gray-400">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span>Solo archivos PDF de reportes de valuación</span>
-                </div>
-              </>
+              </div>
+            )}
+
+            {/* Products Table */}
+            {catalogProducts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                </svg>
+                <h3 className="text-lg font-medium mb-2">No hay productos en el catálogo</h3>
+                <p className="text-sm">Sube un reporte de valuación para comenzar</p>
+              </div>
+            ) : (
+              <table className="w-full">
+                <thead className="bg-gray-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SKU</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código de Barras</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unidad</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Precio</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {catalogProducts.map((product) => (
+                    <tr key={product.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm font-mono text-gray-600">{product.sku}</td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        {editingProductId === product.id && editingField === 'name' ? (
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEdit(product.id);
+                              if (e.key === 'Escape') cancelEditing();
+                            }}
+                            onBlur={() => handleSaveEdit(product.id)}
+                            autoFocus
+                            className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <span 
+                            onClick={() => startEditing(product.id, 'name', product.name)}
+                            className="cursor-pointer hover:text-blue-600 hover:underline text-gray-900"
+                          >
+                            {product.name || '-'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm font-mono text-gray-500">
+                        {editingProductId === product.id && editingField === 'barcode' ? (
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEdit(product.id);
+                              if (e.key === 'Escape') cancelEditing();
+                            }}
+                            onBlur={() => handleSaveEdit(product.id)}
+                            autoFocus
+                            className="w-full px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <span 
+                            onClick={() => startEditing(product.id, 'barcode', product.barcode || '')}
+                            className="cursor-pointer hover:text-blue-600 hover:underline"
+                          >
+                            {product.barcode || '—'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-500">
+                        {editingProductId === product.id && editingField === 'unit' ? (
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEdit(product.id);
+                              if (e.key === 'Escape') cancelEditing();
+                            }}
+                            onBlur={() => handleSaveEdit(product.id)}
+                            autoFocus
+                            className="w-24 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        ) : (
+                          <span 
+                            onClick={() => startEditing(product.id, 'unit', product.unit)}
+                            className="cursor-pointer hover:text-blue-600 hover:underline"
+                          >
+                            {product.unit}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">
+                        {editingProductId === product.id && editingField === 'price' ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveEdit(product.id);
+                              if (e.key === 'Escape') cancelEditing();
+                            }}
+                            onBlur={() => handleSaveEdit(product.id)}
+                            autoFocus
+                            className="w-28 px-2 py-1 border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-right"
+                          />
+                        ) : (
+                          <span 
+                            onClick={() => startEditing(product.id, 'price', product.last_price || 0)}
+                            className="cursor-pointer hover:text-blue-600 hover:underline tabular-nums text-gray-900"
+                          >
+                            ${(product.last_price || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {savingEdit && editingProductId === product.id ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent mx-auto"></div>
+                        ) : deletingProductId === product.id ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-red-600 border-t-transparent mx-auto"></div>
+                        ) : (
+                          <button
+                            ref={(el) => { if (el) productMenuButtonRefs.current.set(product.id, el); }}
+                            onClick={() => {
+                              if (productMenuOpenId === product.id) {
+                                setProductMenuOpenId(null);
+                                setProductMenuPosition(null);
+                              } else {
+                                openProductMenu(product.id, productMenuButtonRefs.current.get(product.id) || null);
+                              }
+                            }}
+                            className="text-gray-400 hover:text-gray-600 transition-colors p-1"
+                          >
+                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                              <circle cx="12" cy="5" r="1.5" />
+                              <circle cx="12" cy="12" r="1.5" />
+                              <circle cx="12" cy="19" r="1.5" />
+                            </svg>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            
+            {catalogProducts.length === 0 && debouncedSearchTerm && (
+              <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+                <svg className="w-12 h-12 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p className="text-sm">No se encontraron productos con "{debouncedSearchTerm}"</p>
+              </div>
             )}
           </div>
+
+          {/* Pagination Footer */}
+          {totalItems > 0 && (
+            <div className="px-4 py-2.5 border-t border-gray-200 bg-gray-50 flex items-center justify-end gap-4">
+              <div className="flex items-center gap-2 text-sm text-gray-500">
+                <span>Filas:</span>
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                  className="border border-gray-200 rounded px-2 py-1 text-sm bg-white"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+
+              <span className="text-sm text-gray-500 tabular-nums">
+                {startIndex + 1}-{Math.min(startIndex + itemsPerPage, totalItems)} de {totalItems}
+              </span>
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-1.5 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-1.5 text-gray-500 hover:bg-gray-100 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Portal Dropdown Menu - No Summary State */}
+        {menuOpenId && menuPosition && createPortal(
+          <div 
+            className="fixed inset-0"
+            style={{ zIndex: 9998 }}
+            onClick={() => { setMenuOpenId(null); setMenuPosition(null); }}
+          >
+            <div 
+              className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1"
+              style={{ 
+                top: menuPosition.top, 
+                left: menuPosition.left,
+                zIndex: 9999,
+                minWidth: 160
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {(() => {
+                const item = history.find(h => h.id === menuOpenId);
+                if (!item) return null;
+                
+                const firstAppliedId = history.find(h => h.status === 'applied')?.id;
+                const isVigente = item.id === firstAppliedId && item.status === 'applied';
+                const isInitial = item.file_name?.toLowerCase().includes('inicial');
+                // Can restore if not vigente
+                const canRestore = !isVigente;
+                // Can delete if not initial (vigente can be deleted, initial cannot)
+                const canDelete = !isInitial;
+                
+                return (
+                  <>
+                    {canRestore && (
+                      <button
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          setMenuPosition(null);
+                          setRestoreConfirmId(menuOpenId);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                        </svg>
+                        Restaurar versión
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        onClick={() => {
+                          setMenuOpenId(null);
+                          setMenuPosition(null);
+                          setDeleteConfirmId(menuOpenId);
+                        }}
+                        className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Eliminar
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>,
+          document.body
+        )}
+
+        {/* Delete Import Confirmation Modal - No Summary State */}
+        {deleteConfirmId && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">¿Eliminar esta importación?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Esta acción eliminará permanentemente el registro de esta importación del historial.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => setDeleteConfirmId(null)}
+                  disabled={deletingId !== null}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleDeleteImport(deleteConfirmId)}
+                  disabled={deletingId !== null}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {deletingId === deleteConfirmId ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Eliminando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Sí, eliminar
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Restore Import Confirmation Modal - No Summary State */}
+        {restoreConfirmId && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center shrink-0">
+                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">¿Restaurar esta versión?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Se revertirá la versión vigente actual y se aplicarán los precios de esta importación.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => setRestoreConfirmId(null)}
+                  disabled={restoringId !== null}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleRevertFromHistory(restoreConfirmId)}
+                  disabled={restoringId !== null}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {restoringId === restoreConfirmId ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Restaurando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                      </svg>
+                      Sí, restaurar
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Product Menu Portal - No Summary State */}
+        {productMenuOpenId && productMenuPosition && createPortal(
+          <div 
+            className="fixed inset-0"
+            style={{ zIndex: 9998 }}
+            onClick={() => { setProductMenuOpenId(null); setProductMenuPosition(null); }}
+          >
+            <div 
+              className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1"
+              style={{ 
+                top: productMenuPosition.top, 
+                left: productMenuPosition.left,
+                zIndex: 9999,
+                minWidth: 120
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => {
+                  setProductMenuOpenId(null);
+                  setProductMenuPosition(null);
+                  setDeleteProductConfirmId(productMenuOpenId);
+                }}
+                className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Eliminar
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+
+        {/* Delete Product Confirmation Modal - No Summary State */}
+        {deleteProductConfirmId && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">¿Eliminar este producto?</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Esta acción eliminará permanentemente el producto del catálogo.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end mt-6">
+                <button
+                  onClick={() => setDeleteProductConfirmId(null)}
+                  disabled={deletingProductId !== null}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleDeleteProduct(deleteProductConfirmId)}
+                  disabled={deletingProductId !== null}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {deletingProductId === deleteProductConfirmId ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      Eliminando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Sí, eliminar
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      {/* Add Product Modal */}
+      {showAddProductModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Agregar Producto</h3>
+                <p className="text-sm text-gray-500">Crear un nuevo producto en el catálogo</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">SKU *</label>
+                <input
+                  type="text"
+                  value={newProduct.sku}
+                  onChange={(e) => setNewProduct({ ...newProduct, sku: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                  placeholder="Ej: PROD001"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <input
+                  type="text"
+                  value={newProduct.name}
+                  onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                  placeholder="Nombre del producto"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
+                <input
+                  type="text"
+                  value={newProduct.barcode}
+                  onChange={(e) => setNewProduct({ ...newProduct, barcode: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                  placeholder="Opcional"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Unidad</label>
+                  <select
+                    value={newProduct.unit}
+                    onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                  >
+                    <option value="PZ">Pieza (PZ)</option>
+                    <option value="KG">Kilogramo (KG)</option>
+                    <option value="LT">Litro (LT)</option>
+                    <option value="MT">Metro (MT)</option>
+                    <option value="CJ">Caja (CJ)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Precio</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newProduct.price}
+                    onChange={(e) => setNewProduct({ ...newProduct, price: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => {
+                  setShowAddProductModal(false);
+                  setNewProduct({ sku: '', name: '', barcode: '', unit: 'PZ', price: 0 });
+                }}
+                disabled={addingProduct}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleAddProduct}
+                disabled={addingProduct || !newProduct.sku || !newProduct.name}
+                className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+              >
+                {addingProduct ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Guardando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Agregar Producto
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     );
   }
@@ -564,26 +1623,47 @@ const CatalogView: React.FC = () => {
       {/* ===== LEFT SIDEBAR - HISTORIAL ===== */}
       <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
         {/* Sidebar Header */}
-        <div className="p-4 border-b border-gray-200 flex items-center gap-2">
-          <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <h2 className="font-semibold text-gray-900">Historial</h2>
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex items-center gap-2 mb-3">
+            <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h2 className="font-semibold text-gray-900">Historial</h2>
+          </div>
+          {/* Tabs */}
+          <div className="flex border-b border-gray-200">
+            <button
+              onClick={() => setHistoryTab('imports')}
+              className={`flex-1 text-xs py-2 font-medium ${historyTab === 'imports' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              PDF Imports
+            </button>
+            <button
+              onClick={() => setHistoryTab('changes')}
+              className={`flex-1 text-xs py-2 font-medium ${historyTab === 'changes' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Cambios
+            </button>
+          </div>
         </div>
 
         {/* History List */}
-        <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex-1 overflow-y-auto overflow-x-visible p-2">
+          {historyTab === 'imports' ? (
+            <>
           {history.length === 0 ? (
             <div className="p-4 text-center text-gray-500 text-sm">
               No hay historial
             </div>
           ) : (
             <div className="space-y-2">
-              {history.map((item, index) => {
-                const isFirstApplied = index === history.findIndex(h => h.status === 'applied');
+              {history.slice((importsPage - 1) * importsPerPage, importsPage * importsPerPage).map((item, index) => {
+                const globalIndex = (importsPage - 1) * importsPerPage + index;
+                const isFirstApplied = globalIndex === history.findIndex(h => h.status === 'applied');
                 const isVigente = item.status === 'applied' && isFirstApplied;
-                // Mostrar menú en CUALQUIER versión que no sea la vigente ni pendiente
-                const canRestore = !isVigente && item.status !== 'pending';
+                const isInitial = item.file_name?.toLowerCase().includes('inicial');
+                // Show menu button unless it's the initial that is also vigente
+                const showMenuButton = !(isVigente && isInitial);
                 
                 return (
                   <div
@@ -613,32 +1693,31 @@ const CatalogView: React.FC = () => {
                           <span className="text-orange-600">{item.price_changes} precios</span>
                         )}
                       </div>
-                      {canRestore && (
-                        <div className="relative">
+                      {showMenuButton && (
+                        <div className="relative z-10">
                           <button
+                            type="button"
+                            ref={(el) => { if (el) menuButtonRefs.current.set(item.id, el); }}
                             onClick={(e) => {
                               e.stopPropagation();
-                              setMenuOpenId(menuOpenId === item.id ? null : item.id);
+                              e.preventDefault();
+                              console.log('Menu button clicked for item:', item.id);
+                              if (menuOpenId === item.id) {
+                                setMenuOpenId(null);
+                                setMenuPosition(null);
+                              } else {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const left = Math.max(10, Math.min(rect.left, window.innerWidth - 170));
+                                setMenuPosition({ top: rect.bottom + 4, left });
+                                setMenuOpenId(item.id);
+                              }
                             }}
-                            className="p-1 hover:bg-gray-200 rounded transition-colors"
+                            className="p-1.5 hover:bg-gray-200 rounded transition-colors cursor-pointer"
                           >
-                            <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                            <svg className="w-4 h-4 text-gray-500 pointer-events-none" fill="currentColor" viewBox="0 0 20 20">
                               <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" />
                             </svg>
                           </button>
-                          {menuOpenId === item.id && (
-                            <div className="absolute right-0 top-6 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 min-w-[160px]">
-                              <button
-                                onClick={() => handleRevertFromHistory(item.id)}
-                                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                                </svg>
-                                Restaurar versión
-                              </button>
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>
@@ -647,8 +1726,360 @@ const CatalogView: React.FC = () => {
               })}
             </div>
           )}
+            </>
+          ) : (
+            /* Manual Changes Tab */
+            productChanges.length === 0 ? (
+              <div className="p-4 text-center text-gray-500 text-sm">
+                No hay cambios manuales
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {productChanges.slice((changesPage - 1) * changesPerPage, changesPage * changesPerPage).map((change) => {
+                  const getActionBadge = () => {
+                    if (change.action === 'create') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-emerald-500 text-white">Creado</span>;
+                    if (change.action === 'update') return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-500 text-white">Editado</span>;
+                    return <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-red-500 text-white">Eliminado</span>;
+                  };
+                  
+                  return (
+                    <div
+                      key={change.id}
+                      className="p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <div className="flex-1">
+                          <div className="text-xs text-gray-500 mb-1">{change.time_ago}</div>
+                          <div className="text-xs text-gray-700">
+                            <span className="text-blue-600">▲</span> {change.user_name || change.user_email}
+                          </div>
+                        </div>
+                        {getActionBadge()}
+                      </div>
+                      <div className="text-xs font-medium text-gray-900 truncate">{change.product_name}</div>
+                      <div className="text-xs text-gray-500">SKU: {change.product_sku}</div>
+                      {change.action === 'update' && change.old_values && change.new_values && (
+                        <div className="mt-1 text-xs text-gray-500">
+                          {Object.keys(change.new_values).map(key => (
+                            <div key={key}>
+                              {key}: {String(change.old_values?.[key])} → {String(change.new_values?.[key])}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          )}
+        </div>
+        
+        {/* Pagination Footer */}
+        <div className="p-2 border-t border-gray-200 bg-gray-50">
+          {historyTab === 'imports' && history.length > 0 && (
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1">
+                <span className="text-gray-700 font-medium">Filas:</span>
+                <select
+                  value={importsPerPage}
+                  onChange={(e) => { setImportsPerPage(Number(e.target.value)); setImportsPage(1); }}
+                  className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white text-gray-700"
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-600">
+                  {Math.min((importsPage - 1) * importsPerPage + 1, history.length)}-{Math.min(importsPage * importsPerPage, history.length)} de {history.length}
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setImportsPage(p => Math.max(1, p - 1))}
+                    disabled={importsPage === 1}
+                    className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setImportsPage(p => Math.min(Math.ceil(history.length / importsPerPage), p + 1))}
+                    disabled={importsPage >= Math.ceil(history.length / importsPerPage)}
+                    className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {historyTab === 'changes' && productChanges.length > 0 && (
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1">
+                <span className="text-gray-700 font-medium">Filas:</span>
+                <select
+                  value={changesPerPage}
+                  onChange={(e) => { setChangesPerPage(Number(e.target.value)); setChangesPage(1); }}
+                  className="border border-gray-300 rounded px-1 py-0.5 text-xs bg-white text-gray-700"
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-600">
+                  {Math.min((changesPage - 1) * changesPerPage + 1, productChanges.length)}-{Math.min(changesPage * changesPerPage, productChanges.length)} de {productChanges.length}
+                </span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setChangesPage(p => Math.max(1, p - 1))}
+                    disabled={changesPage === 1}
+                    className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setChangesPage(p => Math.min(Math.ceil(productChanges.length / changesPerPage), p + 1))}
+                    disabled={changesPage >= Math.ceil(productChanges.length / changesPerPage)}
+                    className="p-1 hover:bg-gray-200 rounded disabled:opacity-30"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Clear Catalog Confirmation Modal */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">¿Borrar todo el catálogo?</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Esta acción eliminará <strong>todos los productos</strong> y el <strong>historial de importaciones</strong>. 
+                  El archivo Excel (LISTADF.xlsx) no se verá afectado y podrás volver a importarlo.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                disabled={clearing}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleClearCatalog}
+                disabled={clearing}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+              >
+                {clearing ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Borrando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Sí, borrar todo
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Import Confirmation Modal */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">¿Eliminar esta importación?</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  {history.find(h => h.id === deleteConfirmId)?.status === 'pending' 
+                    ? 'Se descartará esta valuación pendiente sin aplicar cambios.'
+                    : 'Se revertirán los cambios de precios aplicados por esta importación.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => setDeleteConfirmId(null)}
+                disabled={deletingId !== null}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleDeleteImport(deleteConfirmId)}
+                disabled={deletingId !== null}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+              >
+                {deletingId === deleteConfirmId ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Eliminando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Sí, eliminar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restore Import Confirmation Modal */}
+      {restoreConfirmId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">¿Restaurar esta versión?</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  Se revertirá la versión vigente actual y se aplicarán los precios de esta importación.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => setRestoreConfirmId(null)}
+                disabled={restoringId !== null}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleRevertFromHistory(restoreConfirmId)}
+                disabled={restoringId !== null}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+              >
+                {restoringId === restoreConfirmId ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Restaurando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                    </svg>
+                    Sí, restaurar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Portal Dropdown Menu */}
+      {menuOpenId && menuPosition && createPortal(
+        <div 
+          className="fixed inset-0"
+          style={{ zIndex: 9998 }}
+          onClick={() => { setMenuOpenId(null); setMenuPosition(null); }}
+        >
+          <div 
+            className="fixed bg-white rounded-lg shadow-xl border border-gray-200 py-1"
+            style={{ 
+              top: menuPosition.top, 
+              left: menuPosition.left,
+              zIndex: 9999,
+              minWidth: 160
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {(() => {
+              const item = history.find(h => h.id === menuOpenId);
+              if (!item) return null;
+              
+              const firstAppliedId = history.find(h => h.status === 'applied')?.id;
+              const isVigente = item.id === firstAppliedId && item.status === 'applied';
+              const isInitial = item.file_name?.toLowerCase().includes('inicial');
+              // Can restore if not vigente
+              const canRestore = !isVigente;
+              // Can delete if not initial (vigente can be deleted, initial cannot)
+              const canDelete = !isInitial;
+              
+              return (
+                <>
+                  {canRestore && (
+                    <button
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        setMenuPosition(null);
+                        setRestoreConfirmId(menuOpenId);
+                      }}
+                      className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                      </svg>
+                      Restaurar versión
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      onClick={() => {
+                        setMenuOpenId(null);
+                        setMenuPosition(null);
+                        setDeleteConfirmId(menuOpenId);
+                      }}
+                      className="w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      Eliminar
+                    </button>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* ===== MAIN CONTENT ===== */}
       <div className="flex-1 flex flex-col overflow-hidden p-3">
@@ -876,6 +2307,118 @@ const CatalogView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Add Product Modal */}
+      {showAddProductModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Agregar Producto</h3>
+                <p className="text-sm text-gray-500">Crear un nuevo producto en el catálogo</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">SKU *</label>
+                <input
+                  type="text"
+                  value={newProduct.sku}
+                  onChange={(e) => setNewProduct({ ...newProduct, sku: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                  placeholder="Ej: PROD001"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <input
+                  type="text"
+                  value={newProduct.name}
+                  onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                  placeholder="Nombre del producto"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Código de Barras</label>
+                <input
+                  type="text"
+                  value={newProduct.barcode}
+                  onChange={(e) => setNewProduct({ ...newProduct, barcode: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                  placeholder="Opcional"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Unidad</label>
+                  <select
+                    value={newProduct.unit}
+                    onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                  >
+                    <option value="PZ">Pieza (PZ)</option>
+                    <option value="KG">Kilogramo (KG)</option>
+                    <option value="LT">Litro (LT)</option>
+                    <option value="MT">Metro (MT)</option>
+                    <option value="CJ">Caja (CJ)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Precio</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={newProduct.price}
+                    onChange={(e) => setNewProduct({ ...newProduct, price: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex gap-3 justify-end mt-6">
+              <button
+                onClick={() => {
+                  setShowAddProductModal(false);
+                  setNewProduct({ sku: '', name: '', barcode: '', unit: 'PZ', price: 0 });
+                }}
+                disabled={addingProduct}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleAddProduct}
+                disabled={addingProduct || !newProduct.sku || !newProduct.name}
+                className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+              >
+                {addingProduct ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    Guardando...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Agregar Producto
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

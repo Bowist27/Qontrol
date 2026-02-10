@@ -187,7 +187,7 @@ const TableRow: React.FC<TableRowProps> = ({ item, isAlt }) => {
             : {};
 
     return (
-        <View style={[styles.tableRow, isAlt && styles.tableRowAlt]}>
+        <View style={[styles.tableRow, isAlt ? styles.tableRowAlt : {}]}>
             <Text style={styles.colCodigo}>{item.codigo}</Text>
             <Text style={styles.colDescripcion}>{item.descripcion}</Text>
             <Text style={styles.colUM}>{item.unidad}</Text>

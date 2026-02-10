@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import usersApi, {
     type User,
-    type Store,
+    type Store as StoreType,
     type Role,
     type CreateUserRequest,
     type UpdateUserRequest,
@@ -66,7 +66,8 @@ export default function UsersView() {
             </div>
 
             {/* Content */}
-            {activeTab === 'users' ? <UsersTab /> : <RolesTab />}
+            {activeTab === 'users' && <UsersTab />}
+            {activeTab === 'roles' && <RolesTab />}
         </div>
     );
 }
@@ -76,7 +77,7 @@ export default function UsersView() {
 // =====================================================
 function UsersTab() {
     const [users, setUsers] = useState<User[]>([]);
-    const [stores, setStores] = useState<Store[]>([]);
+    const [stores, setStores] = useState<StoreType[]>([]);
     const [roles, setRoles] = useState<Role[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -311,7 +312,7 @@ function UsersTab() {
 interface UserRowProps {
     user: User;
     roles: Role[];
-    stores: Store[];
+    stores: StoreType[];
     isEditing: boolean;
     editingField: string | null;
     onStartEdit: (field: string) => void;
@@ -514,7 +515,7 @@ function UserRow({
 // =====================================================
 interface NewUserFormProps {
     roles: Role[];
-    stores: Store[];
+    stores: StoreType[];
     onCancel: () => void;
     onSave: (data: CreateUserRequest) => Promise<void>;
 }

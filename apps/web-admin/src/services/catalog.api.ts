@@ -72,10 +72,39 @@ export interface CatalogListResponse {
     products: Product[];
     total_count: number;
     total_value: number;
+    page: number;
+    limit: number;
 }
 
 export interface ImportHistoryResponse {
     imports: ImportHistoryItem[];
+}
+
+export interface ProductChange {
+    id: number;
+    product_id: number;
+    product_sku: string;
+    product_name: string;
+    action: 'create' | 'update' | 'delete';
+    old_values?: Record<string, any>;
+    new_values?: Record<string, any>;
+    user_email: string;
+    user_name: string;
+    created_at: string;
+    time_ago: string;
+}
+
+export interface ProductChangesResponse {
+    changes: ProductChange[];
+    total_count: number;
+}
+
+export interface CreateProductRequest {
+    sku: string;
+    name: string;
+    barcode?: string;
+    unit: string;
+    price: number;
 }
 
 // Types for valuation view
@@ -124,10 +153,16 @@ interface LatestValuationResponse {
 // API Client
 export const catalogApi = {
     /**
-     * GET /api/catalog - List all products
+     * GET /api/catalog - List products with pagination
      */
-    getProducts: async (): Promise<CatalogListResponse> => {
-        return httpClient.get<CatalogListResponse>(`${API_BASE}/api/catalog`);
+    getProducts: async (page: number = 1, limit: number = 25, search: string = ''): Promise<CatalogListResponse> => {
+        const params = new URLSearchParams();
+        params.append('page', page.toString());
+        params.append('limit', limit.toString());
+        if (search) {
+            params.append('search', search);
+        }
+        return httpClient.get<CatalogListResponse>(`${API_BASE}/api/catalog?${params.toString()}`);
     },
 
     /**
@@ -188,6 +223,44 @@ export const catalogApi = {
      */
     restoreImport: async (importId: number): Promise<void> => {
         return httpClient.post<void>(`${API_BASE}/api/catalog/imports/${importId}/restore`);
+    },
+
+    /**
+     * DELETE /api/catalog/clear - Clear entire catalog (products + history)
+     */
+    clearCatalog: async (): Promise<{ message: string; deleted_products: number }> => {
+        return httpClient.delete<{ message: string; deleted_products: number }>(`${API_BASE}/api/catalog/clear`);
+    },
+
+    /**
+     * PUT /api/catalog/products/:id - Update a product
+     */
+    updateProduct: async (id: number, data: { name: string; barcode: string; unit: string; price: number }): Promise<{ message: string }> => {
+        return httpClient.put<{ message: string }>(`${API_BASE}/api/catalog/products/${id}`, data);
+    },
+
+    /**
+     * DELETE /api/catalog/products/:id - Delete a product
+     */
+    deleteProduct: async (id: number): Promise<{ message: string }> => {
+        return httpClient.delete<{ message: string }>(`${API_BASE}/api/catalog/products/${id}`);
+    },
+
+    /**
+     * POST /api/catalog/products - Create a new product
+     */
+    createProduct: async (data: CreateProductRequest): Promise<{ message: string; product_id: number }> => {
+        return httpClient.post<{ message: string; product_id: number }>(`${API_BASE}/api/catalog/products`, data);
+    },
+
+    /**
+     * GET /api/catalog/changes - Get manual product changes history
+     */
+    getProductChanges: async (page: number = 1, limit: number = 50): Promise<ProductChangesResponse> => {
+        const params = new URLSearchParams();
+        params.append('page', page.toString());
+        params.append('limit', limit.toString());
+        return httpClient.get<ProductChangesResponse>(`${API_BASE}/api/catalog/changes?${params.toString()}`);
     },
 
     /**

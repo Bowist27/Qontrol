@@ -21,6 +21,7 @@ import InventoryView from './components/inventory/InventoryView';
 import AuditsView from './components/audits/AuditsView';
 import CatalogView from './components/catalog/CatalogView';
 import UsersView from './components/users/UsersView';
+import StoresView from './components/stores/StoresView';
 
 /**
  * Protected Route Component
@@ -100,6 +101,7 @@ const AppRoutes: React.FC = () => {
         <Route path="audits/*" element={<AuditsView />} />
         <Route path="catalog" element={<CatalogView />} />
         <Route path="users" element={<UsersView />} />
+        <Route path="stores" element={<StoresView />} />
       </Route>
 
       {/* Default Route - Redirect based on auth */}

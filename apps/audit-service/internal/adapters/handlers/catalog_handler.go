@@ -29,7 +29,21 @@ func NewCatalogHandler(service *services.CatalogService, pdfParser parser.PDFPar
 
 // ListProducts handles GET /api/catalog
 func (h *CatalogHandler) ListProducts(c *gin.Context) {
-	products, err := h.service.GetAllProducts(c.Request.Context())
+	// Parse query parameters for pagination
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "25")
+	search := c.Query("search")
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 100 {
+		limit = 25
+	}
+
+	products, totalCount, err := h.service.GetProductsPaginated(c.Request.Context(), page, limit, search)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "catalog_error",
@@ -38,12 +52,179 @@ func (h *CatalogHandler) ListProducts(c *gin.Context) {
 		return
 	}
 
-	count, totalValue, _ := h.service.GetCatalogStats(c.Request.Context())
+	_, totalValue, _ := h.service.GetCatalogStats(c.Request.Context())
 
 	c.JSON(http.StatusOK, gin.H{
 		"products":    products,
-		"total_count": count,
+		"total_count": totalCount,
 		"total_value": totalValue,
+		"page":        page,
+		"limit":       limit,
+	})
+}
+
+// UpdateProduct handles PUT /api/catalog/products/:id
+func (h *CatalogHandler) UpdateProduct(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid product ID",
+		})
+		return
+	}
+
+	var req struct {
+		Name    string  `json:"name"`
+		Barcode string  `json:"barcode"`
+		Unit    string  `json:"unit"`
+		Price   float64 `json:"price"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Get user info from context (set by auth middleware)
+	userEmail, _ := c.Get("user_email")
+	userName, _ := c.Get("user_name")
+	email := "Sistema"
+	name := "Sistema"
+	if e, ok := userEmail.(string); ok && e != "" {
+		email = e
+	}
+	if n, ok := userName.(string); ok && n != "" {
+		name = n
+	}
+
+	if err := h.service.UpdateProduct(c.Request.Context(), id, req.Name, req.Barcode, req.Unit, req.Price, email, name); err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "update_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Product updated successfully",
+	})
+}
+
+// DeleteProduct handles DELETE /api/catalog/products/:id
+func (h *CatalogHandler) DeleteProduct(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "Invalid product ID",
+		})
+		return
+	}
+
+	// Get user info from context (set by auth middleware)
+	userEmail, _ := c.Get("user_email")
+	userName, _ := c.Get("user_name")
+	email := "Sistema"
+	name := "Sistema"
+	if e, ok := userEmail.(string); ok && e != "" {
+		email = e
+	}
+	if n, ok := userName.(string); ok && n != "" {
+		name = n
+	}
+
+	if err := h.service.DeleteProduct(c.Request.Context(), id, email, name); err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "delete_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Product deleted successfully",
+	})
+}
+
+// CreateProduct handles POST /api/catalog/products
+func (h *CatalogHandler) CreateProduct(c *gin.Context) {
+	var req struct {
+		SKU     string  `json:"sku" binding:"required"`
+		Name    string  `json:"name" binding:"required"`
+		Barcode string  `json:"barcode"`
+		Unit    string  `json:"unit" binding:"required"`
+		Price   float64 `json:"price"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Get user info from context (set by auth middleware)
+	userEmail, _ := c.Get("user_email")
+	userName, _ := c.Get("user_name")
+	email := "Sistema"
+	name := "Sistema"
+	if e, ok := userEmail.(string); ok && e != "" {
+		email = e
+	}
+	if n, ok := userName.(string); ok && n != "" {
+		name = n
+	}
+
+	product := &domain.Product{
+		SKU:       req.SKU,
+		Name:      req.Name,
+		Barcode:   req.Barcode,
+		Unit:      req.Unit,
+		LastPrice: req.Price,
+	}
+
+	id, err := h.service.CreateProduct(c.Request.Context(), product, email, name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "create_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":    "Product created successfully",
+		"product_id": id,
+	})
+}
+
+// GetProductChanges handles GET /api/catalog/changes
+func (h *CatalogHandler) GetProductChanges(c *gin.Context) {
+	limitStr := c.DefaultQuery("limit", "50")
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 200 {
+		limit = 50
+	}
+
+	changes, err := h.service.GetProductChanges(c.Request.Context(), limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "fetch_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"changes":     changes,
+		"total_count": len(changes),
 	})
 }
 
@@ -361,8 +542,13 @@ func (h *CatalogHandler) RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
 	{
 		api.GET("/catalog", h.ListProducts)
+		api.POST("/catalog/products", h.CreateProduct)
+		api.PUT("/catalog/products/:id", h.UpdateProduct)
+		api.DELETE("/catalog/products/:id", h.DeleteProduct)
 		api.POST("/catalog/import", h.ImportCatalog)
+		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)
+		api.GET("/catalog/changes", h.GetProductChanges)
 
 		// New endpoints for diff engine
 		api.POST("/catalog/analyze", h.AnalyzeReport)
@@ -382,8 +568,13 @@ func (h *CatalogHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middle
 	api.Use(auth.RequireAuth())
 	{
 		api.GET("/catalog", h.ListProducts)
+		api.POST("/catalog/products", h.CreateProduct)
+		api.PUT("/catalog/products/:id", h.UpdateProduct)
+		api.DELETE("/catalog/products/:id", h.DeleteProduct)
 		api.POST("/catalog/import", h.ImportCatalog)
+		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)
+		api.GET("/catalog/changes", h.GetProductChanges)
 
 		// New endpoints for diff engine
 		api.POST("/catalog/analyze", h.AnalyzeReport)
@@ -395,6 +586,24 @@ func (h *CatalogHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middle
 		api.POST("/catalog/imports/:id/restore", h.RestoreImport)
 		api.DELETE("/catalog/imports/:id", h.DiscardImport)
 	}
+}
+
+// ClearCatalog handles DELETE /api/catalog
+// Deletes all products and import history from the catalog
+func (h *CatalogHandler) ClearCatalog(c *gin.Context) {
+	deleted, err := h.service.ClearCatalog(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "clear_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":          "Catálogo borrado exitosamente",
+		"deleted_products": deleted,
+	})
 }
 
 // GetLatestValuation handles GET /api/catalog/valuation/latest

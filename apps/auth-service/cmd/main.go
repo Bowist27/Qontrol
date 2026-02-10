@@ -89,8 +89,12 @@ func main() {
 		protected.POST("/users/:id/ban", userHandler.BanUser)
 		protected.POST("/users/:id/unban", userHandler.UnbanUser)
 
-		// Stores route
+		// Stores management routes
 		protected.GET("/stores", userHandler.ListStores)
+		protected.GET("/stores/:id", userHandler.GetStore)
+		protected.POST("/stores", userHandler.CreateStore)
+		protected.PUT("/stores/:id", userHandler.UpdateStore)
+		protected.DELETE("/stores/:id", userHandler.DeleteStore)
 
 		// Products routes (for POS sync)
 		protected.GET("/products/sync", productHandler.SyncProducts)
