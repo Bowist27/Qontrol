@@ -671,14 +671,31 @@ const CatalogView: React.FC = () => {
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Header Bar */}
           <div className="bg-white border-b border-gray-200 px-6 py-4">
-            <div className="flex items-center justify-between mb-4">
-              <div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-6">
                 <h1 className="text-2xl font-bold text-gray-900">Catálogo Maestro</h1>
-                <p className="text-sm text-gray-500 mt-1">
-                  {catalogStats.totalCount} productos · Valor total: ${(catalogStats.totalValue || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                </p>
+                <div className="flex items-center gap-1.5 px-3 py-1 bg-blue-50 rounded-full">
+                  <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                  <span className="text-sm font-semibold text-blue-700">{catalogStats.totalCount.toLocaleString('es-MX')}</span>
+                  <span className="text-sm text-blue-600">productos</span>
+                </div>
               </div>
               <div className="flex items-center gap-3">
+                {/* Search */}
+                <div className="relative">
+                  <svg className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    placeholder="Buscar..."
+                    value={catalogSearchTerm}
+                    onChange={(e) => setCatalogSearchTerm(e.target.value)}
+                    className="w-64 pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  />
+                </div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -706,20 +723,6 @@ const CatalogView: React.FC = () => {
                   )}
                 </button>
               </div>
-            </div>
-            
-            {/* Search */}
-            <div className="relative">
-              <svg className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                type="text"
-                placeholder="Buscar por SKU, nombre o código de barras..."
-                value={catalogSearchTerm}
-                onChange={(e) => setCatalogSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
             </div>
           </div>
 
