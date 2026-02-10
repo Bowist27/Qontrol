@@ -799,7 +799,7 @@ const AuditSessionDetail: React.FC = () => {
                                             value={storeSearch}
                                             onChange={(e) => setStoreSearch(e.target.value)}
                                             autoFocus
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white placeholder-gray-400"
                                         />
                                     </div>
                                     <div className="max-h-56 overflow-y-auto">
@@ -1254,7 +1254,7 @@ const AuditSessionDetail: React.FC = () => {
                                             placeholder="Buscar por SKU, Producto..."
                                             value={searchQuery}
                                             onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-                                            className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm w-64 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
+                                            className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm w-64 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400 text-gray-900"
                                         />
                                     </div>
 
