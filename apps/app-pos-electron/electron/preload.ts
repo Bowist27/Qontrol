@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('products', {
     sync: () => ipcRenderer.invoke('products:sync'),
     search: (query: string) => ipcRenderer.invoke('products:search', query),
     count: () => ipcRenderer.invoke('products:count'),
+    create: (product: { sku: string; barcode: string | null; name: string; unit: string; last_price: number | null }) =>
+        ipcRenderer.invoke('products:create', product),
 });
 
 // Expose audit API to renderer

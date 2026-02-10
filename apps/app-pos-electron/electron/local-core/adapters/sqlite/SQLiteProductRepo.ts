@@ -70,6 +70,30 @@ export class SQLiteProductRepo implements ProductRepository {
         return stmt.all() as Product[];
     }
 
+    saveOne(product: Omit<Product, 'id' | 'created_at'>): Product {
+        const stmt = this.db.prepare(`
+            INSERT OR REPLACE INTO products (sku, barcode, name, unit, last_price, created_at)
+            VALUES (@sku, @barcode, @name, @unit, @last_price, @created_at)
+        `);
+        const result = stmt.run({
+            sku: product.sku,
+            barcode: product.barcode || null,
+            name: product.name || product.sku,
+            unit: product.unit || 'pz',
+            last_price: product.last_price || null,
+            created_at: new Date().toISOString()
+        });
+        return {
+            id: result.lastInsertRowid as number,
+            sku: product.sku,
+            barcode: product.barcode || null,
+            name: product.name || product.sku,
+            unit: product.unit || 'pz',
+            last_price: product.last_price || null,
+            created_at: new Date().toISOString()
+        };
+    }
+
     saveBatch(products: Product[]): ProductSyncStats {
         const insert = this.db.prepare(`
             INSERT OR REPLACE INTO products (

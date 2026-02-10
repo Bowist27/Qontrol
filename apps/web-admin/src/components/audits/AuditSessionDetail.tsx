@@ -271,8 +271,11 @@ const AuditSessionDetail: React.FC = () => {
                             entries: Array.from(physicalMap.entries()).slice(0, 5)
                         });
 
-                        // Update each item with physical count
-                        const updated = prev.map(item => {
+                        // Keep only original theoretical items (from PDF), strip any previously-added extras
+                        const theoreticalOnly = prev.filter(item => item.theoretical > 0);
+
+                        // Update each theoretical item with physical count
+                        const updated = theoreticalOnly.map(item => {
                             const physicalQty = physicalMap.get(item.sku) || 0;
                             return {
                                 ...item,
@@ -282,13 +285,60 @@ const AuditSessionDetail: React.FC = () => {
                             };
                         });
 
-                        const updatedCount = updated.filter(i => i.physical > 0).length;
-                        console.log('✅ [Items Updated]', {
-                            totalItems: updated.length,
-                            itemsWithPhysical: updatedCount
+                        // Add "extras" — scanned products NOT in the theoretical PDF
+                        const theoreticalSKUs = new Set(theoreticalOnly.map(item => item.sku));
+                        const extras: typeof prev = [];
+                        physicalMap.forEach((qty, sku) => {
+                            if (!theoreticalSKUs.has(sku)) {
+                                // Find product name from scans
+                                const scan = scans.find(s => s.sku === sku);
+                                extras.push({
+                                    sku,
+                                    name: scan?.product_name || sku,
+                                    unitCost: 0,
+                                    theoretical: 0,
+                                    physical: qty,
+                                    difference: qty,
+                                    impact: 0
+                                });
+                            }
                         });
 
-                        return updated;
+                        // Also add unknown scans (no SKU) so they're visible
+                        const unknownScans = scans.filter(s => !s.sku && s.is_unknown);
+                        const unknownMap = new Map<string, { qty: number; barcode: string }>();
+                        unknownScans.forEach(scan => {
+                            const key = scan.barcode;
+                            const existing = unknownMap.get(key);
+                            if (existing) {
+                                existing.qty += scan.quantity;
+                            } else {
+                                unknownMap.set(key, { qty: scan.quantity, barcode: scan.barcode });
+                            }
+                        });
+                        unknownMap.forEach(({ qty, barcode }) => {
+                            extras.push({
+                                sku: barcode,
+                                name: `⚠ ${barcode} (no catalogado)`,
+                                unitCost: 0,
+                                theoretical: 0,
+                                physical: qty,
+                                difference: qty,
+                                impact: 0
+                            });
+                        });
+
+                        // Merge: keep all theoretical items + append extras
+                        const merged = [...updated, ...extras];
+
+                        const updatedCount = merged.filter(i => i.physical > 0).length;
+                        console.log('✅ [Items Updated]', {
+                            totalItems: merged.length,
+                            itemsWithPhysical: updatedCount,
+                            extrasAdded: extras.length
+                        });
+
+                        return merged;
                     });
                 }
             } catch (err) {

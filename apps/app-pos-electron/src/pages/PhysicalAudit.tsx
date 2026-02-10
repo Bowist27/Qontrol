@@ -13,6 +13,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import type { ProductsAPI } from '../declarations';
 
 // Types from backend
 interface RemoteAudit {
@@ -49,7 +50,7 @@ interface ScanSummary {
     last_scan_at?: string;
 }
 
-type KeyboardMode = 'SCAN' | 'QUANTITY_INPUT' | 'QUANTITY_READY' | 'MANUAL_INPUT' | 'MANUAL_QTY';
+type KeyboardMode = 'SCAN' | 'QUANTITY_INPUT' | 'QUANTITY_READY' | 'MANUAL_INPUT' | 'MANUAL_QTY' | 'REGISTER_PRODUCT';
 
 interface LocalProduct {
     id: number;
@@ -84,6 +85,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const [lastScan, setLastScan] = useState<{ product?: string; quantity: number; isUnknown?: boolean } | null>(null);
     const [barcodeBuffer, setBarcodeBuffer] = useState<string>('');
     const [isSending, setIsSending] = useState(false);
+    const [flashColor, setFlashColor] = useState<'green' | 'red' | 'amber' | null>(null);
 
     // Manual input state
     const [manualQuery, setManualQuery] = useState<string>('');
@@ -95,6 +97,16 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const manualInputRef = useRef<HTMLInputElement>(null);
     const manualQtyInputRef = useRef<HTMLInputElement>(null);
     const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Register unknown product state
+    const [registerBarcode, setRegisterBarcode] = useState<string>('');
+    const [registerSku, setRegisterSku] = useState<string>('');
+    const [registerName, setRegisterName] = useState<string>('');
+    const [registerUnit, setRegisterUnit] = useState<string>('pz');
+    const [registerPrice, setRegisterPrice] = useState<string>('');
+    const [registerQty, setRegisterQty] = useState<number>(1);
+    const [registerFromScan, setRegisterFromScan] = useState<boolean>(false);
+    const registerSkuRef = useRef<HTMLInputElement>(null);
     
     // Device info
     const [deviceId] = useState(() => `POS-${Date.now().toString(36).toUpperCase()}`);
@@ -197,10 +209,45 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             const data = await response.json();
             const newScan = data.scan as PhysicalScan;
             
+            // If unknown product, prompt registration
+            if (newScan.is_unknown) {
+                // Add to local state immediately
+                setScans(prev => [newScan, ...prev]);
+                setSummary(prev => prev ? {
+                    ...prev,
+                    total_scans: prev.total_scans + 1,
+                    total_quantity: prev.total_quantity + quantity,
+                    unique_products: prev.unique_products,
+                    unknown_items: prev.unknown_items + 1
+                } : {
+                    total_scans: 1,
+                    total_quantity: quantity,
+                    unique_products: 0,
+                    unknown_items: 1
+                });
+                
+                // Enter registration mode
+                setRegisterBarcode(barcode);
+                setRegisterSku(barcode); // Pre-fill SKU with barcode
+                setRegisterName('');
+                setRegisterUnit('pz');
+                setRegisterPrice('');
+                setRegisterQty(quantity);
+                setRegisterFromScan(true);
+                setMode('REGISTER_PRODUCT');
+                setFlashColor('amber');
+                setTimeout(() => {
+                    setFlashColor(null);
+                    registerSkuRef.current?.focus();
+                    registerSkuRef.current?.select();
+                }, 400);
+                return;
+            }
+            
             // Add to local state immediately
             setScans(prev => [newScan, ...prev]);
             
-            // Update summary
+            // Update summary (known product)
             setSummary(prev => prev ? {
                 ...prev,
                 total_scans: prev.total_scans + 1,
@@ -221,6 +268,10 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 isUnknown: newScan.is_unknown
             });
 
+            // Flash feedback
+            setFlashColor(newScan.is_unknown ? 'amber' : 'green');
+            setTimeout(() => setFlashColor(null), 400);
+
             // Clear feedback after 2s
             if (lastScanTimeout.current) clearTimeout(lastScanTimeout.current);
             lastScanTimeout.current = setTimeout(() => setLastScan(null), 2000);
@@ -228,6 +279,8 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
         } catch (err) {
             console.error('Scan failed:', err);
             setLastScan({ product: '❌ Error al enviar', quantity: 0 });
+            setFlashColor('red');
+            setTimeout(() => setFlashColor(null), 400);
         } finally {
             setIsSending(false);
         }
@@ -278,6 +331,73 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
         setManualQty('1');
     }, [sendScan, manualSelectedProduct, manualQty]);
 
+    // Confirm registration of unknown product → save to local DB
+    const confirmRegisterProduct = useCallback(async () => {
+        if (!registerSku || !registerBarcode) return;
+        const productData = {
+            sku: registerSku.trim(),
+            barcode: registerBarcode.trim(),
+            name: registerName.trim() || registerSku.trim(),
+            unit: registerUnit.trim() || 'pz',
+            last_price: registerPrice ? parseFloat(registerPrice) : null
+        };
+        try {
+            // 1. Save to local SQLite (instant offline access)
+            const productAPI = (window as Window & { products: ProductsAPI }).products;
+            const localResult = await productAPI.create(productData);
+
+            // 2. Also save to backend PostgreSQL (so web-admin sees it)
+            try {
+                await fetch(`${AUDIT_API.replace('/api', '')}/api/pos/catalog/products`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sku: productData.sku,
+                        name: productData.name,
+                        barcode: productData.barcode,
+                        unit: productData.unit,
+                        price: productData.last_price || 0
+                    })
+                });
+            } catch (backendErr) {
+                console.warn('Backend catalog sync failed (product saved locally):', backendErr);
+            }
+
+            if (localResult.success) {
+                // If registered from manual search (not from scan), also send the scan to count it
+                if (!registerFromScan && selectedAudit) {
+                    try {
+                        await sendScan(productData.barcode || productData.sku, registerQty);
+                    } catch (scanErr) {
+                        console.warn('Auto-scan after register failed:', scanErr);
+                    }
+                }
+                setLastScan({ product: `✓ REGISTRADO: ${productData.name}`, quantity: registerQty });
+                setFlashColor('green');
+                setTimeout(() => setFlashColor(null), 400);
+            } else {
+                setLastScan({ product: `❌ Error: ${localResult.error}`, quantity: 0 });
+                setFlashColor('red');
+                setTimeout(() => setFlashColor(null), 400);
+            }
+        } catch (err) {
+            console.error('Register product failed:', err);
+            setLastScan({ product: '❌ Error al registrar', quantity: 0 });
+            setFlashColor('red');
+            setTimeout(() => setFlashColor(null), 400);
+        }
+        // Clear feedback after 2s
+        if (lastScanTimeout.current) clearTimeout(lastScanTimeout.current);
+        lastScanTimeout.current = setTimeout(() => setLastScan(null), 2000);
+        // Reset state
+        setMode('SCAN');
+        setRegisterBarcode('');
+        setRegisterSku('');
+        setRegisterName('');
+        setRegisterUnit('pz');
+        setRegisterPrice('');
+    }, [registerSku, registerBarcode, registerName, registerUnit, registerPrice, registerQty, registerFromScan, selectedAudit, sendScan]);
+
     // Handle undo (delete last scan)
     const handleUndo = useCallback(async () => {
         if (!selectedAudit) return;
@@ -304,9 +424,28 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
         const handleKeyDown = (e: KeyboardEvent) => {
             // Only handle if we're connected to an audit
             if (!selectedAudit) return;
+
+            // In input modes, only intercept ESC and actual function keys (F1-F12)
+            if (mode === 'MANUAL_INPUT' || mode === 'MANUAL_QTY' || mode === 'REGISTER_PRODUCT') {
+                if (e.key === 'Escape') {
+                    setMode('SCAN');
+                    setPendingQuantity('');
+                    setBarcodeBuffer('');
+                    setManualQuery('');
+                    setManualResults([]);
+                    setManualSelectedProduct(null);
+                    setManualQty('1');
+                    setRegisterBarcode('');
+                    setRegisterSku('');
+                    setRegisterName('');
+                    setRegisterUnit('pz');
+                    setRegisterPrice('');
+                }
+                return;
+            }
             
-            // Prevent default for function keys
-            if (e.key.startsWith('F') && e.key.length <= 3) {
+            // Prevent default for actual function keys (F1-F12, not the letter "F")
+            if (/^F\d{1,2}$/.test(e.key)) {
                 e.preventDefault();
             }
 
@@ -347,11 +486,11 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 setManualResults([]);
                 setManualSelectedProduct(null);
                 setManualQty('1');
-                return;
-            }
-
-            // In MANUAL_INPUT or MANUAL_QTY mode, let the input field handle everything
-            if (mode === 'MANUAL_INPUT' || mode === 'MANUAL_QTY') {
+                setRegisterBarcode('');
+                setRegisterSku('');
+                setRegisterName('');
+                setRegisterUnit('pz');
+                setRegisterPrice('');
                 return;
             }
 
@@ -521,37 +660,68 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
         );
     }
 
-    // Connected to an audit - show scanning interface
+    // Connected to an audit - INDUSTRIAL POS TERMINAL INTERFACE
     return (
-        <div className="flex flex-col h-screen bg-slate-900 text-white">
-            {/* Header */}
-            <div className="bg-slate-800 px-6 py-4">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <h1 className="text-xl font-bold">{selectedAudit.store_name}</h1>
-                        <div className="text-slate-400 text-sm flex items-center gap-2">
-                            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                            Conectado • {deviceId}
-                        </div>
+        <div className={`flex flex-col h-screen bg-black text-white font-sans select-none transition-colors duration-200 ${
+            flashColor === 'green' ? 'bg-green-900/60' : 
+            flashColor === 'red' ? 'bg-red-900/60' : 
+            flashColor === 'amber' ? 'bg-amber-900/60' : ''
+        }`}>
+            {/* ===== HEADER BAR (compact) ===== */}
+            <div className="bg-gray-900 border-b border-gray-700 px-4 py-2 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                        <span className="font-bold text-sm uppercase tracking-wide">{selectedAudit.store_name}</span>
+                    </div>
+                    <span className="text-gray-500 text-xs font-mono">{deviceId}</span>
+                </div>
+                <div className="flex items-center gap-6">
+                    {/* Inline stats */}
+                    <div className="flex items-center gap-5 text-xs font-mono">
+                        <span className="text-blue-400">SCAN:<span className="text-white font-bold ml-1">{summary?.total_scans || 0}</span></span>
+                        <span className="text-emerald-400">UDS:<span className="text-white font-bold ml-1">{summary?.total_quantity || 0}</span></span>
+                        <span className="text-purple-400">PROD:<span className="text-white font-bold ml-1">{summary?.unique_products || 0}</span></span>
+                        {(summary?.unknown_items || 0) > 0 && (
+                            <span className="text-amber-400">N/F:<span className="text-white font-bold ml-1">{summary?.unknown_items}</span></span>
+                        )}
                     </div>
                     <button
                         onClick={handleDisconnect}
-                        className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-xl"
+                        className="text-gray-500 hover:text-red-400 text-xs uppercase tracking-wider transition-colors"
                     >
-                        ✕ Desconectar
+                        ✕ SALIR
                     </button>
                 </div>
             </div>
 
-            {/* Mode indicator - MANUAL_QTY (quantity after selecting product) */}
+            {/* ===== MODE INDICATOR STRIP ===== */}
+            {mode === 'QUANTITY_INPUT' && (
+                <div className="bg-purple-700 px-4 py-2 text-center shrink-0">
+                    <span className="font-mono text-lg font-bold tracking-widest">
+                        CANTIDAD: {pendingQuantity || '▌'}
+                    </span>
+                    <span className="text-purple-200 text-xs ml-4">Escribe cantidad → Enter para confirmar</span>
+                </div>
+            )}
+            {mode === 'QUANTITY_READY' && (
+                <div className="bg-green-700 px-4 py-2 text-center shrink-0">
+                    <span className="font-mono text-lg font-bold tracking-widest">
+                        ✓ CANT: {pendingQuantity} → ESCANEA PRODUCTO
+                    </span>
+                </div>
+            )}
+
+            {/* ===== MANUAL INPUT (QUANTITY AFTER SELECT) ===== */}
             {mode === 'MANUAL_QTY' && manualSelectedProduct && (
-                <div className="bg-orange-600 px-6 py-4">
-                    <div className="text-sm font-medium text-orange-200 mb-1">PRODUCTO SELECCIONADO</div>
-                    <div className="text-lg font-bold mb-3">{manualSelectedProduct.name}
-                        <span className="text-orange-200 text-sm font-normal ml-3">SKU: {manualSelectedProduct.sku}</span>
-                    </div>
+                <div className="bg-orange-800 px-4 py-3 shrink-0">
                     <div className="flex items-center gap-4">
-                        <label className="text-orange-100 font-medium">¿Cuántas piezas?</label>
+                        <span className="text-orange-300 text-xs uppercase font-bold tracking-wider">PRODUCTO:</span>
+                        <span className="font-bold truncate flex-1">{manualSelectedProduct.name}</span>
+                        <span className="text-orange-300 font-mono text-sm">SKU:{manualSelectedProduct.sku}</span>
+                    </div>
+                    <div className="flex items-center gap-3 mt-2">
+                        <span className="text-orange-200 text-sm font-bold">PIEZAS:</span>
                         <input
                             ref={manualQtyInputRef}
                             type="number"
@@ -564,33 +734,32 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                     e.preventDefault();
                                     confirmManualProduct();
                                 } else if (e.key === 'Escape') {
-                                    // Go back to search
                                     setMode('MANUAL_INPUT');
                                     setManualSelectedProduct(null);
                                     setTimeout(() => manualInputRef.current?.focus(), 50);
                                 }
                             }}
-                            className="w-32 px-4 py-3 bg-slate-800 text-white text-2xl font-bold text-center rounded-xl border-2 border-orange-400 focus:border-orange-200 focus:outline-none"
+                            className="w-24 px-3 py-2 bg-black text-white text-xl font-mono font-bold text-center border-2 border-orange-500 focus:border-orange-300 focus:outline-none"
                             autoFocus
                         />
                         <button
                             onClick={confirmManualProduct}
-                            className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-xl font-bold text-lg transition-colors"
+                            className="bg-green-600 hover:bg-green-500 text-white px-5 py-2 font-bold text-sm uppercase tracking-wider transition-colors"
                         >
-                            ✓ Confirmar
+                            ✓ OK
                         </button>
-                    </div>
-                    <div className="mt-2 text-xs text-orange-300/60 flex gap-4">
-                        <span><kbd className="bg-orange-800 px-1.5 py-0.5 rounded">Enter</kbd> Confirmar</span>
-                        <span><kbd className="bg-orange-800 px-1.5 py-0.5 rounded">ESC</kbd> Volver a buscar</span>
+                        <span className="text-orange-400/50 text-xs ml-2">[Enter] Confirmar · [ESC] Volver</span>
                     </div>
                 </div>
             )}
 
-            {/* Mode indicator - MANUAL_INPUT */}
+            {/* ===== MANUAL SEARCH INPUT ===== */}
             {mode === 'MANUAL_INPUT' && (
-                <div className="bg-cyan-700 px-6 py-4">
-                    <div className="text-sm font-medium text-cyan-200 mb-2">🔍 BÚSQUEDA MANUAL — Escribe nombre, SKU o código de barras</div>
+                <div className="bg-cyan-900 px-4 py-3 shrink-0">
+                    <div className="flex items-center gap-3 mb-2">
+                        <span className="text-cyan-300 text-xs uppercase font-bold tracking-wider">🔍 BÚSQUEDA MANUAL</span>
+                        <span className="text-cyan-500 text-xs">nombre · SKU · código de barras</span>
+                    </div>
                     <div className="relative">
                         <input
                             ref={manualInputRef}
@@ -619,190 +788,345 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                 }
                             }}
                             placeholder="Ej: Aceite, 7501000, SKU001..."
-                            className="w-full px-4 py-3 bg-slate-800 text-white text-lg rounded-xl border-2 border-cyan-500 focus:border-cyan-300 focus:outline-none placeholder-slate-500"
+                            className="w-full px-3 py-2 bg-black text-white text-sm font-mono border-2 border-cyan-600 focus:border-cyan-400 focus:outline-none placeholder-gray-600"
                             autoFocus
                         />
                         {isSearching && (
-                            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-cyan-300 text-sm">Buscando...</div>
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2 text-cyan-400 text-xs font-mono">BUSCANDO...</div>
                         )}
                     </div>
-                    {/* Search Results */}
+                    {/* Search Results - compact table style */}
                     {manualResults.length > 0 && (
-                        <div className="mt-2 max-h-64 overflow-auto rounded-xl bg-slate-800 border border-slate-600">
+                        <div className="mt-1 max-h-52 overflow-auto bg-black border border-gray-700">
                             {manualResults.map((product, idx) => (
                                 <button
                                     key={product.id}
                                     onClick={() => handleManualSelect(product)}
-                                    className={`w-full text-left px-4 py-3 flex items-center justify-between transition-colors
-                                        ${idx === manualSelectedIndex ? 'bg-cyan-600/40 text-white' : 'text-slate-300 hover:bg-slate-700'}
-                                        ${idx > 0 ? 'border-t border-slate-700' : ''}`}
+                                    className={`w-full text-left px-3 py-2 flex items-center gap-3 text-sm font-mono transition-colors
+                                        ${idx === manualSelectedIndex ? 'bg-cyan-700 text-white' : 'text-gray-300 hover:bg-gray-800'}
+                                        ${idx > 0 ? 'border-t border-gray-800' : ''}`}
                                 >
-                                    <div className="flex-1 min-w-0">
-                                        <div className="font-medium truncate">{product.name}</div>
-                                        <div className="text-sm text-slate-400 flex gap-3">
-                                            <span>SKU: {product.sku}</span>
-                                            {product.barcode && <span>CB: {product.barcode}</span>}
-                                            <span className="text-slate-500">{product.unit}</span>
-                                        </div>
-                                    </div>
-                                    <div className="ml-3 text-cyan-400 text-sm font-medium">↵ Seleccionar</div>
+                                    <span className="text-cyan-400 text-xs w-20 shrink-0">{product.sku}</span>
+                                    <span className="flex-1 truncate">{product.name}</span>
+                                    {product.barcode && <span className="text-gray-500 text-xs">{product.barcode}</span>}
+                                    <span className="text-gray-600 text-xs w-8">{product.unit}</span>
                                 </button>
                             ))}
                         </div>
                     )}
                     {manualQuery.length >= 2 && manualResults.length === 0 && !isSearching && (
-                        <div className="mt-2 text-center py-4 text-slate-400 bg-slate-800/50 rounded-xl">
-                            No se encontraron productos para "{manualQuery}"
+                        <div className="mt-1 bg-black border border-gray-800">
+                            <div className="text-center py-2 text-gray-500 text-xs font-mono">
+                                SIN RESULTADOS PARA "{manualQuery.toUpperCase()}"
+                            </div>
+                            <button
+                                onClick={() => {
+                                    const q = manualQuery.trim();
+                                    setRegisterBarcode(/^\d+$/.test(q) ? q : '');
+                                    setRegisterSku(/^\d+$/.test(q) ? q : '');
+                                    setRegisterName(/^\d+$/.test(q) ? '' : q);
+                                    setRegisterUnit('pz');
+                                    setRegisterPrice('');
+                                    setRegisterQty(1);
+                                    setRegisterFromScan(false);
+                                    setManualQuery('');
+                                    setManualResults([]);
+                                    setMode('REGISTER_PRODUCT');
+                                    setTimeout(() => registerSkuRef.current?.focus(), 50);
+                                }}
+                                className="w-full py-2 text-amber-400 hover:bg-amber-900/50 text-xs font-mono uppercase tracking-wider border-t border-gray-800 transition-colors"
+                            >
+                                + REGISTRAR PRODUCTO NUEVO
+                            </button>
                         </div>
                     )}
-                    <div className="mt-2 text-xs text-cyan-300/60 flex gap-4">
-                        <span><kbd className="bg-cyan-800 px-1.5 py-0.5 rounded">↑↓</kbd> Navegar</span>
-                        <span><kbd className="bg-cyan-800 px-1.5 py-0.5 rounded">Enter</kbd> Seleccionar</span>
-                        <span><kbd className="bg-cyan-800 px-1.5 py-0.5 rounded">ESC</kbd> Cancelar</span>
+                </div>
+            )}
+
+            {/* ===== REGISTER UNKNOWN PRODUCT FORM ===== */}
+            {mode === 'REGISTER_PRODUCT' && (
+                <div className="bg-amber-900 px-4 py-3 shrink-0 border-y border-amber-700">
+                    <div className="flex items-center gap-3 mb-3">
+                        <span className="text-amber-400 text-xs uppercase font-bold tracking-wider">⚠ PRODUCTO NO ENCONTRADO</span>
+                        <span className="text-amber-600 text-xs font-mono">Registrar en catálogo local</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                        {/* Row 1: SKU (required) + Barcode (pre-filled, required) */}
+                        <div className="flex items-center gap-2">
+                            <label className="text-amber-300 text-xs font-bold w-20 shrink-0 text-right">SKU *</label>
+                            <input
+                                ref={registerSkuRef}
+                                type="text"
+                                value={registerSku}
+                                onChange={(e) => setRegisterSku(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        confirmRegisterProduct();
+                                    } else if (e.key === 'Escape') {
+                                        setMode('SCAN');
+                                    }
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-black text-white text-sm font-mono border-2 border-amber-600 focus:border-amber-400 focus:outline-none"
+                                placeholder="SKU del producto"
+                                autoFocus
+                            />
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <label className="text-amber-300 text-xs font-bold w-20 shrink-0 text-right">CÓDIGO *</label>
+                            <input
+                                type="text"
+                                value={registerBarcode}
+                                onChange={(e) => setRegisterBarcode(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') { e.preventDefault(); confirmRegisterProduct(); }
+                                    else if (e.key === 'Escape') { setMode('SCAN'); }
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-black text-white text-sm font-mono border-2 border-amber-600 focus:border-amber-400 focus:outline-none"
+                                placeholder="Código de barras"
+                            />
+                        </div>
+                        {/* Row 2: Name (optional) + Unit (optional) */}
+                        <div className="flex items-center gap-2">
+                            <label className="text-amber-500 text-xs font-bold w-20 shrink-0 text-right">NOMBRE</label>
+                            <input
+                                type="text"
+                                value={registerName}
+                                onChange={(e) => setRegisterName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') { e.preventDefault(); confirmRegisterProduct(); }
+                                    else if (e.key === 'Escape') { setMode('SCAN'); }
+                                }}
+                                className="flex-1 px-2 py-1.5 bg-black text-white text-sm font-mono border border-gray-700 focus:border-amber-500 focus:outline-none"
+                                placeholder="Nombre del producto (opcional)"
+                            />
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <label className="text-amber-500 text-xs font-bold w-20 shrink-0 text-right">UNIDAD</label>
+                            <input
+                                type="text"
+                                value={registerUnit}
+                                onChange={(e) => setRegisterUnit(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') { e.preventDefault(); confirmRegisterProduct(); }
+                                    else if (e.key === 'Escape') { setMode('SCAN'); }
+                                }}
+                                className="w-20 px-2 py-1.5 bg-black text-white text-sm font-mono border border-gray-700 focus:border-amber-500 focus:outline-none"
+                                placeholder="pz"
+                            />
+                            {/* Price */}
+                            <label className="text-amber-500 text-xs font-bold w-16 shrink-0 text-right">PRECIO</label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                value={registerPrice}
+                                onChange={(e) => setRegisterPrice(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') { e.preventDefault(); confirmRegisterProduct(); }
+                                    else if (e.key === 'Escape') { setMode('SCAN'); }
+                                }}
+                                className="w-24 px-2 py-1.5 bg-black text-white text-sm font-mono border border-gray-700 focus:border-amber-500 focus:outline-none"
+                                placeholder="$0.00"
+                            />
+                        </div>
+                    </div>
+                    {/* Actions */}
+                    <div className="flex items-center gap-3 mt-3">
+                        {/* Quantity input (only for manual registration, scan already has qty) */}
+                        {!registerFromScan && (
+                            <>
+                                <label className="text-amber-300 text-xs font-bold">CANT:</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    value={registerQty}
+                                    onChange={(e) => setRegisterQty(parseInt(e.target.value) || 1)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') { e.preventDefault(); confirmRegisterProduct(); }
+                                        else if (e.key === 'Escape') { setMode('SCAN'); }
+                                    }}
+                                    className="w-16 px-2 py-1.5 bg-black text-white text-sm font-mono font-bold text-center border-2 border-amber-600 focus:border-amber-400 focus:outline-none"
+                                />
+                            </>
+                        )}
+                        <button
+                            onClick={confirmRegisterProduct}
+                            disabled={!registerSku.trim() || !registerBarcode.trim()}
+                            className="bg-green-600 hover:bg-green-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-5 py-1.5 font-bold text-sm uppercase tracking-wider transition-colors"
+                        >
+                            ✓ REGISTRAR
+                        </button>
+                        <button
+                            onClick={() => { setMode('SCAN'); }}
+                            className="bg-gray-700 hover:bg-gray-600 text-gray-300 px-5 py-1.5 text-sm uppercase tracking-wider transition-colors"
+                        >
+                            OMITIR
+                        </button>
+                        <span className="text-amber-600/50 text-[10px] font-mono ml-2">[Enter] Registrar · [ESC] Omitir · * = obligatorio</span>
                     </div>
                 </div>
             )}
 
-            {/* Mode indicator - QUANTITY_INPUT */}
-            {mode === 'QUANTITY_INPUT' && (
-                <div className="bg-purple-600 px-6 py-4 text-center">
-                    <div className="text-lg font-bold">
-                        INGRESA CANTIDAD: {pendingQuantity || '_'}
-                    </div>
-                    <div className="text-purple-200 text-sm">
-                        Escribe la cantidad y presiona <kbd className="bg-purple-800 px-2 py-0.5 rounded mx-1">Enter</kbd> para confirmar
-                    </div>
-                </div>
-            )}
-
-            {/* Mode indicator - QUANTITY_READY */}
-            {mode === 'QUANTITY_READY' && (
-                <div className="bg-green-600 px-6 py-4 text-center">
-                    <div className="text-lg font-bold">
-                        ✓ CANTIDAD: {pendingQuantity} — ESCANEA EL PRODUCTO
-                    </div>
-                    <div className="text-green-200 text-sm">
-                        Escanea el código de barras del producto
-                    </div>
-                </div>
-            )}
-
-            {/* Last scan feedback */}
-            {lastScan && (
-                <div className={`px-6 py-4 text-center transition-all ${
-                    lastScan.isUnknown ? 'bg-amber-600' : 
-                    lastScan.quantity === 0 ? 'bg-slate-600' : 'bg-emerald-600'
-                }`}>
-                    <div className="text-2xl font-bold">
-                        {lastScan.quantity > 0 && `+${lastScan.quantity} `}
-                        {lastScan.product}
-                    </div>
-                    {lastScan.isUnknown && (
-                        <div className="text-amber-200 text-sm">⚠️ Producto no encontrado en catálogo</div>
-                    )}
-                </div>
-            )}
-
-            {/* Sending indicator */}
-            {isSending && (
-                <div className="bg-blue-600 px-6 py-2 text-center text-sm">
-                    Enviando...
-                </div>
-            )}
-
-            {/* Summary Stats */}
-            <div className="grid grid-cols-4 gap-4 p-4 bg-slate-800/50">
-                <div className="bg-slate-800 rounded-xl p-4 text-center">
-                    <div className="text-3xl font-bold text-blue-400">{summary?.total_scans || 0}</div>
-                    <div className="text-slate-400 text-sm">Escaneos</div>
-                </div>
-                <div className="bg-slate-800 rounded-xl p-4 text-center">
-                    <div className="text-3xl font-bold text-emerald-400">{summary?.total_quantity || 0}</div>
-                    <div className="text-slate-400 text-sm">Unidades</div>
-                </div>
-                <div className="bg-slate-800 rounded-xl p-4 text-center">
-                    <div className="text-3xl font-bold text-purple-400">{summary?.unique_products || 0}</div>
-                    <div className="text-slate-400 text-sm">Productos</div>
-                </div>
-                <div className="bg-slate-800 rounded-xl p-4 text-center">
-                    <div className={`text-3xl font-bold ${(summary?.unknown_items || 0) > 0 ? 'text-amber-400' : 'text-slate-500'}`}>
-                        {summary?.unknown_items || 0}
-                    </div>
-                    <div className="text-slate-400 text-sm">No encontrados</div>
-                </div>
-            </div>
-
-            {/* Keyboard shortcuts */}
-            <div className="flex items-center justify-center gap-6 py-3 bg-slate-800/30 text-sm">
-                <span className="text-slate-500">
-                    <kbd className="bg-slate-700 px-2 py-1 rounded">F2</kbd> Cantidad
-                </span>
-                <span className="text-slate-500">
-                    <kbd className="bg-slate-700 px-2 py-1 rounded">F3</kbd> Deshacer
-                </span>
-                <span className="text-slate-500">
-                    <kbd className="bg-slate-700 px-2 py-1 rounded">F7</kbd> Manual
-                </span>
-                <span className="text-slate-500">
-                    <kbd className="bg-slate-700 px-2 py-1 rounded">ESC</kbd> Cancelar
-                </span>
-            </div>
-
-            {/* Scan List (grouped by product) */}
-            <div className="flex-1 overflow-auto p-4">
-                <div className="space-y-2">
-                    {(() => {
-                        // Group scans by SKU/barcode
-                        const grouped = scans.reduce<Record<string, { key: string; product_name: string; sku: string; barcode: string; quantity: number; is_unknown: boolean; lastId: number }>>((acc, scan) => {
-                            const key = scan.sku || scan.barcode;
-                            if (acc[key]) {
-                                acc[key].quantity += scan.quantity;
-                                acc[key].lastId = Math.max(acc[key].lastId, scan.id);
-                            } else {
-                                acc[key] = {
-                                    key,
-                                    product_name: scan.product_name || scan.barcode,
-                                    sku: scan.sku || '',
-                                    barcode: scan.barcode,
-                                    quantity: scan.quantity,
-                                    is_unknown: scan.is_unknown,
-                                    lastId: scan.id,
-                                };
-                            }
-                            return acc;
-                        }, {});
-                        const items = Object.values(grouped).sort((a, b) => b.lastId - a.lastId);
-                        return items.map((item, index) => (
-                            <div 
-                                key={item.key}
-                                className={`flex items-center justify-between px-4 py-3 rounded-xl
-                                    ${index === 0 ? 'bg-slate-700 ring-2 ring-blue-500' : 'bg-slate-800'}
-                                    ${item.is_unknown ? 'border-l-4 border-amber-500' : ''}`}
-                            >
-                                <div className="flex-1">
-                                    <div className="font-medium">
-                                        {item.product_name}
-                                    </div>
-                                    <div className="text-slate-400 text-sm">
-                                        {item.sku ? `SKU: ${item.sku}` : 'Código: ' + item.barcode}
-                                        {item.is_unknown ? ' ⚠️' : ''}
-                                    </div>
+            {/* ===== MAIN SPLIT SCREEN ===== */}
+            <div className="flex-1 flex overflow-hidden">
+                {/* ===== LEFT PANEL: AHORA (current scan / status) ===== */}
+                <div className="w-2/5 border-r border-gray-800 flex flex-col bg-gray-950">
+                    {/* Current scan display - BIG */}
+                    {lastScan ? (
+                        <div className={`flex-1 flex flex-col items-center justify-center p-6 ${
+                            lastScan.isUnknown ? 'text-amber-400' : 
+                            lastScan.quantity === 0 ? 'text-gray-400' : 'text-green-400'
+                        }`}>
+                            {lastScan.quantity > 0 && (
+                                <div className="text-8xl font-mono font-black mb-4 leading-none">
+                                    +{lastScan.quantity}
                                 </div>
-                                <div className="text-2xl font-bold text-blue-400 ml-4">
-                                    ×{item.quantity}
+                            )}
+                            <div className="text-xl font-bold text-center text-white max-w-full px-4">
+                                {lastScan.product}
+                            </div>
+                            {lastScan.isUnknown && (
+                                <div className="text-amber-500 text-sm font-mono mt-3 uppercase tracking-wider">
+                                    ⚠ NO CATALOGADO
+                                </div>
+                            )}
+                            {lastScan.quantity === 0 && (
+                                <div className="text-gray-500 text-sm font-mono mt-3 uppercase">
+                                    {lastScan.product}
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex flex-col items-center justify-center text-gray-600">
+                            <div className="text-6xl mb-4 opacity-30">⎕</div>
+                            <div className="text-sm font-mono uppercase tracking-widest">ESPERANDO ESCANEO</div>
+                            {isSending && (
+                                <div className="text-blue-500 text-xs font-mono mt-3 animate-pulse">ENVIANDO...</div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Mode badge at bottom of left panel */}
+                    <div className="px-4 py-2 bg-gray-900 border-t border-gray-800 text-center">
+                        <span className={`text-xs font-mono uppercase tracking-widest ${
+                            mode === 'SCAN' ? 'text-green-500' :
+                            mode === 'QUANTITY_INPUT' || mode === 'QUANTITY_READY' ? 'text-purple-400' :
+                            mode === 'MANUAL_INPUT' || mode === 'MANUAL_QTY' ? 'text-cyan-400' :
+                            mode === 'REGISTER_PRODUCT' ? 'text-amber-400' :
+                            'text-gray-500'
+                        }`}>
+                            {mode === 'SCAN' && '● LISTO PARA ESCANEAR'}
+                            {mode === 'QUANTITY_INPUT' && '▶ INGRESANDO CANTIDAD'}
+                            {mode === 'QUANTITY_READY' && `▶ CANT: ${pendingQuantity} → ESCANEA`}
+                            {mode === 'MANUAL_INPUT' && '▶ BÚSQUEDA MANUAL'}
+                            {mode === 'MANUAL_QTY' && '▶ CONFIRMAR CANTIDAD'}
+                            {mode === 'REGISTER_PRODUCT' && '▶ REGISTRAR PRODUCTO'}
+                        </span>
+                    </div>
+                </div>
+
+                {/* ===== RIGHT PANEL: HISTORIAL (scan history table) ===== */}
+                <div className="w-3/5 flex flex-col bg-black">
+                    {/* Table header */}
+                    <div className="bg-gray-900 border-b border-gray-700 px-3 py-1.5 flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-gray-500 shrink-0">
+                        <span className="w-14">HORA</span>
+                        <span className="w-24">SKU</span>
+                        <span className="flex-1">PRODUCTO</span>
+                        <span className="w-12 text-right">CANT.</span>
+                    </div>
+
+                    {/* Scan rows - dense table */}
+                    <div className="flex-1 overflow-auto">
+                        {(() => {
+                            // Group scans by SKU/barcode
+                            const grouped = scans.reduce<Record<string, { key: string; product_name: string; sku: string; barcode: string; quantity: number; is_unknown: boolean; lastId: number; lastTime: string }>>((acc, scan) => {
+                                const key = scan.sku || scan.barcode;
+                                if (acc[key]) {
+                                    acc[key].quantity += scan.quantity;
+                                    if (scan.id > acc[key].lastId) {
+                                        acc[key].lastId = scan.id;
+                                        acc[key].lastTime = scan.scanned_at;
+                                    }
+                                } else {
+                                    acc[key] = {
+                                        key,
+                                        product_name: scan.product_name || scan.barcode,
+                                        sku: scan.sku || '',
+                                        barcode: scan.barcode,
+                                        quantity: scan.quantity,
+                                        is_unknown: scan.is_unknown,
+                                        lastId: scan.id,
+                                        lastTime: scan.scanned_at,
+                                    };
+                                }
+                                return acc;
+                            }, {});
+                            const items = Object.values(grouped).sort((a, b) => b.lastId - a.lastId);
+                            return items.map((item, index) => (
+                                <div 
+                                    key={item.key}
+                                    className={`flex items-center gap-2 px-3 py-1.5 border-b border-gray-900 text-sm font-mono transition-colors
+                                        ${index === 0 ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-900'}
+                                        ${item.is_unknown ? 'border-l-2 border-l-amber-600' : ''}`}
+                                >
+                                    <span className="w-14 text-[11px] text-gray-600 tabular-nums shrink-0">
+                                        {item.lastTime ? new Date(item.lastTime).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--'}
+                                    </span>
+                                    <span className={`w-24 text-[11px] shrink-0 ${item.is_unknown ? 'text-amber-500' : 'text-blue-400'}`}>
+                                        {item.sku || item.barcode.substring(0, 12)}
+                                    </span>
+                                    <span className={`flex-1 truncate text-[12px] ${index === 0 ? 'text-white' : 'text-gray-300'}`}>
+                                        {item.product_name}
+                                        {item.is_unknown && ' ⚠'}
+                                    </span>
+                                    <span className={`w-12 text-right font-bold tabular-nums ${
+                                        index === 0 ? 'text-green-400 text-base' : 'text-gray-400'
+                                    }`}>
+                                        {item.quantity}
+                                    </span>
+                                </div>
+                            ));
+                        })()}
+
+                        {scans.length === 0 && (
+                            <div className="flex flex-col items-center justify-center h-full text-gray-700">
+                                <div className="text-4xl mb-3 opacity-30">📦</div>
+                                <div className="text-xs font-mono uppercase tracking-widest">Sin escaneos</div>
+                                <div className="text-[10px] font-mono text-gray-800 mt-1">
+                                    Usa la pistola o [F7] manual
                                 </div>
                             </div>
-                        ));
-                    })()}
-
-                    {scans.length === 0 && (
-                        <div className="text-center py-20 text-slate-500">
-                            <div className="text-6xl mb-4">📦</div>
-                            <div className="text-xl">Esperando escaneos...</div>
-                            <div className="text-sm mt-2">Usa la pistola Zebra o presiona <kbd className="bg-slate-700 px-2 py-0.5 rounded">F7</kbd> para agregar manualmente</div>
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
+            </div>
+
+            {/* ===== FOOTER COMMAND BAR (DOS/BIOS style) ===== */}
+            <div className="bg-gray-900 border-t border-gray-700 px-4 py-2 flex items-center gap-6 shrink-0">
+                <div className="flex items-center gap-1">
+                    <span className="bg-yellow-500 text-black text-[10px] font-mono font-bold px-1.5 py-0.5">F2</span>
+                    <span className="text-gray-300 text-[11px] font-mono">Cantidad</span>
+                </div>
+                <div className="flex items-center gap-1">
+                    <span className="bg-yellow-500 text-black text-[10px] font-mono font-bold px-1.5 py-0.5">F3</span>
+                    <span className="text-gray-300 text-[11px] font-mono">Deshacer</span>
+                </div>
+                <div className="flex items-center gap-1">
+                    <span className="bg-yellow-500 text-black text-[10px] font-mono font-bold px-1.5 py-0.5">F7</span>
+                    <span className="text-gray-300 text-[11px] font-mono">Manual</span>
+                </div>
+                <div className="flex items-center gap-1">
+                    <span className="bg-yellow-500 text-black text-[10px] font-mono font-bold px-1.5 py-0.5">ESC</span>
+                    <span className="text-gray-300 text-[11px] font-mono">Cancelar</span>
+                </div>
+                <div className="flex-1"></div>
+                {isSending && (
+                    <span className="text-blue-400 text-[10px] font-mono animate-pulse uppercase">Enviando...</span>
+                )}
+                <span className="text-gray-600 text-[10px] font-mono">
+                    {new Date().toLocaleDateString('es-MX')}
+                </span>
             </div>
         </div>
     );

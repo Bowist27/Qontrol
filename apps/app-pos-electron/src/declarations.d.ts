@@ -14,6 +14,8 @@ export interface ProductsAPI {
         last_price: number | null;
     }>>;
     count: () => Promise<number>;
+    create: (product: { sku: string; barcode: string | null; name: string; unit: string; last_price: number | null }) =>
+        Promise<{ success: boolean; product?: any; error?: string }>;
 }
 
 declare global {
