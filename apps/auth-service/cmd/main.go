@@ -106,6 +106,14 @@ func main() {
 		protected.POST("/roles", userHandler.CreateRole)
 		protected.PUT("/roles/:id", userHandler.UpdateRole)
 		protected.DELETE("/roles/:id", userHandler.DeleteRole)
+
+		// Zones & Price Lists management routes
+		protected.GET("/price-lists", userHandler.ListPriceLists)
+		protected.GET("/zones", userHandler.ListZones)
+		protected.GET("/zones/:id", userHandler.GetZone)
+		protected.POST("/zones", userHandler.CreateZone)
+		protected.PUT("/zones/:id", userHandler.UpdateZone)
+		protected.DELETE("/zones/:id", userHandler.DeleteZone)
 	}
 
 	port := getEnv("PORT", "8080")

@@ -573,9 +573,14 @@ func (r *PostgresUserRepo) GetUserPermissions(ctx context.Context, userID string
 	return permissions, rows.Err()
 }
 
-// GetAllStores retrieves all stores
+// GetAllStores retrieves all stores with zone information
 func (r *PostgresUserRepo) GetAllStores(ctx context.Context) ([]domain.Store, error) {
-	query := `SELECT id, name, status FROM stores ORDER BY name`
+	query := `
+		SELECT s.id, s.name, s.status, s.zone_id, COALESCE(z.name, '') as zone_name
+		FROM stores s
+		LEFT JOIN zones z ON s.zone_id = z.id
+		ORDER BY s.name
+	`
 
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
@@ -586,7 +591,7 @@ func (r *PostgresUserRepo) GetAllStores(ctx context.Context) ([]domain.Store, er
 	var stores []domain.Store
 	for rows.Next() {
 		var store domain.Store
-		if err := rows.Scan(&store.ID, &store.Name, &store.Status); err != nil {
+		if err := rows.Scan(&store.ID, &store.Name, &store.Status, &store.ZoneID, &store.ZoneName); err != nil {
 			return nil, err
 		}
 		stores = append(stores, store)
@@ -597,10 +602,15 @@ func (r *PostgresUserRepo) GetAllStores(ctx context.Context) ([]domain.Store, er
 
 // GetStoreByID retrieves a store by ID
 func (r *PostgresUserRepo) GetStoreByID(ctx context.Context, id int) (*domain.Store, error) {
-	query := `SELECT id, name, status FROM stores WHERE id = $1`
+	query := `
+		SELECT s.id, s.name, s.status, s.zone_id, COALESCE(z.name, '') as zone_name
+		FROM stores s
+		LEFT JOIN zones z ON s.zone_id = z.id
+		WHERE s.id = $1
+	`
 	
 	var store domain.Store
-	err := r.db.QueryRowContext(ctx, query, id).Scan(&store.ID, &store.Name, &store.Status)
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&store.ID, &store.Name, &store.Status, &store.ZoneID, &store.ZoneName)
 	if err != nil {
 		return nil, err
 	}
@@ -608,11 +618,11 @@ func (r *PostgresUserRepo) GetStoreByID(ctx context.Context, id int) (*domain.St
 }
 
 // CreateStore creates a new store
-func (r *PostgresUserRepo) CreateStore(ctx context.Context, name string) (*domain.Store, error) {
-	query := `INSERT INTO stores (name, status) VALUES ($1, true) RETURNING id, name, status`
+func (r *PostgresUserRepo) CreateStore(ctx context.Context, name string, zoneID *int) (*domain.Store, error) {
+	query := `INSERT INTO stores (name, status, zone_id) VALUES ($1, true, $2) RETURNING id, name, status, zone_id`
 	
 	var store domain.Store
-	err := r.db.QueryRowContext(ctx, query, name).Scan(&store.ID, &store.Name, &store.Status)
+	err := r.db.QueryRowContext(ctx, query, name, zoneID).Scan(&store.ID, &store.Name, &store.Status, &store.ZoneID)
 	if err != nil {
 		return nil, err
 	}
@@ -620,11 +630,11 @@ func (r *PostgresUserRepo) CreateStore(ctx context.Context, name string) (*domai
 }
 
 // UpdateStore updates an existing store
-func (r *PostgresUserRepo) UpdateStore(ctx context.Context, id int, name string, status bool) (*domain.Store, error) {
-	query := `UPDATE stores SET name = $1, status = $2 WHERE id = $3 RETURNING id, name, status`
+func (r *PostgresUserRepo) UpdateStore(ctx context.Context, id int, name string, status bool, zoneID *int) (*domain.Store, error) {
+	query := `UPDATE stores SET name = $1, status = $2, zone_id = $3 WHERE id = $4 RETURNING id, name, status, zone_id`
 	
 	var store domain.Store
-	err := r.db.QueryRowContext(ctx, query, name, status, id).Scan(&store.ID, &store.Name, &store.Status)
+	err := r.db.QueryRowContext(ctx, query, name, status, zoneID, id).Scan(&store.ID, &store.Name, &store.Status, &store.ZoneID)
 	if err != nil {
 		return nil, err
 	}
@@ -673,5 +683,135 @@ func (r *PostgresUserRepo) Save(ctx context.Context, user *domain.User) error {
 	_, err := r.db.ExecContext(ctx, query,
 		user.ID, user.Email, user.PasswordHash, user.FirstName, user.LastName, user.RoleID, user.IsActive, time.Now(),
 	)
+	return err
+}
+
+// =====================================================
+// ZONES AND PRICE LISTS
+// =====================================================
+
+// GetAllPriceLists retrieves all price lists
+func (r *PostgresUserRepo) GetAllPriceLists(ctx context.Context) ([]domain.PriceList, error) {
+	query := `SELECT id, name, adjustment_percent, COALESCE(description, '') FROM price_lists ORDER BY name`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var priceLists []domain.PriceList
+	for rows.Next() {
+		var pl domain.PriceList
+		if err := rows.Scan(&pl.ID, &pl.Name, &pl.AdjustmentPercent, &pl.Description); err != nil {
+			return nil, err
+		}
+		priceLists = append(priceLists, pl)
+	}
+
+	return priceLists, rows.Err()
+}
+
+// GetAllZones retrieves all zones with supervisor and price list info
+func (r *PostgresUserRepo) GetAllZones(ctx context.Context) ([]domain.Zone, error) {
+	query := `
+		SELECT 
+			z.id, z.name, z.supervisor_id, 
+			COALESCE(u.first_name || ' ' || u.last_name, '') as supervisor_name,
+			z.price_list_id,
+			COALESCE(pl.name, '') as price_list_name,
+			z.status,
+			(SELECT COUNT(*) FROM stores s WHERE s.zone_id = z.id) as store_count
+		FROM zones z
+		LEFT JOIN users u ON z.supervisor_id = u.id
+		LEFT JOIN price_lists pl ON z.price_list_id = pl.id
+		ORDER BY z.name
+	`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var zones []domain.Zone
+	for rows.Next() {
+		var zone domain.Zone
+		if err := rows.Scan(&zone.ID, &zone.Name, &zone.SupervisorID, &zone.SupervisorName, 
+			&zone.PriceListID, &zone.PriceListName, &zone.Status, &zone.StoreCount); err != nil {
+			return nil, err
+		}
+		zones = append(zones, zone)
+	}
+
+	return zones, rows.Err()
+}
+
+// GetZoneByID retrieves a zone by ID
+func (r *PostgresUserRepo) GetZoneByID(ctx context.Context, id int) (*domain.Zone, error) {
+	query := `
+		SELECT 
+			z.id, z.name, z.supervisor_id,
+			COALESCE(u.first_name || ' ' || u.last_name, '') as supervisor_name,
+			z.price_list_id,
+			COALESCE(pl.name, '') as price_list_name,
+			z.status,
+			(SELECT COUNT(*) FROM stores s WHERE s.zone_id = z.id) as store_count
+		FROM zones z
+		LEFT JOIN users u ON z.supervisor_id = u.id
+		LEFT JOIN price_lists pl ON z.price_list_id = pl.id
+		WHERE z.id = $1
+	`
+	
+	var zone domain.Zone
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&zone.ID, &zone.Name, &zone.SupervisorID, 
+		&zone.SupervisorName, &zone.PriceListID, &zone.PriceListName, &zone.Status, &zone.StoreCount)
+	if err != nil {
+		return nil, err
+	}
+	return &zone, nil
+}
+
+// CreateZone creates a new zone
+func (r *PostgresUserRepo) CreateZone(ctx context.Context, name string, supervisorID *string, priceListID *int) (*domain.Zone, error) {
+	query := `INSERT INTO zones (name, supervisor_id, price_list_id, status) VALUES ($1, $2, $3, true) RETURNING id, name, status`
+	
+	var zone domain.Zone
+	err := r.db.QueryRowContext(ctx, query, name, supervisorID, priceListID).Scan(&zone.ID, &zone.Name, &zone.Status)
+	if err != nil {
+		return nil, err
+	}
+	zone.SupervisorID = supervisorID
+	zone.PriceListID = priceListID
+	return &zone, nil
+}
+
+// UpdateZone updates an existing zone
+func (r *PostgresUserRepo) UpdateZone(ctx context.Context, id int, name string, supervisorID *string, priceListID *int, status bool) (*domain.Zone, error) {
+	query := `UPDATE zones SET name = $1, supervisor_id = $2, price_list_id = $3, status = $4 WHERE id = $5 RETURNING id, name, status`
+	
+	var zone domain.Zone
+	err := r.db.QueryRowContext(ctx, query, name, supervisorID, priceListID, status, id).Scan(&zone.ID, &zone.Name, &zone.Status)
+	if err != nil {
+		return nil, err
+	}
+	zone.SupervisorID = supervisorID
+	zone.PriceListID = priceListID
+	return &zone, nil
+}
+
+// DeleteZone deletes a zone by ID
+func (r *PostgresUserRepo) DeleteZone(ctx context.Context, id int) error {
+	// Check if zone has stores assigned
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM stores WHERE zone_id = $1`, id).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("zone has %d store(s) assigned", count)
+	}
+	
+	_, err = r.db.ExecContext(ctx, `DELETE FROM zones WHERE id = $1`, id)
 	return err
 }

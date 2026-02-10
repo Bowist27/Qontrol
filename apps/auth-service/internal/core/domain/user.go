@@ -46,11 +46,33 @@ type User struct {
 	Permissions []string `json:"permissions,omitempty"` // Override permissions (additional to role)
 }
 
-// Store represents a store entity
+// Store represents a store entity (sucursal)
 type Store struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Status bool   `json:"status"`
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Status   bool   `json:"status"`
+	ZoneID   *int   `json:"zone_id,omitempty"`
+	ZoneName string `json:"zone_name,omitempty"`
+}
+
+// PriceList represents a pricing strategy
+type PriceList struct {
+	ID                int     `json:"id"`
+	Name              string  `json:"name"`
+	AdjustmentPercent float64 `json:"adjustment_percent"`
+	Description       string  `json:"description"`
+}
+
+// Zone represents a geographical zone (like a role for stores)
+type Zone struct {
+	ID             int        `json:"id"`
+	Name           string     `json:"name"`
+	SupervisorID   *string    `json:"supervisor_id,omitempty"`
+	SupervisorName string     `json:"supervisor_name,omitempty"`
+	PriceListID    *int       `json:"price_list_id,omitempty"`
+	PriceListName  string     `json:"price_list_name,omitempty"`
+	Status         bool       `json:"status"`
+	StoreCount     int        `json:"store_count,omitempty"`
 }
 
 // UserSyncDTO is used for offline synchronization
@@ -116,11 +138,28 @@ type ErrorResponse struct {
 
 // CreateStoreRequest represents the request to create a store
 type CreateStoreRequest struct {
-	Name string `json:"name" binding:"required"`
+	Name   string `json:"name" binding:"required"`
+	ZoneID *int   `json:"zone_id"`
 }
 
 // UpdateStoreRequest represents the request to update a store
 type UpdateStoreRequest struct {
 	Name   string `json:"name" binding:"required"`
 	Status bool   `json:"status"`
+	ZoneID *int   `json:"zone_id"`
+}
+
+// CreateZoneRequest represents the request to create a zone
+type CreateZoneRequest struct {
+	Name         string  `json:"name" binding:"required"`
+	SupervisorID *string `json:"supervisor_id"`
+	PriceListID  *int    `json:"price_list_id"`
+}
+
+// UpdateZoneRequest represents the request to update a zone
+type UpdateZoneRequest struct {
+	Name         string  `json:"name" binding:"required"`
+	SupervisorID *string `json:"supervisor_id"`
+	PriceListID  *int    `json:"price_list_id"`
+	Status       bool    `json:"status"`
 }
