@@ -85,11 +85,11 @@ function ZonasTab() {
     const [priceLists, setPriceLists] = useState<PriceList[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
-    const [showNewZone, setShowNewZone] = useState(false);
+    const [showModal, setShowModal] = useState(false);
     const [editingZone, setEditingZone] = useState<Zone | null>(null);
-    const [newZone, setNewZone] = useState({ name: '', supervisor_id: '', price_list_id: 0 });
+    const [formData, setFormData] = useState({ name: '', supervisor_id: '', price_list_id: 0 });
     const [saving, setSaving] = useState(false);
-    const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+    const [deleteModal, setDeleteModal] = useState<{ id: number; name: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     const loadData = useCallback(async () => {
@@ -118,58 +118,74 @@ function ZonasTab() {
         zone.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    const handleCreateZone = async () => {
-        if (!newZone.name.trim()) return;
+    const openCreateModal = () => {
+        setEditingZone(null);
+        setFormData({ name: '', supervisor_id: '', price_list_id: 0 });
+        setShowModal(true);
+    };
+
+    const openEditModal = (zone: Zone) => {
+        setEditingZone(zone);
+        setFormData({
+            name: zone.name,
+            supervisor_id: zone.supervisor_id || '',
+            price_list_id: zone.price_list_id || 0,
+        });
+        setShowModal(true);
+    };
+
+    const closeModal = () => {
+        setShowModal(false);
+        setEditingZone(null);
+        setFormData({ name: '', supervisor_id: '', price_list_id: 0 });
+    };
+
+    const handleSave = async () => {
+        if (!formData.name.trim()) return;
 
         try {
             setSaving(true);
             setError(null);
-            await usersApi.createZone({
-                name: newZone.name.trim(),
-                supervisor_id: newZone.supervisor_id || undefined,
-                price_list_id: newZone.price_list_id || undefined,
-            });
-            setNewZone({ name: '', supervisor_id: '', price_list_id: 0 });
-            setShowNewZone(false);
+
+            if (editingZone) {
+                // Update
+                await usersApi.updateZone(editingZone.id, {
+                    name: formData.name.trim(),
+                    supervisor_id: formData.supervisor_id || undefined,
+                    price_list_id: formData.price_list_id || undefined,
+                    status: editingZone.status,
+                });
+            } else {
+                // Create
+                await usersApi.createZone({
+                    name: formData.name.trim(),
+                    supervisor_id: formData.supervisor_id || undefined,
+                    price_list_id: formData.price_list_id || undefined,
+                });
+            }
+
+            closeModal();
             await loadData();
         } catch (error: unknown) {
             const err = error as { message?: string };
-            setError(err.message || 'Error al crear zona');
+            setError(err.message || 'Error al guardar zona');
         } finally {
             setSaving(false);
         }
     };
 
-    const handleUpdateZone = async (zone: Zone) => {
+    const handleDeleteZone = async () => {
+        if (!deleteModal) return;
         try {
             setSaving(true);
             setError(null);
-            await usersApi.updateZone(zone.id, {
-                name: zone.name,
-                supervisor_id: zone.supervisor_id || undefined,
-                price_list_id: zone.price_list_id || undefined,
-                status: zone.status,
-            });
-            setEditingZone(null);
-            await loadData();
-        } catch (error: unknown) {
-            const err = error as { message?: string };
-            setError(err.message || 'Error al actualizar zona');
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const handleDeleteZone = async (id: number) => {
-        try {
-            setSaving(true);
-            setError(null);
-            await usersApi.deleteZone(id);
-            setDeleteConfirm(null);
+            await usersApi.deleteZone(deleteModal.id);
+            setDeleteModal(null);
             await loadData();
         } catch (error: unknown) {
             const err = error as { message?: string };
             setError(err.message || 'No se puede eliminar: la zona tiene sucursales asignadas');
+            setDeleteModal(null);
         } finally {
             setSaving(false);
         }
@@ -219,104 +235,17 @@ function ZonasTab() {
                         placeholder="Buscar zonas..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                 </div>
                 <button
-                    onClick={() => setShowNewZone(true)}
+                    onClick={openCreateModal}
                     className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
                 >
                     <Plus className="w-4 h-4" />
                     Nueva Zona
                 </button>
             </div>
-
-            {/* New Zone Form */}
-            {showNewZone && (
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                    <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-blue-600" />
-                        Nueva Zona
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Nombre *</label>
-                            <input
-                                type="text"
-                                value={newZone.name}
-                                onChange={(e) => setNewZone({ ...newZone, name: e.target.value })}
-                                placeholder="Ej: Zona Norte"
-                                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                                autoFocus
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">
-                                <Users className="w-3 h-3 inline mr-1" />
-                                Supervisor
-                            </label>
-                            <select
-                                value={newZone.supervisor_id}
-                                onChange={(e) => setNewZone({ ...newZone, supervisor_id: e.target.value })}
-                                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                            >
-                                <option value="">Sin asignar</option>
-                                {users.map((user) => (
-                                    <option key={user.id} value={user.id}>
-                                        {user.first_name} {user.last_name}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">
-                                <DollarSign className="w-3 h-3 inline mr-1" />
-                                Lista de Precios
-                            </label>
-                            <select
-                                value={newZone.price_list_id}
-                                onChange={(e) => setNewZone({ ...newZone, price_list_id: parseInt(e.target.value) || 0 })}
-                                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                            >
-                                <option value="0">Estándar (sin ajuste)</option>
-                                {priceLists.map((pl) => (
-                                    <option key={pl.id} value={pl.id}>
-                                        {pl.name} ({pl.adjustment_percent > 0 ? '+' : ''}{pl.adjustment_percent}%)
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <button
-                            onClick={handleCreateZone}
-                            disabled={saving || !newZone.name.trim()}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
-                        >
-                            {saving ? (
-                                <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                                    Guardando...
-                                </>
-                            ) : (
-                                <>
-                                    <Save className="w-4 h-4" />
-                                    Guardar
-                                </>
-                            )}
-                        </button>
-                        <button
-                            onClick={() => {
-                                setShowNewZone(false);
-                                setNewZone({ name: '', supervisor_id: '', price_list_id: 0 });
-                            }}
-                            className="px-4 py-2 text-slate-600 hover:text-slate-800 transition-colors"
-                        >
-                            Cancelar
-                        </button>
-                    </div>
-                </div>
-            )}
 
             {/* Zones Table */}
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -354,62 +283,22 @@ function ZonasTab() {
                             filteredZones.map((zone) => (
                                 <tr key={zone.id} className="hover:bg-slate-50 transition-colors">
                                     <td className="px-6 py-4">
-                                        {editingZone?.id === zone.id ? (
-                                            <input
-                                                type="text"
-                                                value={editingZone.name}
-                                                onChange={(e) => setEditingZone({ ...editingZone, name: e.target.value })}
-                                                className="px-3 py-1.5 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                                                autoFocus
-                                            />
-                                        ) : (
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-semibold">
-                                                    <MapPin className="w-5 h-5" />
-                                                </div>
-                                                <span className="font-medium text-slate-800">{zone.name}</span>
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 bg-linear-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-semibold">
+                                                <MapPin className="w-5 h-5" />
                                             </div>
-                                        )}
+                                            <span className="font-medium text-slate-800">{zone.name}</span>
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4">
-                                        {editingZone?.id === zone.id ? (
-                                            <select
-                                                value={editingZone.supervisor_id || ''}
-                                                onChange={(e) => setEditingZone({ ...editingZone, supervisor_id: e.target.value || undefined })}
-                                                className="px-3 py-1.5 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                                            >
-                                                <option value="">Sin asignar</option>
-                                                {users.map((user) => (
-                                                    <option key={user.id} value={user.id}>
-                                                        {user.first_name} {user.last_name}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        ) : (
-                                            <span className="text-slate-600">
-                                                {zone.supervisor_name || <span className="text-slate-400 italic">Sin asignar</span>}
-                                            </span>
-                                        )}
+                                        <span className="text-slate-600">
+                                            {zone.supervisor_name || <span className="text-slate-400 italic">Sin asignar</span>}
+                                        </span>
                                     </td>
                                     <td className="px-6 py-4">
-                                        {editingZone?.id === zone.id ? (
-                                            <select
-                                                value={editingZone.price_list_id || 0}
-                                                onChange={(e) => setEditingZone({ ...editingZone, price_list_id: parseInt(e.target.value) || undefined })}
-                                                className="px-3 py-1.5 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                                            >
-                                                <option value="0">Estándar</option>
-                                                {priceLists.map((pl) => (
-                                                    <option key={pl.id} value={pl.id}>
-                                                        {pl.name}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        ) : (
-                                            <span className="text-slate-600">
-                                                {zone.price_list_name || 'Estándar'}
-                                            </span>
-                                        )}
+                                        <span className="text-slate-600">
+                                            {zone.price_list_name || 'Estándar'}
+                                        </span>
                                     </td>
                                     <td className="px-6 py-4 text-center">
                                         <span className="inline-flex items-center gap-1 px-2 py-1 bg-slate-100 text-slate-600 rounded-full text-sm">
@@ -441,63 +330,22 @@ function ZonasTab() {
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center justify-end gap-2">
-                                            {editingZone?.id === zone.id ? (
-                                                <>
-                                                    <button
-                                                        onClick={() => handleUpdateZone(editingZone)}
-                                                        disabled={saving}
-                                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                        title="Guardar"
-                                                    >
-                                                        <Save className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setEditingZone(null)}
-                                                        className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                                                        title="Cancelar"
-                                                    >
-                                                        <X className="w-4 h-4" />
-                                                    </button>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <button
-                                                        onClick={() => setEditingZone(zone)}
-                                                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                        title="Editar"
-                                                    >
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                                        </svg>
-                                                    </button>
-                                                    {deleteConfirm === zone.id ? (
-                                                        <div className="flex items-center gap-1 bg-red-50 rounded-lg px-2 py-1">
-                                                            <span className="text-xs text-red-600 mr-1">¿Eliminar?</span>
-                                                            <button
-                                                                onClick={() => handleDeleteZone(zone.id)}
-                                                                disabled={saving}
-                                                                className="p-1 text-red-600 hover:bg-red-100 rounded transition-colors"
-                                                            >
-                                                                <CheckCircle className="w-4 h-4" />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => setDeleteConfirm(null)}
-                                                                className="p-1 text-slate-400 hover:bg-slate-100 rounded transition-colors"
-                                                            >
-                                                                <X className="w-4 h-4" />
-                                                            </button>
-                                                        </div>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => setDeleteConfirm(zone.id)}
-                                                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                            title="Eliminar"
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    )}
-                                                </>
-                                            )}
+                                            <button
+                                                onClick={() => openEditModal(zone)}
+                                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                title="Editar"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                                </svg>
+                                            </button>
+                                            <button
+                                                onClick={() => setDeleteModal({ id: zone.id, name: zone.name })}
+                                                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                title="Eliminar"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
@@ -515,6 +363,161 @@ function ZonasTab() {
                     <p className="mt-1">Las zonas agrupan sucursales para facilitar la administración. Cada zona tiene un supervisor asignado y una lista de precios. No se pueden eliminar zonas que tienen sucursales asignadas.</p>
                 </div>
             </div>
+
+            {/* Create/Edit Zone Modal */}
+            {showModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-xl p-6 max-w-lg mx-4 shadow-2xl w-full">
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <MapPin className="w-6 h-6 text-purple-600" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-gray-900">
+                                    {editingZone ? 'Editar Zona' : 'Nueva Zona'}
+                                </h3>
+                                <p className="text-sm text-gray-500">
+                                    {editingZone ? 'Modifica los datos de la zona' : 'Crea una nueva zona geográfica'}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                                <input
+                                    type="text"
+                                    value={formData.name}
+                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                    placeholder="Ej: Zona Norte"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-900 bg-white"
+                                    autoFocus
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    <Users className="w-3.5 h-3.5 inline mr-1" />
+                                    Supervisor
+                                </label>
+                                <select
+                                    value={formData.supervisor_id}
+                                    onChange={(e) => setFormData({ ...formData, supervisor_id: e.target.value })}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-900 bg-white"
+                                >
+                                    <option value="">Sin asignar</option>
+                                    {users.map((user) => (
+                                        <option key={user.id} value={user.id}>
+                                            {user.first_name} {user.last_name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    <DollarSign className="w-3.5 h-3.5 inline mr-1" />
+                                    Lista de Precios
+                                </label>
+                                <select
+                                    value={formData.price_list_id}
+                                    onChange={(e) => setFormData({ ...formData, price_list_id: parseInt(e.target.value) || 0 })}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-900 bg-white"
+                                >
+                                    <option value="0">Estándar (sin ajuste)</option>
+                                    {priceLists.map((pl) => (
+                                        <option key={pl.id} value={pl.id}>
+                                            {pl.name} ({pl.adjustment_percent > 0 ? '+' : ''}{pl.adjustment_percent}%)
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 justify-end mt-6">
+                            <button
+                                onClick={closeModal}
+                                disabled={saving}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleSave}
+                                disabled={saving || !formData.name.trim()}
+                                className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                            >
+                                {saving ? (
+                                    <>
+                                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                                        Guardando...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Save className="w-4 h-4" />
+                                        {editingZone ? 'Guardar Cambios' : 'Crear Zona'}
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Zone Confirmation Modal */}
+            {deleteModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl w-full">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <Trash2 className="w-6 h-6 text-red-600" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-gray-900">Eliminar Zona</h3>
+                                <p className="text-sm text-gray-500">Esta acción no se puede deshacer</p>
+                            </div>
+                        </div>
+
+                        <p className="text-gray-700 mb-6">
+                            ¿Estás seguro que deseas eliminar la zona <span className="font-semibold text-gray-900">"{deleteModal.name}"</span>?
+                        </p>
+
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
+                            <div className="flex items-start gap-2">
+                                <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                                <p className="text-sm text-amber-700">
+                                    No se pueden eliminar zonas que tienen sucursales asignadas. Primero debes reasignar las sucursales a otra zona.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 justify-end">
+                            <button
+                                onClick={() => setDeleteModal(null)}
+                                disabled={saving}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleDeleteZone}
+                                disabled={saving}
+                                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                            >
+                                {saving ? (
+                                    <>
+                                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                                        Eliminando...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Trash2 className="w-4 h-4" />
+                                        Eliminar Zona
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
@@ -527,11 +530,11 @@ function SucursalesTab() {
     const [zones, setZones] = useState<Zone[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
-    const [showNewStore, setShowNewStore] = useState(false);
+    const [showModal, setShowModal] = useState(false);
     const [editingStore, setEditingStore] = useState<StoreType | null>(null);
-    const [newStore, setNewStore] = useState({ name: '', zone_id: 0 });
+    const [formData, setFormData] = useState({ name: '', zone_id: 0 });
     const [saving, setSaving] = useState(false);
-    const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+    const [deleteModal, setDeleteModal] = useState<{ id: number; name: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     const loadData = useCallback(async () => {
@@ -558,52 +561,66 @@ function SucursalesTab() {
         store.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    const handleCreateStore = async () => {
-        if (!newStore.name.trim()) return;
+    const openCreateModal = () => {
+        setEditingStore(null);
+        setFormData({ name: '', zone_id: 0 });
+        setShowModal(true);
+    };
+
+    const openEditModal = (store: StoreType) => {
+        setEditingStore(store);
+        setFormData({
+            name: store.name,
+            zone_id: store.zone_id || 0,
+        });
+        setShowModal(true);
+    };
+
+    const closeModal = () => {
+        setShowModal(false);
+        setEditingStore(null);
+        setFormData({ name: '', zone_id: 0 });
+    };
+
+    const handleSave = async () => {
+        if (!formData.name.trim()) return;
 
         try {
             setSaving(true);
             setError(null);
-            await usersApi.createStore({
-                name: newStore.name.trim(),
-                zone_id: newStore.zone_id || undefined,
-            });
-            setNewStore({ name: '', zone_id: 0 });
-            setShowNewStore(false);
+
+            if (editingStore) {
+                // Update
+                await usersApi.updateStore(editingStore.id, {
+                    name: formData.name.trim(),
+                    status: editingStore.status,
+                    zone_id: formData.zone_id || undefined,
+                });
+            } else {
+                // Create
+                await usersApi.createStore({
+                    name: formData.name.trim(),
+                    zone_id: formData.zone_id || undefined,
+                });
+            }
+
+            closeModal();
             await loadData();
         } catch (error: unknown) {
             const err = error as { message?: string };
-            setError(err.message || 'Error al crear sucursal');
+            setError(err.message || 'Error al guardar sucursal');
         } finally {
             setSaving(false);
         }
     };
 
-    const handleUpdateStore = async (store: StoreType) => {
+    const handleDeleteStore = async () => {
+        if (!deleteModal) return;
         try {
             setSaving(true);
             setError(null);
-            await usersApi.updateStore(store.id, {
-                name: store.name,
-                status: store.status,
-                zone_id: store.zone_id || undefined,
-            });
-            setEditingStore(null);
-            await loadData();
-        } catch (error: unknown) {
-            const err = error as { message?: string };
-            setError(err.message || 'Error al actualizar sucursal');
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const handleDeleteStore = async (id: number) => {
-        try {
-            setSaving(true);
-            setError(null);
-            await usersApi.deleteStore(id);
-            setDeleteConfirm(null);
+            await usersApi.deleteStore(deleteModal.id);
+            setDeleteModal(null);
             await loadData();
         } catch (error: unknown) {
             const err = error as { message?: string };
@@ -656,86 +673,17 @@ function SucursalesTab() {
                         placeholder="Buscar sucursales..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                 </div>
                 <button
-                    onClick={() => setShowNewStore(true)}
+                    onClick={openCreateModal}
                     className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
                 >
                     <Plus className="w-4 h-4" />
                     Nueva Sucursal
                 </button>
             </div>
-
-            {/* New Store Form */}
-            {showNewStore && (
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                    <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                        <Store className="w-4 h-4 text-blue-600" />
-                        Nueva Sucursal
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Nombre *</label>
-                            <input
-                                type="text"
-                                value={newStore.name}
-                                onChange={(e) => setNewStore({ ...newStore, name: e.target.value })}
-                                placeholder="Ej: Sucursal Centro"
-                                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                                autoFocus
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">
-                                <MapPin className="w-3 h-3 inline mr-1" />
-                                Zona
-                            </label>
-                            <select
-                                value={newStore.zone_id}
-                                onChange={(e) => setNewStore({ ...newStore, zone_id: parseInt(e.target.value) || 0 })}
-                                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white"
-                            >
-                                <option value="0">Sin zona asignada</option>
-                                {zones.filter(z => z.status).map((zone) => (
-                                    <option key={zone.id} value={zone.id}>
-                                        {zone.name}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <button
-                            onClick={handleCreateStore}
-                            disabled={saving || !newStore.name.trim()}
-                            className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
-                        >
-                            {saving ? (
-                                <>
-                                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                                    Guardando...
-                                </>
-                            ) : (
-                                <>
-                                    <Save className="w-4 h-4" />
-                                    Guardar
-                                </>
-                            )}
-                        </button>
-                        <button
-                            onClick={() => {
-                                setShowNewStore(false);
-                                setNewStore({ name: '', zone_id: 0 });
-                            }}
-                            className="px-4 py-2 text-slate-600 hover:text-slate-800 transition-colors"
-                        >
-                            Cancelar
-                        </button>
-                    </div>
-                </div>
-            )}
 
             {/* Stores Table */}
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -767,47 +715,22 @@ function SucursalesTab() {
                             filteredStores.map((store) => (
                                 <tr key={store.id} className="hover:bg-slate-50 transition-colors">
                                     <td className="px-6 py-4">
-                                        {editingStore?.id === store.id ? (
-                                            <input
-                                                type="text"
-                                                value={editingStore.name}
-                                                onChange={(e) => setEditingStore({ ...editingStore, name: e.target.value })}
-                                                className="px-3 py-1.5 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                                                autoFocus
-                                            />
-                                        ) : (
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center text-white font-semibold">
-                                                    <Building2 className="w-5 h-5" />
-                                                </div>
-                                                <span className="font-medium text-slate-800">{store.name}</span>
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 bg-linear-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center text-white font-semibold">
+                                                <Building2 className="w-5 h-5" />
                                             </div>
-                                        )}
+                                            <span className="font-medium text-slate-800">{store.name}</span>
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4">
-                                        {editingStore?.id === store.id ? (
-                                            <select
-                                                value={editingStore.zone_id || 0}
-                                                onChange={(e) => setEditingStore({ ...editingStore, zone_id: parseInt(e.target.value) || undefined })}
-                                                className="px-3 py-1.5 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                                            >
-                                                <option value="0">Sin zona</option>
-                                                {zones.filter(z => z.status).map((zone) => (
-                                                    <option key={zone.id} value={zone.id}>
-                                                        {zone.name}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        ) : (
-                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                                                store.zone_name
-                                                    ? 'bg-purple-100 text-purple-700'
-                                                    : 'bg-slate-100 text-slate-500'
-                                            }`}>
-                                                <MapPin className="w-3 h-3" />
-                                                {store.zone_name || 'Sin zona'}
-                                            </span>
-                                        )}
+                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
+                                            store.zone_name
+                                                ? 'bg-purple-100 text-purple-700'
+                                                : 'bg-slate-100 text-slate-500'
+                                        }`}>
+                                            <MapPin className="w-3 h-3" />
+                                            {store.zone_name || 'Sin zona'}
+                                        </span>
                                     </td>
                                     <td className="px-6 py-4">
                                         <button
@@ -833,63 +756,22 @@ function SucursalesTab() {
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center justify-end gap-2">
-                                            {editingStore?.id === store.id ? (
-                                                <>
-                                                    <button
-                                                        onClick={() => handleUpdateStore(editingStore)}
-                                                        disabled={saving}
-                                                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                        title="Guardar"
-                                                    >
-                                                        <Save className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setEditingStore(null)}
-                                                        className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                                                        title="Cancelar"
-                                                    >
-                                                        <X className="w-4 h-4" />
-                                                    </button>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <button
-                                                        onClick={() => setEditingStore(store)}
-                                                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                        title="Editar"
-                                                    >
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                                        </svg>
-                                                    </button>
-                                                    {deleteConfirm === store.id ? (
-                                                        <div className="flex items-center gap-1 bg-red-50 rounded-lg px-2 py-1">
-                                                            <span className="text-xs text-red-600 mr-1">¿Eliminar?</span>
-                                                            <button
-                                                                onClick={() => handleDeleteStore(store.id)}
-                                                                disabled={saving}
-                                                                className="p-1 text-red-600 hover:bg-red-100 rounded transition-colors"
-                                                            >
-                                                                <CheckCircle className="w-4 h-4" />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => setDeleteConfirm(null)}
-                                                                className="p-1 text-slate-400 hover:bg-slate-100 rounded transition-colors"
-                                                            >
-                                                                <X className="w-4 h-4" />
-                                                            </button>
-                                                        </div>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => setDeleteConfirm(store.id)}
-                                                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                            title="Eliminar"
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
-                                                    )}
-                                                </>
-                                            )}
+                                            <button
+                                                onClick={() => openEditModal(store)}
+                                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                title="Editar"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                                </svg>
+                                            </button>
+                                            <button
+                                                onClick={() => setDeleteModal({ id: store.id, name: store.name })}
+                                                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                title="Eliminar"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
@@ -907,6 +789,143 @@ function SucursalesTab() {
                     <p className="mt-1">Las sucursales heredan la lista de precios y supervisor de su zona asignada. No se pueden eliminar sucursales que tengan usuarios asignados o auditorías asociadas.</p>
                 </div>
             </div>
+
+            {/* Create/Edit Store Modal */}
+            {showModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-xl p-6 max-w-lg mx-4 shadow-2xl w-full">
+                        <div className="flex items-center gap-3 mb-6">
+                            <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <Store className="w-6 h-6 text-blue-600" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-gray-900">
+                                    {editingStore ? 'Editar Sucursal' : 'Nueva Sucursal'}
+                                </h3>
+                                <p className="text-sm text-gray-500">
+                                    {editingStore ? 'Modifica los datos de la sucursal' : 'Crea una nueva sucursal'}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                                <input
+                                    type="text"
+                                    value={formData.name}
+                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                    placeholder="Ej: Sucursal Centro"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                                    autoFocus
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    <MapPin className="w-3.5 h-3.5 inline mr-1" />
+                                    Zona
+                                </label>
+                                <select
+                                    value={formData.zone_id}
+                                    onChange={(e) => setFormData({ ...formData, zone_id: parseInt(e.target.value) || 0 })}
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                                >
+                                    <option value="0">Sin zona asignada</option>
+                                    {zones.filter(z => z.status).map((zone) => (
+                                        <option key={zone.id} value={zone.id}>
+                                            {zone.name}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 justify-end mt-6">
+                            <button
+                                onClick={closeModal}
+                                disabled={saving}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleSave}
+                                disabled={saving || !formData.name.trim()}
+                                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                            >
+                                {saving ? (
+                                    <>
+                                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                                        Guardando...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Save className="w-4 h-4" />
+                                        {editingStore ? 'Guardar Cambios' : 'Crear Sucursal'}
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Store Confirmation Modal */}
+            {deleteModal && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-xl p-6 max-w-md mx-4 shadow-2xl w-full">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                                <Trash2 className="w-6 h-6 text-red-600" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-gray-900">Eliminar Sucursal</h3>
+                                <p className="text-sm text-gray-500">Esta acción no se puede deshacer</p>
+                            </div>
+                        </div>
+
+                        <p className="text-gray-600 mb-4">
+                            ¿Estás seguro de que deseas eliminar la sucursal <span className="font-semibold text-gray-900">"{deleteModal.name}"</span>?
+                        </p>
+
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
+                            <div className="flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                                <p className="text-sm text-amber-700">
+                                    No se puede eliminar una sucursal que tenga usuarios asignados o auditorías asociadas.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 justify-end">
+                            <button
+                                onClick={() => setDeleteModal(null)}
+                                disabled={saving}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleDeleteStore}
+                                disabled={saving}
+                                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
+                            >
+                                {saving ? (
+                                    <>
+                                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                                        Eliminando...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Trash2 className="w-4 h-4" />
+                                        Eliminar Sucursal
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
