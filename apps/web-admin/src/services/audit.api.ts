@@ -144,7 +144,7 @@ export const auditApi = {
      */
     getSessions: async (): Promise<AuditListDTO[]> => {
         const data = await httpClient.get<{ audits: AuditListDTO[] }>(`${API_BASE}/api/audits`);
-        return data.audits;
+        return data.audits || [];
     },
 
     /**
@@ -172,7 +172,11 @@ export const auditApi = {
      * GET /api/reopen-requests - Get pending reopen requests from POS
      */
     getPendingReopenRequests: async (): Promise<any> => {
-        return httpClient.get<any>(`${API_BASE}/api/reopen-requests`);
+        try {
+            return await httpClient.get<any>(`${API_BASE}/api/reopen-requests`);
+        } catch {
+            return { requests: [] };
+        }
     },
 
     /**

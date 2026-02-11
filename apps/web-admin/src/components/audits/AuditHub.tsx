@@ -148,7 +148,7 @@ const AuditHub: React.FC = () => {
     }, []);
 
     // Map backend DTO to UI model
-    const sessions: AuditSession[] = audits.map(item => {
+    const sessions: AuditSession[] = (audits || []).map(item => {
         const s = item.session;
 
         // Map Status
