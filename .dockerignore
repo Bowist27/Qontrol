@@ -1,0 +1,26 @@
+# Exclude unnecessary files/folders from Docker build context
+.git
+.gitignore
+node_modules
+*.log
+logs.txt
+full_logs.txt
+dist
+dist-electron
+*.exe
+*.xlsx
+*.ps1
+*.md
+*.env
+*.env.*
+*.DS_Store
+*.vscode
+*.venv
+__pycache__
+coverage
+build
+
+# Exclude all test files
+apps/*/test*
+scripts/test*
+docs/
