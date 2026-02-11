@@ -12,7 +12,7 @@ import {
     Store, Play, CheckCircle2, Lock, KeyRound,
     Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
     ChevronLeft, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole,
-    FileSpreadsheet, FileDown, Loader2, Trash2
+    FileSpreadsheet, FileDown, Loader2, Trash2, RefreshCw
 } from 'lucide-react';
 
 import { auditApi } from '../../services/audit.api';
@@ -114,6 +114,25 @@ const AuditHub: React.FC = () => {
         session: AuditSession | null;
         loading: boolean;
     }>({ open: false, type: 'cancel', session: null, loading: false });
+
+    // Reopen Requests from POS
+    const [reopenRequests, setReopenRequests] = useState<any[]>([]);
+
+    // Fetch pending reopen requests
+    useEffect(() => {
+        const fetchReopenRequests = async () => {
+            try {
+                const data = await auditApi.getPendingReopenRequests();
+                setReopenRequests(data.requests || []);
+            } catch (err) {
+                console.error('Failed to fetch reopen requests:', err);
+            }
+        };
+        fetchReopenRequests();
+        // Refresh every 30 seconds
+        const interval = setInterval(fetchReopenRequests, 30000);
+        return () => clearInterval(interval);
+    }, []);
 
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
@@ -607,6 +626,36 @@ const AuditHub: React.FC = () => {
 
     return (
         <div className="h-[calc(100vh-140px)] flex flex-col gap-4">
+            {/* REOPEN REQUESTS BANNER */}
+            {reopenRequests.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3">
+                    <div className="bg-amber-100 p-2 rounded-lg">
+                        <RefreshCw size={18} className="text-amber-600" />
+                    </div>
+                    <div className="flex-1">
+                        <div className="text-sm font-semibold text-amber-800">
+                            {reopenRequests.length} solicitud{reopenRequests.length !== 1 ? 'es' : ''} de reapertura pendiente{reopenRequests.length !== 1 ? 's' : ''}
+                        </div>
+                        <div className="text-xs text-amber-600 mt-0.5">
+                            {reopenRequests.map(r => r.store_name).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i).join(', ')}
+                            {' — '}
+                            Abre el detalle de la auditoría y presiona "Reabrir Auditoría" para aprobar.
+                        </div>
+                    </div>
+                    <div className="flex gap-2">
+                        {reopenRequests.slice(0, 3).map((req: any) => (
+                            <button
+                                key={req.id}
+                                onClick={() => navigate(`/dashboard/audits/${req.audit_id}`)}
+                                className="text-xs bg-amber-200 hover:bg-amber-300 text-amber-800 px-3 py-1.5 rounded-lg font-medium transition-colors"
+                            >
+                                Auditoría #{req.audit_id}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* HEADER */}
             <div className="flex items-center justify-between">
                 <div className="relative" ref={contextRef}>
@@ -985,16 +1034,15 @@ const AuditHub: React.FC = () => {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                     <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 transform transition-all scale-100">
                         <div className="flex flex-col items-center text-center">
-                            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${
-                                confirmModal.type === 'cancel' ? 'bg-red-100' : 'bg-amber-100'
-                            }`}>
-                                {confirmModal.type === 'cancel' 
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${confirmModal.type === 'cancel' ? 'bg-red-100' : 'bg-amber-100'
+                                }`}>
+                                {confirmModal.type === 'cancel'
                                     ? <Trash2 className="w-6 h-6 text-red-600" />
                                     : <LockKeyhole className="w-6 h-6 text-amber-600" />
                                 }
                             </div>
                             <h3 className="text-xl font-bold text-slate-900 mb-2">
-                                {confirmModal.type === 'cancel' 
+                                {confirmModal.type === 'cancel'
                                     ? '¿Eliminar auditoría?'
                                     : '¿Forzar cierre?'
                                 }
@@ -1019,11 +1067,10 @@ const AuditHub: React.FC = () => {
                                 <button
                                     onClick={confirmModalAction}
                                     disabled={confirmModal.loading}
-                                    className={`flex-1 py-2.5 px-4 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50 ${
-                                        confirmModal.type === 'cancel'
-                                            ? 'bg-red-600 hover:bg-red-700'
-                                            : 'bg-amber-600 hover:bg-amber-700'
-                                    }`}
+                                    className={`flex-1 py-2.5 px-4 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50 ${confirmModal.type === 'cancel'
+                                        ? 'bg-red-600 hover:bg-red-700'
+                                        : 'bg-amber-600 hover:bg-amber-700'
+                                        }`}
                                 >
                                     {confirmModal.loading ? (
                                         <>

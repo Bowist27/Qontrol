@@ -168,6 +168,20 @@ export const auditApi = {
         return httpClient.patch<void>(`${API_BASE}/api/audits/${auditId}/reopen`);
     },
 
+    /**
+     * GET /api/reopen-requests - Get pending reopen requests from POS
+     */
+    getPendingReopenRequests: async (): Promise<any> => {
+        return httpClient.get<any>(`${API_BASE}/api/reopen-requests`);
+    },
+
+    /**
+     * GET /api/audits/:id/reopen-requests - Get reopen requests for specific audit
+     */
+    getAuditReopenRequests: async (auditId: number): Promise<any> => {
+        return httpClient.get<any>(`${API_BASE}/api/audits/${auditId}/reopen-requests`);
+    },
+
     // ============ CATALOG APIs ============
 
     /**

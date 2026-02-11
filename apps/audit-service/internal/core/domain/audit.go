@@ -124,3 +124,17 @@ type ConnectedDevice struct {
 	ConnectedAt    time.Time `json:"connected_at"`
 	LastActivityAt time.Time `json:"last_activity_at"`
 }
+
+// ReopenRequest represents a POS request to reopen a finalized audit
+type ReopenRequest struct {
+	ID          string     `json:"id"`
+	AuditID     int        `json:"audit_id"`
+	RequestedBy string     `json:"requested_by"`
+	DeviceID    string     `json:"device_id,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
+	Status      string     `json:"status"` // pending, approved, rejected
+	CreatedAt   time.Time  `json:"created_at"`
+	ResolvedAt  *time.Time `json:"resolved_at,omitempty"`
+	ResolvedBy  *string    `json:"resolved_by,omitempty"`
+	StoreName   string     `json:"store_name,omitempty"` // joined from audit
+}

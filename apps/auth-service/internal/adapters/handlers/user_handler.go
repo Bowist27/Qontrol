@@ -8,17 +8,19 @@ import (
 	"github.com/comex/auth-service/internal/adapters/repositories"
 	"github.com/comex/auth-service/internal/core/domain"
 	"github.com/comex/auth-service/internal/infrastructure/crypto"
+	"github.com/comex/auth-service/internal/infrastructure/email"
 	"github.com/gin-gonic/gin"
 )
 
 // UserHandler handles HTTP requests for user management
 type UserHandler struct {
-	repo *repositories.PostgresUserRepo
+	repo         *repositories.PostgresUserRepo
+	emailService *email.EmailService
 }
 
 // NewUserHandler creates a new user handler
-func NewUserHandler(repo *repositories.PostgresUserRepo) *UserHandler {
-	return &UserHandler{repo: repo}
+func NewUserHandler(repo *repositories.PostgresUserRepo, emailService *email.EmailService) *UserHandler {
+	return &UserHandler{repo: repo, emailService: emailService}
 }
 
 // ListUsers handles GET /users
@@ -63,8 +65,14 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		return
 	}
 
+	// Always use default password Test123!
+	defaultPassword := "Test123!"
+	if req.Password != "" {
+		defaultPassword = req.Password
+	}
+
 	// Hash the password
-	hashedPassword, err := crypto.HashPassword(req.Password)
+	hashedPassword, err := crypto.HashPassword(defaultPassword)
 	if err != nil {
 		log.Printf("Error hashing password: %v", err)
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
@@ -100,6 +108,25 @@ func (h *UserHandler) CreateUser(c *gin.Context) {
 		return
 	}
 
+	// Generate password reset token and send welcome email
+	resetToken, err := crypto.GenerateSecureToken(32)
+	if err != nil {
+		log.Printf("Error generating reset token: %v", err)
+		// User was created but token failed — not fatal
+	} else {
+		// Store reset token in database
+		if err := h.repo.SetPasswordResetToken(c.Request.Context(), user.ID, resetToken, true); err != nil {
+			log.Printf("Error storing reset token: %v", err)
+		} else {
+			// Send welcome email (async-safe, won't block)
+			go func() {
+				if err := h.emailService.SendWelcomeEmail(req.Email, req.FirstName, resetToken); err != nil {
+					log.Printf("Error sending welcome email to %s: %v", req.Email, err)
+				}
+			}()
+		}
+	}
+
 	// Fetch the created user with full data
 	createdUser, _ := h.repo.GetByID(c.Request.Context(), user.ID)
 
@@ -119,15 +146,42 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	// Build user object
+	// Fetch existing user to merge partial updates
+	existingUser, err := h.repo.GetByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, domain.ErrorResponse{
+			Error:   "not_found",
+			Message: "Usuario no encontrado",
+		})
+		return
+	}
+
+	// Merge: only overwrite fields that are provided (non-zero)
 	user := &domain.User{
-		ID:          id,
-		Email:       req.Email,
-		FirstName:   req.FirstName,
-		LastName:    req.LastName,
-		RoleID:      req.RoleID,
-		IsActive:    req.IsActive,
-		Permissions: req.Permissions,
+		ID:       id,
+		Email:    existingUser.Email,
+		FirstName: existingUser.FirstName,
+		LastName:  existingUser.LastName,
+		RoleID:   existingUser.RoleID,
+		IsActive: existingUser.IsActive,
+	}
+	if req.Email != "" {
+		user.Email = req.Email
+	}
+	if req.FirstName != "" {
+		user.FirstName = req.FirstName
+	}
+	if req.LastName != "" {
+		user.LastName = req.LastName
+	}
+	if req.RoleID != 0 {
+		user.RoleID = req.RoleID
+	}
+	if req.IsActive != nil {
+		user.IsActive = *req.IsActive
+	}
+	if req.Permissions != nil {
+		user.Permissions = req.Permissions
 	}
 
 	// Hash password if provided
@@ -635,4 +689,77 @@ func (h *UserHandler) DeleteZone(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Zona eliminada exitosamente"})
+}
+
+// =====================================================
+// PASSWORD RESET (Public routes)
+// =====================================================
+
+// ValidateResetToken handles GET /reset-password/validate?token=xxx
+func (h *UserHandler) ValidateResetToken(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		c.JSON(http.StatusBadRequest, domain.ValidateTokenResponse{Valid: false})
+		return
+	}
+
+	user, err := h.repo.GetUserByResetToken(c.Request.Context(), token)
+	if err != nil {
+		c.JSON(http.StatusOK, domain.ValidateTokenResponse{Valid: false})
+		return
+	}
+
+	c.JSON(http.StatusOK, domain.ValidateTokenResponse{
+		Valid:     true,
+		Email:     user.Email,
+		FirstName: user.FirstName,
+	})
+}
+
+// ResetPassword handles POST /reset-password
+func (h *UserHandler) ResetPassword(c *gin.Context) {
+	var req domain.ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "Token y nueva contraseña son requeridos (mínimo 6 caracteres)",
+		})
+		return
+	}
+
+	// Validate token and get user
+	user, err := h.repo.GetUserByResetToken(c.Request.Context(), req.Token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{
+			Error:   "invalid_token",
+			Message: "El enlace ha expirado o es inválido. Contacta al administrador.",
+		})
+		return
+	}
+
+	// Hash new password
+	hashedPassword, err := crypto.HashPassword(req.NewPassword)
+	if err != nil {
+		log.Printf("Error hashing new password: %v", err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al actualizar contraseña",
+		})
+		return
+	}
+
+	// Update password and clear token
+	if err := h.repo.ResetPassword(c.Request.Context(), user.ID, hashedPassword); err != nil {
+		log.Printf("Error resetting password for user %s: %v", user.ID, err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al actualizar contraseña",
+		})
+		return
+	}
+
+	log.Printf("✅ Password reset successful for user %s (%s)", user.Email, user.ID)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Contraseña actualizada exitosamente. Ya puedes iniciar sesión.",
+	})
 }

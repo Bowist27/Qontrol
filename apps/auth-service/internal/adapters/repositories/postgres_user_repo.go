@@ -915,3 +915,59 @@ func (r *PostgresUserRepo) DeleteZone(ctx context.Context, id int) error {
 	_, err = r.db.ExecContext(ctx, `DELETE FROM zones WHERE id = $1`, id)
 	return err
 }
+
+// SetPasswordResetToken stores a reset token and expiry for a user
+func (r *PostgresUserRepo) SetPasswordResetToken(ctx context.Context, userID, token string, mustChange bool) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE users SET 
+			password_reset_token = $2, 
+			password_reset_expires = NOW() + INTERVAL '48 hours',
+			must_change_password = $3,
+			updated_at = NOW()
+		WHERE id = $1`,
+		userID, token, mustChange,
+	)
+	return err
+}
+
+// GetUserByResetToken finds a user by their password reset token (if still valid)
+func (r *PostgresUserRepo) GetUserByResetToken(ctx context.Context, token string) (*domain.User, error) {
+	var user domain.User
+	var firstName, lastName sql.NullString
+
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, email, first_name, last_name, role_id, is_active
+		FROM users
+		WHERE password_reset_token = $1
+		  AND password_reset_expires > NOW()
+		  AND is_active = true
+	`, token).Scan(&user.ID, &user.Email, &firstName, &lastName, &user.RoleID, &user.IsActive)
+
+	if err != nil {
+		return nil, fmt.Errorf("invalid or expired token")
+	}
+
+	if firstName.Valid {
+		user.FirstName = firstName.String
+	}
+	if lastName.Valid {
+		user.LastName = lastName.String
+	}
+
+	return &user, nil
+}
+
+// ResetPassword updates the password and clears the reset token
+func (r *PostgresUserRepo) ResetPassword(ctx context.Context, userID, passwordHash string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE users SET 
+			password_hash = $2,
+			password_reset_token = NULL,
+			password_reset_expires = NULL,
+			must_change_password = false,
+			updated_at = NOW()
+		WHERE id = $1`,
+		userID, passwordHash,
+	)
+	return err
+}

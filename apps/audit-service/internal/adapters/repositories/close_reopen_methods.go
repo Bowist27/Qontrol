@@ -3,7 +3,10 @@ package repositories
 import (
 	"context"
 	"fmt"
+	"regexp"
 )
+
+var uuidRegex = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // CloseAudit closes an audit and logs the event in a transaction
 func (r *PostgresRepository) CloseAudit(ctx context.Context, auditID int, userID string) error {
@@ -33,11 +36,21 @@ func (r *PostgresRepository) CloseAudit(ctx context.Context, auditID int, userID
 		return fmt.Errorf("failed to close audit: %w", err)
 	}
 
-	// Log the close event
+	// Log the close event — user_id is UUID; if it's not a valid UUID (POS device), store as NULL with details
+	var parsedUID interface{}
+	var details interface{}
+	if uuidRegex.MatchString(userID) {
+		parsedUID = userID
+		details = nil
+	} else {
+		parsedUID = nil
+		details = fmt.Sprintf(`{"closed_by":"%s"}`, userID)
+	}
+
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO audit_events (audit_id, user_id, action, previous_status, new_status)
-		VALUES ($1, $2, 'cerrar', $3, 'finalizado')
-	`, auditID, userID, previousStatus)
+		INSERT INTO audit_events (audit_id, user_id, action, previous_status, new_status, details)
+		VALUES ($1, $2, 'cerrar', $3, 'finalizado', $4)
+	`, auditID, parsedUID, previousStatus, details)
 	if err != nil {
 		return fmt.Errorf("failed to log close event: %w", err)
 	}

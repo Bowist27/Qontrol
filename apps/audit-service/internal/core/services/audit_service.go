@@ -329,3 +329,59 @@ func (s *AuditService) GetAuditEvents(ctx context.Context, auditID int) ([]domai
 
 	return events, nil
 }
+
+// CreateAuditFromPOS creates an empty audit session from the POS app (no PDF required)
+func (s *AuditService) CreateAuditFromPOS(ctx context.Context, storeID int, createdBy string) (*domain.AuditSession, error) {
+	session, err := s.repo.CreateEmptyAuditSession(ctx, storeID, createdBy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create audit from POS: %w", err)
+	}
+
+	// Log the event
+	details := map[string]interface{}{
+		"store_id":   storeID,
+		"created_by": createdBy,
+		"source":     "POS",
+	}
+	_ = s.repo.LogEvent(ctx, session.ID, &createdBy, "AUDIT_CREATED_FROM_POS", details)
+
+	return session, nil
+}
+
+// RequestReopenAudit creates a reopen request from the POS app
+func (s *AuditService) RequestReopenAudit(ctx context.Context, auditID int, requestedBy, deviceID, reason string) (*domain.ReopenRequest, error) {
+	// Verify audit exists and is finalized
+	session, err := s.repo.GetSessionByID(ctx, auditID)
+	if err != nil {
+		return nil, fmt.Errorf("audit not found: %w", err)
+	}
+	if session.Status != "finalizado" {
+		return nil, fmt.Errorf("audit is not finalized, current status: %s", session.Status)
+	}
+
+	req, err := s.repo.InsertReopenRequest(ctx, auditID, requestedBy, deviceID, reason)
+	if err != nil {
+		return nil, err
+	}
+
+	// Log the event
+	details := map[string]interface{}{
+		"request_id":   req.ID,
+		"requested_by": requestedBy,
+		"device_id":    deviceID,
+		"reason":       reason,
+	}
+	_ = s.repo.LogEvent(ctx, auditID, &requestedBy, "REOPEN_REQUESTED", details)
+
+	return req, nil
+}
+
+// GetPendingReopenRequests returns all pending reopen requests (for web-admin)
+func (s *AuditService) GetPendingReopenRequests(ctx context.Context) ([]domain.ReopenRequest, error) {
+	return s.repo.GetPendingReopenRequests(ctx)
+}
+
+// GetPendingReopenRequestsForAudit returns pending reopen requests for a specific audit
+func (s *AuditService) GetPendingReopenRequestsForAudit(ctx context.Context, auditID int) ([]domain.ReopenRequest, error) {
+	return s.repo.GetPendingReopenRequestsForAudit(ctx, auditID)
+}
