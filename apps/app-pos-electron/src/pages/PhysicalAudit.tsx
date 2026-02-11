@@ -108,6 +108,11 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const [registerFromScan, setRegisterFromScan] = useState<boolean>(false);
     const registerSkuRef = useRef<HTMLInputElement>(null);
     
+    // Finalize state
+    const [showFinalizeConfirm, setShowFinalizeConfirm] = useState(false);
+    const [isFinalizing, setIsFinalizing] = useState(false);
+    const [isFinalized, setIsFinalized] = useState(false);
+    
     // Device info
     const [deviceId] = useState(() => `POS-${Date.now().toString(36).toUpperCase()}`);
     const [userName, setUserName] = useState<string>('');
@@ -419,11 +424,74 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
         }
     }, [selectedAudit]);
 
+    // Disconnect from audit
+    const handleDisconnect = useCallback(() => {
+        setSelectedAudit(null);
+        setScans([]);
+        setSummary(null);
+        setIsFinalized(false);
+        setShowFinalizeConfirm(false);
+        if (pollInterval.current) {
+            clearInterval(pollInterval.current);
+        }
+    }, []);
+
+    // Finalize audit from POS
+    const handleFinalize = useCallback(async () => {
+        if (!selectedAudit) return;
+        setIsFinalizing(true);
+        try {
+            const response = await fetch(`${AUDIT_API}/audits/${selectedAudit.session.id}/close-from-pos`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    device_id: deviceId,
+                    closed_by: userName || deviceId,
+                }),
+            });
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.message || 'Error al finalizar');
+            }
+            setIsFinalized(true);
+            setShowFinalizeConfirm(false);
+            // Stop polling
+            if (pollInterval.current) {
+                clearInterval(pollInterval.current);
+            }
+        } catch (err) {
+            console.error('Failed to finalize audit:', err);
+            setFlashColor('red');
+            setTimeout(() => setFlashColor(null), 500);
+        } finally {
+            setIsFinalizing(false);
+        }
+    }, [selectedAudit, deviceId, userName]);
+
     // Keyboard event handler
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             // Only handle if we're connected to an audit
             if (!selectedAudit) return;
+
+            // If finalize confirmation is showing, handle Enter/ESC
+            if (showFinalizeConfirm) {
+                if (e.key === 'Escape') {
+                    setShowFinalizeConfirm(false);
+                }
+                if (e.key === 'Enter') {
+                    handleFinalize();
+                }
+                return;
+            }
+
+            // If already finalized, only allow ESC to go back
+            if (isFinalized) {
+                if (e.key === 'Escape') {
+                    handleDisconnect();
+                }
+                return;
+            }
 
             // In input modes, only intercept ESC and actual function keys (F1-F12)
             if (mode === 'MANUAL_INPUT' || mode === 'MANUAL_QTY' || mode === 'REGISTER_PRODUCT') {
@@ -474,6 +542,14 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 setManualResults([]);
                 setManualSelectedIndex(0);
                 setTimeout(() => manualInputRef.current?.focus(), 50);
+                return;
+            }
+
+            // F10: Finalize audit
+            if (e.key === 'F10') {
+                if (!isFinalized) {
+                    setShowFinalizeConfirm(true);
+                }
                 return;
             }
 
@@ -560,23 +636,13 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [selectedAudit, mode, pendingQuantity, barcodeBuffer, sendScan, handleUndo, searchLocalProducts, confirmManualProduct]);
+    }, [selectedAudit, mode, pendingQuantity, barcodeBuffer, sendScan, handleUndo, searchLocalProducts, confirmManualProduct, isFinalized, showFinalizeConfirm, handleFinalize, handleDisconnect]);
 
     // Select an audit to connect to
     const handleSelectAudit = (audit: RemoteAudit) => {
         setSelectedAudit(audit);
         setScans([]);
         setSummary(null);
-    };
-
-    // Disconnect from audit
-    const handleDisconnect = () => {
-        setSelectedAudit(null);
-        setScans([]);
-        setSummary(null);
-        if (pollInterval.current) {
-            clearInterval(pollInterval.current);
-        }
     };
 
     // ==================== RENDER ====================
@@ -1102,6 +1168,99 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 </div>
             </div>
 
+            {/* ===== FINALIZE CONFIRMATION MODAL ===== */}
+            {showFinalizeConfirm && (
+                <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-50">
+                    <div className="bg-gray-900 border border-gray-600 rounded-lg p-6 max-w-md w-full mx-4 shadow-2xl">
+                        <div className="text-center mb-5">
+                            <div className="w-14 h-14 bg-emerald-500/10 border border-emerald-500/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <svg className="w-7 h-7 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <h3 className="text-lg font-bold text-white mb-1 font-mono uppercase tracking-wide">Finalizar Conteo</h3>
+                            <p className="text-sm text-gray-400">
+                                ¿Estás seguro de que deseas finalizar el conteo de esta auditoría?
+                            </p>
+                        </div>
+
+                        {/* Summary */}
+                        <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-5">
+                            <div className="text-xs font-mono text-gray-500 uppercase tracking-widest mb-2">Resumen</div>
+                            <div className="flex items-center justify-between text-sm font-mono mb-1">
+                                <span className="text-gray-400">Tienda</span>
+                                <span className="text-white font-bold">{selectedAudit?.store_name}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm font-mono mb-1">
+                                <span className="text-gray-400">Escaneos</span>
+                                <span className="text-blue-400 font-bold">{summary?.total_scans || 0}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm font-mono mb-1">
+                                <span className="text-gray-400">Unidades</span>
+                                <span className="text-emerald-400 font-bold">{summary?.total_quantity || 0}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-sm font-mono">
+                                <span className="text-gray-400">Productos únicos</span>
+                                <span className="text-purple-400 font-bold">{summary?.unique_products || 0}</span>
+                            </div>
+                        </div>
+
+                        <p className="text-xs text-amber-400/80 text-center mb-5">
+                            Una vez finalizado, no se podrán agregar más escaneos desde esta terminal.
+                        </p>
+
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setShowFinalizeConfirm(false)}
+                                className="flex-1 py-3 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg font-mono text-sm uppercase tracking-wider transition-colors border border-gray-700"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={handleFinalize}
+                                disabled={isFinalizing}
+                                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg font-mono text-sm font-bold uppercase tracking-wider transition-colors"
+                            >
+                                {isFinalizing ? (
+                                    <span className="flex items-center justify-center gap-2">
+                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                        Finalizando...
+                                    </span>
+                                ) : (
+                                    'Sí, Finalizar'
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ===== FINALIZED OVERLAY ===== */}
+            {isFinalized && (
+                <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-40 pointer-events-none">
+                    <div className="text-center pointer-events-auto">
+                        <div className="w-20 h-20 bg-emerald-500/10 border-2 border-emerald-500/40 rounded-full flex items-center justify-center mx-auto mb-5">
+                            <svg className="w-10 h-10 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <h2 className="text-2xl font-bold text-white mb-2 font-mono uppercase tracking-widest">Conteo Finalizado</h2>
+                        <p className="text-gray-400 text-sm mb-2">
+                            {selectedAudit?.store_name} — {summary?.total_scans || 0} escaneos, {summary?.total_quantity || 0} unidades
+                        </p>
+                        <p className="text-gray-500 text-xs mb-6">
+                            El estado ha sido actualizado en el sistema.
+                        </p>
+                        <button
+                            onClick={handleDisconnect}
+                            className="px-8 py-3 bg-gray-800 hover:bg-gray-700 text-white rounded-lg font-mono text-sm uppercase tracking-wider transition-colors border border-gray-600"
+                        >
+                            Volver al menú
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {/* ===== FOOTER COMMAND BAR (DOS/BIOS style) ===== */}
             <div className="bg-gray-900 border-t border-gray-700 px-4 py-2 flex items-center gap-6 shrink-0">
                 <div className="flex items-center gap-1">
@@ -1123,6 +1282,18 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 <div className="flex-1"></div>
                 {isSending && (
                     <span className="text-blue-400 text-xs font-mono animate-pulse uppercase">Enviando...</span>
+                )}
+                {!isFinalized && (
+                    <button
+                        onClick={() => setShowFinalizeConfirm(true)}
+                        className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-mono font-bold px-3 py-1.5 rounded transition-colors uppercase tracking-wider"
+                    >
+                        <span className="bg-emerald-800 text-emerald-200 text-xs font-mono font-bold px-1.5 py-0.5 rounded">F10</span>
+                        Finalizar Conteo
+                    </button>
+                )}
+                {isFinalized && (
+                    <span className="text-emerald-400 text-xs font-mono font-bold uppercase tracking-wider">✓ CONTEO FINALIZADO</span>
                 )}
                 <span className="text-gray-600 text-xs font-mono">
                     {new Date().toLocaleDateString('es-MX')}

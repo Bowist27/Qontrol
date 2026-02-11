@@ -317,7 +317,50 @@ func (h *AuditHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middlewa
 		pos.GET("/audits/:id/scans", h.GetScans)               // Get all scans
 		pos.GET("/audits/:id/scans/summary", h.GetScanSummary) // Get summary
 		pos.DELETE("/audits/:id/scans/last", h.UndoLastScan)   // Undo last scan
+		pos.PATCH("/audits/:id/close-from-pos", h.CloseAuditFromPOS) // POS finalize
 	}
+}
+
+// CloseAuditFromPOS handles PATCH /api/audits/:id/close-from-pos
+// POS-accessible endpoint (no JWT) - uses device_id as identifier
+func (h *AuditHandler) CloseAuditFromPOS(c *gin.Context) {
+	auditIDStr := c.Param("id")
+	auditID, err := strconv.Atoi(auditIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	var req struct {
+		DeviceID  string `json:"device_id"`
+		ClosedBy  string `json:"closed_by"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "device_id is required",
+		})
+		return
+	}
+
+	userID := req.ClosedBy
+	if userID == "" {
+		userID = "pos-device:" + req.DeviceID
+	}
+
+	err = h.service.CloseAudit(c.Request.Context(), auditID, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "close_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Audit finalized successfully from POS"})
 }
 
 // ListActiveAudits returns audits available for POS app to connect
