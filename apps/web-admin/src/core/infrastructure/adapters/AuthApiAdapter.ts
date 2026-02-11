@@ -42,7 +42,7 @@ export class AuthApiAdapter {
      * Via Nginx: routes are /api/auth/login, /api/auth/logout
      */
     private isDirectConnection(): boolean {
-        return !!(import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL);
+        return !!import.meta.env.VITE_AUTH_API_URL;
     }
 
     /**
