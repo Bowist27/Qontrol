@@ -25,24 +25,27 @@ export class AuthApiAdapter {
      * Determine the API base URL based on environment
      */
     private getBaseUrl(): string {
-        // Use VITE_AUTH_API_URL for direct connection to auth-service
-        // In production behind Nginx, use origin (Nginx proxies /api/auth/* -> auth-service)
-        if (import.meta.env.VITE_AUTH_API_URL) {
-            return import.meta.env.VITE_AUTH_API_URL;
-        }
-        if (import.meta.env.VITE_API_URL) {
-            return import.meta.env.VITE_API_URL;
+        const envUrl = import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL;
+        if (envUrl) {
+            return envUrl;
         }
         return window.location.origin;
     }
 
     /**
      * Determines if connecting directly to auth-service (dev) or via Nginx (prod)
-     * Direct: routes are /login, /logout
-     * Via Nginx: routes are /api/auth/login, /api/auth/logout
+     * Direct (dev): non-standard port (e.g. localhost:8080) → routes: /login, /logout
+     * Via Nginx (prod): standard port (e.g. api.qontroll.uk) → routes: /api/auth/login, /api/auth/logout
      */
     private isDirectConnection(): boolean {
-        return !!import.meta.env.VITE_AUTH_API_URL;
+        const envUrl = import.meta.env.VITE_AUTH_API_URL;
+        if (!envUrl) return false;
+        try {
+            const url = new URL(envUrl);
+            return !!url.port && url.port !== '80' && url.port !== '443';
+        } catch {
+            return false;
+        }
     }
 
     /**
