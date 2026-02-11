@@ -12,7 +12,7 @@ export class CloudProductAdapter {
 
     async getProductsFromCloud(): Promise<Product[]> {
         try {
-            const url = `${this.apiUrl}/products/sync`;
+            const url = `${this.apiUrl}/api/products/sync`;
             console.log(`Syncing products from ${url}...`);
             const response = await axios.get(url, {
                 headers: {

@@ -22,7 +22,7 @@ class CloudProductAdapter {
     getProductsFromCloud() {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const url = `${this.apiUrl}/products/sync`;
+                const url = `${this.apiUrl}/api/products/sync`;
                 console.log(`Syncing products from ${url}...`);
                 const response = yield axios_1.default.get(url, {
                     headers: {

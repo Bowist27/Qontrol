@@ -22,7 +22,7 @@ class CloudAuthAdapter {
     getUsersFromCloud() {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                const url = `${this.apiUrl}/users/sync`;
+                const url = `${this.apiUrl}/api/users/sync`;
                 console.log(`Syncing from ${url} with key ${this.syncKey ? 'PRESENT' : 'MISSING'}...`);
                 const response = yield axios_1.default.get(url, {
                     headers: {
