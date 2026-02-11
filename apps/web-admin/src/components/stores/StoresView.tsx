@@ -525,6 +525,13 @@ function SucursalesTab() {
     const [deleteModal, setDeleteModal] = useState<{ id: number; name: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
 
+    // Pagination state
+    const [currentPage, setCurrentPage] = useState(1);
+    const [itemsPerPage, setItemsPerPage] = useState(25);
+
+    // Zone filter state
+    const [selectedZoneFilter, setSelectedZoneFilter] = useState<number | 'all'>('all');
+
     const loadData = useCallback(async () => {
         try {
             setLoading(true);
@@ -545,9 +552,28 @@ function SucursalesTab() {
         loadData();
     }, [loadData]);
 
-    const filteredStores = stores.filter(store =>
-        store.name.toLowerCase().includes(searchTerm.toLowerCase())
+    const filteredStores = stores.filter(store => {
+        const matchesSearch = store.name.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesZone = selectedZoneFilter === 'all'
+            ? true
+            : selectedZoneFilter === 0
+                ? !store.zone_id
+                : store.zone_id === selectedZoneFilter;
+        return matchesSearch && matchesZone;
+    });
+
+    // Pagination calculations
+    const totalItems = filteredStores.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+    const paginatedStores = filteredStores.slice(
+        (currentPage - 1) * itemsPerPage,
+        currentPage * itemsPerPage
     );
+
+    // Reset page when filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchTerm, selectedZoneFilter]);
 
     const openCreateModal = () => {
         setEditingStore(null);
@@ -652,17 +678,35 @@ function SucursalesTab() {
                 </div>
             )}
 
-            {/* Header with Search and Add button */}
+            {/* Header with Search, Zone Filter, and Add button */}
             <div className="flex items-center justify-between gap-4">
-                <div className="relative flex-1 max-w-md">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                        type="text"
-                        placeholder="Buscar sucursales..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
+                <div className="flex items-center gap-3 flex-1">
+                    <div className="relative flex-1 max-w-md">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input
+                            type="text"
+                            placeholder="Buscar sucursales..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <MapPin className="w-4 h-4 text-slate-400" />
+                        <select
+                            value={selectedZoneFilter === 'all' ? 'all' : selectedZoneFilter}
+                            onChange={(e) => setSelectedZoneFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                            className="px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                            <option value="all">Todas las zonas</option>
+                            <option value="0">Sin zona</option>
+                            {zones.map((zone) => (
+                                <option key={zone.id} value={zone.id}>
+                                    {zone.name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
                 </div>
                 <button
                     onClick={openCreateModal}
@@ -693,14 +737,14 @@ function SucursalesTab() {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                        {filteredStores.length === 0 ? (
+                        {paginatedStores.length === 0 ? (
                             <tr>
                                 <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
-                                    {searchTerm ? 'No se encontraron sucursales' : 'No hay sucursales registradas'}
+                                    {searchTerm || selectedZoneFilter !== 'all' ? 'No se encontraron sucursales con los filtros aplicados' : 'No hay sucursales registradas'}
                                 </td>
                             </tr>
                         ) : (
-                            filteredStores.map((store) => (
+                            paginatedStores.map((store) => (
                                 <tr key={store.id} className="hover:bg-slate-50 transition-colors">
                                     <td className="px-6 py-4">
                                         <div className="flex items-center gap-3">
@@ -769,12 +813,80 @@ function SucursalesTab() {
                 </table>
             </div>
 
-            {/* Info about stores usage */}
+            {/* Pagination Footer */}
+            {totalItems > 0 && (
+                <div className="bg-white rounded-xl border border-slate-200 px-6 py-3">
+                    <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                            <span className="text-slate-600 font-medium">Filas:</span>
+                            <select
+                                value={itemsPerPage}
+                                onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                                className="border border-slate-200 rounded-lg px-2 py-1 text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value={10}>10</option>
+                                <option value={25}>25</option>
+                                <option value={50}>50</option>
+                                <option value={100}>100</option>
+                            </select>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <span className="text-slate-600">
+                                {Math.min((currentPage - 1) * itemsPerPage + 1, totalItems)}-{Math.min(currentPage * itemsPerPage, totalItems)} de {totalItems}
+                            </span>
+                            <div className="flex gap-1">
+                                <button
+                                    onClick={() => setCurrentPage(1)}
+                                    disabled={currentPage === 1}
+                                    className="p-1.5 hover:bg-slate-100 rounded-lg disabled:opacity-30 transition-colors"
+                                    title="Primera página"
+                                >
+                                    <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                    disabled={currentPage === 1}
+                                    className="p-1.5 hover:bg-slate-100 rounded-lg disabled:opacity-30 transition-colors"
+                                    title="Anterior"
+                                >
+                                    <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                    disabled={currentPage >= totalPages}
+                                    className="p-1.5 hover:bg-slate-100 rounded-lg disabled:opacity-30 transition-colors"
+                                    title="Siguiente"
+                                >
+                                    <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                    </svg>
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(totalPages)}
+                                    disabled={currentPage >= totalPages}
+                                    className="p-1.5 hover:bg-slate-100 rounded-lg disabled:opacity-30 transition-colors"
+                                    title="Última página"
+                                >
+                                    <svg className="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Info about stores usage */
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                 <div className="text-sm text-amber-700">
                     <p className="font-medium">Información sobre sucursales</p>
-                    <p className="mt-1">Las sucursales heredan la lista de precios y supervisor de su zona asignada. No se pueden eliminar sucursales que tengan usuarios asignados o auditorías asociadas.</p>
+                    <p className="mt-1">Las sucursales heredan la lista de precios y supervisor de su zona asignada. No se pueden eliminar sucursales que tengan auditorías asociadas.</p>
                 </div>
             </div>
 
