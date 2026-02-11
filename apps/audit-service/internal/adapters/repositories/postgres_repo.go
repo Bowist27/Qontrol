@@ -44,6 +44,15 @@ type AuditRepository interface {
 	CloseAudit(ctx context.Context, auditID int, userID string) error
 	ReopenAudit(ctx context.Context, auditID int, userID string) error
 	Delete(ctx context.Context, auditID int) error
+
+	// POS Reopen Requests
+	InsertReopenRequest(ctx context.Context, auditID int, requestedBy, deviceID, reason string) (*domain.ReopenRequest, error)
+	GetPendingReopenRequests(ctx context.Context) ([]domain.ReopenRequest, error)
+	GetPendingReopenRequestsForAudit(ctx context.Context, auditID int) ([]domain.ReopenRequest, error)
+	ResolveReopenRequest(ctx context.Context, requestID string, resolvedBy string, status string) error
+
+	// POS Audit Creation
+	CreateEmptyAuditSession(ctx context.Context, storeID int, createdBy string) (*domain.AuditSession, error)
 }
 
 // PostgresRepository implements AuditRepository
@@ -362,12 +371,12 @@ func (r *PostgresRepository) GetAllProducts(ctx context.Context) ([]domain.Produ
 // GetProductsPaginated returns paginated products with optional search
 func (r *PostgresRepository) GetProductsPaginated(ctx context.Context, page, limit int, search string) ([]domain.Product, int, error) {
 	offset := (page - 1) * limit
-	
+
 	var totalCount int
 	var countQuery string
 	var dataQuery string
 	var args []interface{}
-	
+
 	if search != "" {
 		searchPattern := "%" + search + "%"
 		countQuery = `SELECT COUNT(*) FROM products WHERE sku ILIKE $1 OR name ILIKE $1 OR COALESCE(barcode, '') ILIKE $1`
@@ -378,7 +387,7 @@ func (r *PostgresRepository) GetProductsPaginated(ctx context.Context, page, lim
 			ORDER BY sku
 			LIMIT $2 OFFSET $3`
 		args = []interface{}{searchPattern, limit, offset}
-		
+
 		err := r.db.QueryRowContext(ctx, countQuery, searchPattern).Scan(&totalCount)
 		if err != nil {
 			return nil, 0, err
@@ -391,13 +400,13 @@ func (r *PostgresRepository) GetProductsPaginated(ctx context.Context, page, lim
 			ORDER BY sku
 			LIMIT $1 OFFSET $2`
 		args = []interface{}{limit, offset}
-		
+
 		err := r.db.QueryRowContext(ctx, countQuery).Scan(&totalCount)
 		if err != nil {
 			return nil, 0, err
 		}
 	}
-	
+
 	rows, err := r.db.QueryContext(ctx, dataQuery, args...)
 	if err != nil {
 		return nil, 0, err
@@ -425,7 +434,7 @@ func (r *PostgresRepository) UpdateProduct(ctx context.Context, id int, name str
 	if err != nil {
 		return err
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return err
@@ -442,7 +451,7 @@ func (r *PostgresRepository) DeleteProduct(ctx context.Context, id int) error {
 	if err != nil {
 		return err
 	}
-	
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return err
@@ -484,7 +493,7 @@ func (r *PostgresRepository) CreateProduct(ctx context.Context, product *domain.
 func (r *PostgresRepository) SaveProductChange(ctx context.Context, change *domain.ProductChange) error {
 	oldValuesJSON, _ := json.Marshal(change.OldValues)
 	newValuesJSON, _ := json.Marshal(change.NewValues)
-	
+
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO product_changes (product_id, product_sku, product_name, action, old_values, new_values, user_email, user_name, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
@@ -993,7 +1002,7 @@ func (r *PostgresRepository) DiscardCatalogImport(ctx context.Context, importID 
 			WHERE id != $1
 			ORDER BY COALESCE(applied_at, created_at) DESC 
 			LIMIT 1`, importID).Scan(&previousID)
-		
+
 		if err == nil && previousID > 0 {
 			// Restore the previous import - apply its changes
 			type applyItem struct {
@@ -1462,6 +1471,7 @@ func (r *PostgresRepository) GetActiveAuditsForPOS(ctx context.Context) ([]domai
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
 		WHERE s.status IN ('IN_PROGRESS', 'REVIEW_PENDING', 'COUNTING')
+		   OR (s.status = 'finalizado' AND s.closed_at > NOW() - INTERVAL '24 hours')
 		ORDER BY s.created_at DESC
 	`
 	rows, err := r.db.QueryContext(ctx, query)

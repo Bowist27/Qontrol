@@ -303,21 +303,26 @@ func (h *AuditHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middlewa
 		api.POST("/audits", h.CreateAudit)    // FASE 5: Save after confirm
 		api.PUT("/audits/:id", h.UpdateAudit) // PDF Replacement
 		api.GET("/audits/:id", h.GetAudit)
-		api.GET("/audits/:id/events", h.GetAuditEvents) // Audit Logs
-		api.DELETE("/audits/:id", h.DeleteAudit)        // Cancel/Delete audit
-		api.PATCH("/audits/:id/close", h.CloseAudit)    // Close audit
-		api.PATCH("/audits/:id/reopen", h.ReopenAudit)  // Reopen audit
+		api.GET("/audits/:id/events", h.GetAuditEvents)                  // Audit Logs
+		api.DELETE("/audits/:id", h.DeleteAudit)                         // Cancel/Delete audit
+		api.PATCH("/audits/:id/close", h.CloseAudit)                     // Close audit
+		api.PATCH("/audits/:id/reopen", h.ReopenAudit)                   // Reopen audit
+		api.GET("/reopen-requests", h.GetPendingReopenRequests)          // Pending reopen requests
+		api.GET("/audits/:id/reopen-requests", h.GetAuditReopenRequests) // Reopen requests for specific audit
 	}
 
 	// POS device routes (no JWT - POS authenticates locally via SQLite)
 	pos := router.Group("/api")
 	{
-		pos.GET("/audits/active", h.ListActiveAudits)          // Audits available for POS
-		pos.POST("/audits/:id/scans", h.AddScan)               // Add scan from POS
-		pos.GET("/audits/:id/scans", h.GetScans)               // Get all scans
-		pos.GET("/audits/:id/scans/summary", h.GetScanSummary) // Get summary
-		pos.DELETE("/audits/:id/scans/last", h.UndoLastScan)   // Undo last scan
-		pos.PATCH("/audits/:id/close-from-pos", h.CloseAuditFromPOS) // POS finalize
+		pos.GET("/audits/active", h.ListActiveAudits)                      // Audits available for POS
+		pos.POST("/audits/:id/scans", h.AddScan)                           // Add scan from POS
+		pos.GET("/audits/:id/scans", h.GetScans)                           // Get all scans
+		pos.GET("/audits/:id/scans/summary", h.GetScanSummary)             // Get summary
+		pos.DELETE("/audits/:id/scans/last", h.UndoLastScan)               // Undo last scan
+		pos.PATCH("/audits/:id/close-from-pos", h.CloseAuditFromPOS)       // POS finalize
+		pos.GET("/pos/stores", h.ListStores)                               // Stores for POS
+		pos.POST("/pos/audits", h.CreateAuditFromPOS)                      // Create empty audit from POS
+		pos.POST("/pos/audits/:id/reopen-request", h.RequestReopenFromPOS) // Request reopen from POS
 	}
 }
 
@@ -335,8 +340,8 @@ func (h *AuditHandler) CloseAuditFromPOS(c *gin.Context) {
 	}
 
 	var req struct {
-		DeviceID  string `json:"device_id"`
-		ClosedBy  string `json:"closed_by"`
+		DeviceID string `json:"device_id"`
+		ClosedBy string `json:"closed_by"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
@@ -563,4 +568,130 @@ func (h *AuditHandler) GetAuditEvents(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"events": events})
+}
+
+// CreateAuditFromPOS handles POST /api/pos/audits
+// POS-accessible endpoint (no JWT) - creates an empty audit session
+func (h *AuditHandler) CreateAuditFromPOS(c *gin.Context) {
+	var req struct {
+		StoreID   int    `json:"store_id" binding:"required"`
+		DeviceID  string `json:"device_id"`
+		CreatedBy string `json:"created_by"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "store_id is required",
+		})
+		return
+	}
+
+	createdBy := req.CreatedBy
+	if createdBy == "" {
+		createdBy = "pos-device:" + req.DeviceID
+	}
+
+	session, err := h.service.CreateAuditFromPOS(c.Request.Context(), req.StoreID, createdBy)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "create_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"session": session,
+	})
+}
+
+// RequestReopenFromPOS handles POST /api/pos/audits/:id/reopen-request
+// POS-accessible endpoint (no JWT) - creates a reopen request for admin approval
+func (h *AuditHandler) RequestReopenFromPOS(c *gin.Context) {
+	auditIDStr := c.Param("id")
+	auditID, err := strconv.Atoi(auditIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	var req struct {
+		DeviceID    string `json:"device_id"`
+		RequestedBy string `json:"requested_by"`
+		Reason      string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: "Request body is required",
+		})
+		return
+	}
+
+	requestedBy := req.RequestedBy
+	if requestedBy == "" {
+		requestedBy = "pos-device:" + req.DeviceID
+	}
+
+	reopenReq, err := h.service.RequestReopenAudit(c.Request.Context(), auditID, requestedBy, req.DeviceID, req.Reason)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "request_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"request": reopenReq,
+	})
+}
+
+// GetPendingReopenRequests handles GET /api/reopen-requests
+// Returns all pending reopen requests (for web-admin dashboard)
+func (h *AuditHandler) GetPendingReopenRequests(c *gin.Context) {
+	requests, err := h.service.GetPendingReopenRequests(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "fetch_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+	if requests == nil {
+		requests = []domain.ReopenRequest{}
+	}
+	c.JSON(http.StatusOK, gin.H{"requests": requests})
+}
+
+// GetAuditReopenRequests handles GET /api/audits/:id/reopen-requests
+// Returns pending reopen requests for a specific audit
+func (h *AuditHandler) GetAuditReopenRequests(c *gin.Context) {
+	idStr := c.Param("id")
+	auditID, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	requests, err := h.service.GetPendingReopenRequestsForAudit(c.Request.Context(), auditID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "fetch_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+	if requests == nil {
+		requests = []domain.ReopenRequest{}
+	}
+	c.JSON(http.StatusOK, gin.H{"requests": requests})
 }

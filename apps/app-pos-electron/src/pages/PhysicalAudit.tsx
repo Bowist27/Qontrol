@@ -61,6 +61,12 @@ interface LocalProduct {
     last_price: number | null;
 }
 
+interface Store {
+    id: number;
+    name: string;
+    status: boolean;
+}
+
 interface PhysicalAuditProps {
     onBack: () => void;
 }
@@ -74,11 +80,11 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const [selectedAudit, setSelectedAudit] = useState<RemoteAudit | null>(null);
     const [isConnecting, setIsConnecting] = useState(false);
     const [connectionError, setConnectionError] = useState<string | null>(null);
-    
+
     // Scan state
     const [scans, setScans] = useState<PhysicalScan[]>([]);
     const [summary, setSummary] = useState<ScanSummary | null>(null);
-    
+
     // UI state
     const [mode, setMode] = useState<KeyboardMode>('SCAN');
     const [pendingQuantity, setPendingQuantity] = useState<string>('');
@@ -107,16 +113,30 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const [registerQty, setRegisterQty] = useState<number>(1);
     const [registerFromScan, setRegisterFromScan] = useState<boolean>(false);
     const registerSkuRef = useRef<HTMLInputElement>(null);
-    
+
     // Finalize state
     const [showFinalizeConfirm, setShowFinalizeConfirm] = useState(false);
     const [isFinalizing, setIsFinalizing] = useState(false);
     const [isFinalized, setIsFinalized] = useState(false);
-    
+
+    // Create audit state
+    const [showCreateAudit, setShowCreateAudit] = useState(false);
+    const [stores, setStores] = useState<Store[]>([]);
+    const [isLoadingStores, setIsLoadingStores] = useState(false);
+    const [isCreatingAudit, setIsCreatingAudit] = useState(false);
+    const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+
+    // Reopen request state
+    const [finalizedAudits, setFinalizedAudits] = useState<RemoteAudit[]>([]);
+    const [showReopenDialog, setShowReopenDialog] = useState<RemoteAudit | null>(null);
+    const [reopenReason, setReopenReason] = useState('');
+    const [isRequestingReopen, setIsRequestingReopen] = useState(false);
+    const [reopenSuccess, setReopenSuccess] = useState<string | null>(null);
+
     // Device info
     const [deviceId] = useState(() => `POS-${Date.now().toString(36).toUpperCase()}`);
     const [userName, setUserName] = useState<string>('');
-    
+
     // Refs
     const lastScanTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const barcodeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -130,12 +150,89 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             const response = await fetch(`${AUDIT_API}/audits/active`);
             if (!response.ok) throw new Error('Error de conexión');
             const data = await response.json();
-            setActiveAudits(data.audits || []);
+            const allAudits: RemoteAudit[] = data.audits || [];
+            // Split into active and finalized
+            setActiveAudits(allAudits.filter(a => a.session.status !== 'finalizado'));
+            setFinalizedAudits(allAudits.filter(a => a.session.status === 'finalizado'));
         } catch (err) {
             setConnectionError('No se pudo conectar al servidor');
             console.error('Failed to fetch audits:', err);
         } finally {
             setIsConnecting(false);
+        }
+    };
+
+    // Fetch stores for creating new audit
+    const fetchStores = async () => {
+        setIsLoadingStores(true);
+        try {
+            const response = await fetch(`${AUDIT_API}/pos/stores`);
+            if (!response.ok) throw new Error('Error fetching stores');
+            const data = await response.json();
+            setStores(data.stores || []);
+        } catch (err) {
+            console.error('Failed to fetch stores:', err);
+        } finally {
+            setIsLoadingStores(false);
+        }
+    };
+
+    // Create new audit from POS
+    const handleCreateAudit = async () => {
+        if (!selectedStoreId) return;
+        setIsCreatingAudit(true);
+        try {
+            const response = await fetch(`${AUDIT_API}/pos/audits`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    store_id: selectedStoreId,
+                    device_id: deviceId,
+                    created_by: userName || deviceId,
+                })
+            });
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.message || 'Error al crear auditoría');
+            }
+            // Refresh audits list to include the new one
+            await fetchActiveAudits();
+            setShowCreateAudit(false);
+            setSelectedStoreId(null);
+        } catch (err) {
+            console.error('Failed to create audit:', err);
+            setConnectionError(err instanceof Error ? err.message : 'Error al crear auditoría');
+        } finally {
+            setIsCreatingAudit(false);
+        }
+    };
+
+    // Request reopen of finalized audit
+    const handleRequestReopen = async (audit: RemoteAudit) => {
+        setIsRequestingReopen(true);
+        try {
+            const response = await fetch(`${AUDIT_API}/pos/audits/${audit.session.id}/reopen-request`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    device_id: deviceId,
+                    requested_by: userName || deviceId,
+                    reason: reopenReason,
+                })
+            });
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.message || 'Error al solicitar reapertura');
+            }
+            setShowReopenDialog(null);
+            setReopenReason('');
+            setReopenSuccess(`Solicitud de reapertura enviada para "${audit.store_name}". El administrador será notificado.`);
+            setTimeout(() => setReopenSuccess(null), 5000);
+        } catch (err) {
+            console.error('Failed to request reopen:', err);
+            setConnectionError(err instanceof Error ? err.message : 'Error al solicitar reapertura');
+        } finally {
+            setIsRequestingReopen(false);
         }
     };
 
@@ -146,7 +243,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 fetch(`${AUDIT_API}/audits/${auditId}/scans`),
                 fetch(`${AUDIT_API}/audits/${auditId}/scans/summary`)
             ]);
-            
+
             if (scansRes.ok) {
                 const data = await scansRes.json();
                 setScans(data.scans || []);
@@ -163,12 +260,12 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     // Load audits on mount
     useEffect(() => {
         fetchActiveAudits();
-        
+
         // Get current user name from window.users if available
         if (typeof window !== 'undefined' && (window as any).users?.getCurrentUser) {
             (window as any).users.getCurrentUser().then((user: { name: string } | null) => {
                 if (user) setUserName(user.name);
-            }).catch(() => {});
+            }).catch(() => { });
         }
     }, []);
 
@@ -176,13 +273,13 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     useEffect(() => {
         if (selectedAudit) {
             fetchScans(selectedAudit.session.id);
-            
+
             // Poll every 5 seconds for updates (in case web-admin modifies something)
             pollInterval.current = setInterval(() => {
                 fetchScans(selectedAudit.session.id);
             }, 5000);
         }
-        
+
         return () => {
             if (pollInterval.current) {
                 clearInterval(pollInterval.current);
@@ -193,7 +290,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     // Send scan to backend
     const sendScan = useCallback(async (barcode: string, quantity: number) => {
         if (!selectedAudit) return;
-        
+
         setIsSending(true);
         try {
             const response = await fetch(`${AUDIT_API}/audits/${selectedAudit.session.id}/scans`, {
@@ -213,7 +310,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
 
             const data = await response.json();
             const newScan = data.scan as PhysicalScan;
-            
+
             // If unknown product, prompt registration
             if (newScan.is_unknown) {
                 // Add to local state immediately
@@ -230,7 +327,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                     unique_products: 0,
                     unknown_items: 1
                 });
-                
+
                 // Enter registration mode
                 setRegisterBarcode(barcode);
                 setRegisterSku(barcode); // Pre-fill SKU with barcode
@@ -248,10 +345,10 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 }, 400);
                 return;
             }
-            
+
             // Add to local state immediately
             setScans(prev => [newScan, ...prev]);
-            
+
             // Update summary (known product)
             setSummary(prev => prev ? {
                 ...prev,
@@ -406,12 +503,12 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     // Handle undo (delete last scan)
     const handleUndo = useCallback(async () => {
         if (!selectedAudit) return;
-        
+
         try {
             const response = await fetch(`${AUDIT_API}/audits/${selectedAudit.session.id}/scans/last`, {
                 method: 'DELETE'
             });
-            
+
             if (response.ok) {
                 setScans(prev => prev.slice(1));
                 fetchScans(selectedAudit.session.id); // Refresh summary
@@ -511,7 +608,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 }
                 return;
             }
-            
+
             // Prevent default for actual function keys (F1-F12, not the letter "F")
             if (/^F\d{1,2}$/.test(e.key)) {
                 e.preventDefault();
@@ -601,13 +698,13 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 if (/^[a-zA-Z0-9]$/.test(e.key)) {
                     setBarcodeBuffer(prev => {
                         const newBuffer = prev + e.key;
-                        
+
                         // Reset timeout
                         if (barcodeTimeout.current) clearTimeout(barcodeTimeout.current);
                         barcodeTimeout.current = setTimeout(() => {
                             if (newBuffer.length >= 3) {
-                                const quantity = mode === 'QUANTITY_READY' && pendingQuantity 
-                                    ? parseFloat(pendingQuantity) 
+                                const quantity = mode === 'QUANTITY_READY' && pendingQuantity
+                                    ? parseFloat(pendingQuantity)
                                     : 1;
                                 sendScan(newBuffer, quantity);
                                 setMode('SCAN');
@@ -615,16 +712,16 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                             }
                             setBarcodeBuffer('');
                         }, 100);
-                        
+
                         return newBuffer;
                     });
                 }
-                
+
                 // Enter also triggers scan (some scanners send enter at end)
                 if (e.key === 'Enter' && barcodeBuffer.length >= 3) {
                     if (barcodeTimeout.current) clearTimeout(barcodeTimeout.current);
-                    const quantity = mode === 'QUANTITY_READY' && pendingQuantity 
-                        ? parseFloat(pendingQuantity) 
+                    const quantity = mode === 'QUANTITY_READY' && pendingQuantity
+                        ? parseFloat(pendingQuantity)
                         : 1;
                     sendScan(barcodeBuffer, quantity);
                     setBarcodeBuffer('');
@@ -659,13 +756,24 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                         </button>
                         <h1 className="text-xl font-bold">Auditoría Física</h1>
                     </div>
-                    <button 
-                        onClick={fetchActiveAudits}
-                        disabled={isConnecting}
-                        className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-xl"
-                    >
-                        {isConnecting ? 'Buscando...' : '🔄 Actualizar'}
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <button
+                            onClick={() => {
+                                setShowCreateAudit(true);
+                                fetchStores();
+                            }}
+                            className="bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-xl font-medium flex items-center gap-2"
+                        >
+                            ＋ Nueva Auditoría
+                        </button>
+                        <button
+                            onClick={fetchActiveAudits}
+                            disabled={isConnecting}
+                            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-xl"
+                        >
+                            {isConnecting ? 'Buscando...' : '🔄 Actualizar'}
+                        </button>
+                    </div>
                 </div>
 
                 {/* Device Info */}
@@ -679,48 +787,190 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                     {connectionError && (
                         <div className="bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-xl mb-4">
                             {connectionError}
+                            <button onClick={() => setConnectionError(null)} className="ml-3 text-red-300 hover:text-white">✕</button>
                         </div>
                     )}
 
-                    {activeAudits.length === 0 && !isConnecting && !connectionError && (
-                        <div className="text-center py-20 text-slate-500">
-                            <div className="text-6xl mb-4">📋</div>
-                            <div className="text-xl">No hay auditorías activas</div>
-                            <div className="text-sm mt-2">
-                                Crea una auditoría desde el panel web para comenzar
+                    {reopenSuccess && (
+                        <div className="bg-emerald-500/20 border border-emerald-500 text-emerald-400 px-4 py-3 rounded-xl mb-4">
+                            ✅ {reopenSuccess}
+                        </div>
+                    )}
+
+                    {/* Create Audit Modal */}
+                    {showCreateAudit && (
+                        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+                            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md mx-4">
+                                <h2 className="text-xl font-bold mb-4">Nueva Auditoría</h2>
+                                <p className="text-slate-400 text-sm mb-4">
+                                    Selecciona la tienda para crear una nueva auditoría de conteo.
+                                </p>
+
+                                {isLoadingStores ? (
+                                    <div className="text-center py-6 text-slate-400">
+                                        Cargando tiendas...
+                                    </div>
+                                ) : stores.length === 0 ? (
+                                    <div className="text-center py-6 text-slate-500">
+                                        No se encontraron tiendas
+                                    </div>
+                                ) : (
+                                    <div className="grid gap-2 max-h-60 overflow-auto mb-4">
+                                        {stores.map(store => (
+                                            <button
+                                                key={store.id}
+                                                onClick={() => setSelectedStoreId(store.id)}
+                                                className={`p-3 rounded-xl text-left transition-all border-2 ${selectedStoreId === store.id
+                                                        ? 'border-emerald-500 bg-emerald-500/20'
+                                                        : 'border-transparent bg-slate-700 hover:bg-slate-600'
+                                                    }`}
+                                            >
+                                                <span className="font-medium">{store.name}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <div className="flex gap-3 mt-4">
+                                    <button
+                                        onClick={() => {
+                                            setShowCreateAudit(false);
+                                            setSelectedStoreId(null);
+                                        }}
+                                        className="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        onClick={handleCreateAudit}
+                                        disabled={!selectedStoreId || isCreatingAudit}
+                                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-4 py-2 rounded-xl font-medium"
+                                    >
+                                        {isCreatingAudit ? 'Creando...' : 'Crear Auditoría'}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}
 
-                    <div className="grid gap-4">
-                        {activeAudits.map(audit => (
-                            <button
-                                key={audit.session.id}
-                                onClick={() => handleSelectAudit(audit)}
-                                className="bg-slate-800 hover:bg-slate-700 p-6 rounded-xl text-left transition-all border-2 border-transparent hover:border-blue-500"
-                            >
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <h2 className="text-lg font-bold">{audit.store_name}</h2>
-                                        <div className="text-slate-400 text-sm mt-1">
-                                            Creada: {new Date(audit.session.created_at).toLocaleString()}
-                                        </div>
-                                        <div className="text-slate-400 text-sm">
-                                            Estado: <span className={`font-medium ${
-                                                audit.session.status === 'IN_PROGRESS' ? 'text-blue-400' :
-                                                audit.session.status === 'COUNTING' ? 'text-amber-400' :
-                                                'text-slate-400'
-                                            }`}>{audit.session.status}</span>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="text-3xl font-bold text-blue-400">{audit.total_items}</div>
-                                        <div className="text-slate-400 text-sm">items teóricos</div>
-                                    </div>
+                    {/* Reopen Request Dialog */}
+                    {showReopenDialog && (
+                        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+                            <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-md mx-4">
+                                <h2 className="text-xl font-bold mb-2">Solicitar Reapertura</h2>
+                                <p className="text-slate-400 text-sm mb-4">
+                                    <strong className="text-white">{showReopenDialog.store_name}</strong> —
+                                    Se enviará una solicitud al administrador para reabrir esta auditoría.
+                                </p>
+
+                                <label className="block text-sm text-slate-400 mb-1">Motivo (opcional)</label>
+                                <textarea
+                                    value={reopenReason}
+                                    onChange={(e) => setReopenReason(e.target.value)}
+                                    placeholder="Describe por qué se necesita reabrir..."
+                                    className="w-full bg-slate-700 rounded-xl p-3 text-white placeholder-slate-500 mb-4 resize-none"
+                                    rows={3}
+                                />
+
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => {
+                                            setShowReopenDialog(null);
+                                            setReopenReason('');
+                                        }}
+                                        className="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        onClick={() => handleRequestReopen(showReopenDialog)}
+                                        disabled={isRequestingReopen}
+                                        className="flex-1 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 px-4 py-2 rounded-xl font-medium"
+                                    >
+                                        {isRequestingReopen ? 'Enviando...' : 'Enviar Solicitud'}
+                                    </button>
                                 </div>
-                            </button>
-                        ))}
-                    </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeAudits.length === 0 && finalizedAudits.length === 0 && !isConnecting && !connectionError && (
+                        <div className="text-center py-20 text-slate-500">
+                            <div className="text-6xl mb-4">📋</div>
+                            <div className="text-xl">No hay auditorías</div>
+                            <div className="text-sm mt-2">
+                                Presiona "Nueva Auditoría" para crear una, o crea una desde el panel web
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Active Audits */}
+                    {activeAudits.length > 0 && (
+                        <>
+                            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-3">Auditorías Activas</h2>
+                            <div className="grid gap-4 mb-6">
+                                {activeAudits.map(audit => (
+                                    <button
+                                        key={audit.session.id}
+                                        onClick={() => handleSelectAudit(audit)}
+                                        className="bg-slate-800 hover:bg-slate-700 p-6 rounded-xl text-left transition-all border-2 border-transparent hover:border-blue-500"
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <h2 className="text-lg font-bold">{audit.store_name}</h2>
+                                                <div className="text-slate-400 text-sm mt-1">
+                                                    Creada: {new Date(audit.session.created_at).toLocaleString()}
+                                                </div>
+                                                <div className="text-slate-400 text-sm">
+                                                    Estado: <span className={`font-medium ${audit.session.status === 'IN_PROGRESS' ? 'text-blue-400' :
+                                                            audit.session.status === 'COUNTING' ? 'text-amber-400' :
+                                                                'text-slate-400'
+                                                        }`}>{audit.session.status}</span>
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-3xl font-bold text-blue-400">{audit.total_items}</div>
+                                                <div className="text-slate-400 text-sm">items teóricos</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </>
+                    )}
+
+                    {/* Finalized Audits */}
+                    {finalizedAudits.length > 0 && (
+                        <>
+                            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-3">Auditorías Finalizadas</h2>
+                            <div className="grid gap-3">
+                                {finalizedAudits.map(audit => (
+                                    <div
+                                        key={audit.session.id}
+                                        className="bg-slate-800/60 p-4 rounded-xl border border-slate-700"
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <h3 className="font-medium text-slate-300">{audit.store_name}</h3>
+                                                <div className="text-slate-500 text-xs mt-1">
+                                                    Finalizada: {new Date(audit.session.created_at).toLocaleDateString()}
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setShowReopenDialog(audit);
+                                                }}
+                                                className="bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                                            >
+                                                🔓 Solicitar Reapertura
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </>
+                    )}
                 </div>
             </div>
         );
@@ -728,11 +978,10 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
 
     // Connected to an audit - INDUSTRIAL POS TERMINAL INTERFACE
     return (
-        <div className={`flex flex-col h-screen bg-black text-white font-sans select-none transition-colors duration-200 ${
-            flashColor === 'green' ? 'bg-green-900/60' : 
-            flashColor === 'red' ? 'bg-red-900/60' : 
-            flashColor === 'amber' ? 'bg-amber-900/60' : ''
-        }`}>
+        <div className={`flex flex-col h-screen bg-black text-white font-sans select-none transition-colors duration-200 ${flashColor === 'green' ? 'bg-green-900/60' :
+                flashColor === 'red' ? 'bg-red-900/60' :
+                    flashColor === 'amber' ? 'bg-amber-900/60' : ''
+            }`}>
             {/* ===== HEADER BAR (compact) ===== */}
             <div className="bg-gray-900 border-b border-gray-700 px-4 py-2 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">
@@ -1040,10 +1289,9 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 <div className="w-2/5 border-r border-gray-800 flex flex-col bg-gray-950">
                     {/* Current scan display - BIG */}
                     {lastScan ? (
-                        <div className={`flex-1 flex flex-col items-center justify-center p-6 ${
-                            lastScan.isUnknown ? 'text-amber-400' : 
-                            lastScan.quantity === 0 ? 'text-gray-400' : 'text-green-400'
-                        }`}>
+                        <div className={`flex-1 flex flex-col items-center justify-center p-6 ${lastScan.isUnknown ? 'text-amber-400' :
+                                lastScan.quantity === 0 ? 'text-gray-400' : 'text-green-400'
+                            }`}>
                             {lastScan.quantity > 0 && (
                                 <div className="text-8xl font-mono font-black mb-4 leading-none">
                                     +{lastScan.quantity}
@@ -1075,13 +1323,12 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
 
                     {/* Mode badge at bottom of left panel */}
                     <div className="px-4 py-2 bg-gray-900 border-t border-gray-800 text-center">
-                        <span className={`text-xs font-mono uppercase tracking-widest ${
-                            mode === 'SCAN' ? 'text-green-500' :
-                            mode === 'QUANTITY_INPUT' || mode === 'QUANTITY_READY' ? 'text-purple-400' :
-                            mode === 'MANUAL_INPUT' || mode === 'MANUAL_QTY' ? 'text-cyan-400' :
-                            mode === 'REGISTER_PRODUCT' ? 'text-amber-400' :
-                            'text-gray-500'
-                        }`}>
+                        <span className={`text-xs font-mono uppercase tracking-widest ${mode === 'SCAN' ? 'text-green-500' :
+                                mode === 'QUANTITY_INPUT' || mode === 'QUANTITY_READY' ? 'text-purple-400' :
+                                    mode === 'MANUAL_INPUT' || mode === 'MANUAL_QTY' ? 'text-cyan-400' :
+                                        mode === 'REGISTER_PRODUCT' ? 'text-amber-400' :
+                                            'text-gray-500'
+                            }`}>
                             {mode === 'SCAN' && '● LISTO PARA ESCANEAR'}
                             {mode === 'QUANTITY_INPUT' && '▶ INGRESANDO CANTIDAD'}
                             {mode === 'QUANTITY_READY' && `▶ CANT: ${pendingQuantity} → ESCANEA`}
@@ -1130,7 +1377,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                             }, {});
                             const items = Object.values(grouped).sort((a, b) => b.lastId - a.lastId);
                             return items.map((item, index) => (
-                                <div 
+                                <div
                                     key={item.key}
                                     className={`flex items-center gap-2 px-3 py-2 border-b border-gray-900 text-sm font-mono transition-colors
                                         ${index === 0 ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-900'}
@@ -1146,9 +1393,8 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                         {item.product_name}
                                         {item.is_unknown && ' ⚠'}
                                     </span>
-                                    <span className={`w-14 text-right font-bold tabular-nums ${
-                                        index === 0 ? 'text-green-400 text-lg' : 'text-gray-400 text-base'
-                                    }`}>
+                                    <span className={`w-14 text-right font-bold tabular-nums ${index === 0 ? 'text-green-400 text-lg' : 'text-gray-400 text-base'
+                                        }`}>
                                         {item.quantity}
                                     </span>
                                 </div>
