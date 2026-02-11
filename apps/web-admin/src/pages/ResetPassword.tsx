@@ -13,15 +13,17 @@ import Logo from '../components/ui/Logo';
 import InputField from '../components/ui/InputField';
 import Button from '../components/ui/Button';
 
-const AUTH_API = import.meta.env.VITE_AUTH_API_URL || 'http://localhost:8082';
+const AUTH_API = import.meta.env.VITE_AUTH_API_URL || import.meta.env.VITE_API_URL || 'http://localhost:8082';
 
 // Detect if connecting directly to backend (port-based) vs through nginx
 function getApiBase() {
-    const url = new URL(AUTH_API);
-    if (url.port && url.port !== '80' && url.port !== '443') {
-        return AUTH_API;
-    }
-    return `${url.origin}/api/auth`;
+    try {
+        const url = new URL(AUTH_API);
+        if (url.port && url.port !== '80' && url.port !== '443') {
+            return AUTH_API;
+        }
+    } catch { /* fall through */ }
+    return `${AUTH_API}/api/auth`;
 }
 
 // Icons

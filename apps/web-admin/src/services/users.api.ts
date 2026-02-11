@@ -5,9 +5,33 @@
 
 import { httpClient } from './httpClient';
 
+/**
+ * Determines the auth-service API base URL.
+ * - Direct connection (dev with port): http://localhost:8080 → paths: /users, /stores, etc.
+ * - Via Nginx proxy (production): https://api.qontroll.uk/api → paths: /api/users, /api/stores, etc.
+ */
+function getAuthApiBase(): string {
+    // Explicit auth URL (e.g. dev: http://localhost:8080)
+    if (import.meta.env.VITE_AUTH_API_URL) {
+        try {
+            const url = new URL(import.meta.env.VITE_AUTH_API_URL);
+            // Non-standard port = direct connection to auth-service
+            if (url.port && url.port !== '80' && url.port !== '443') {
+                return import.meta.env.VITE_AUTH_API_URL;
+            }
+        } catch { /* fall through */ }
+        // Production domain without port → route through nginx /api prefix
+        return `${import.meta.env.VITE_AUTH_API_URL}/api`;
+    }
+    // Use general API URL (production via nginx)
+    if (import.meta.env.VITE_API_URL) {
+        return `${import.meta.env.VITE_API_URL}/api`;
+    }
+    // Local dev fallback: direct to auth-service
+    return 'http://localhost:8080';
+}
 
-
-const API_BASE = import.meta.env.VITE_AUTH_API_URL || 'http://localhost:8080';
+const API_BASE = getAuthApiBase();
 
 // =====================================================
 // TYPES
