@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/comex/auth-service/internal/adapters/repositories"
 	"github.com/comex/auth-service/internal/core/domain"
@@ -387,11 +388,11 @@ func (h *UserHandler) DeleteStore(c *gin.Context) {
 
 	if err := h.repo.DeleteStore(c.Request.Context(), id); err != nil {
 		log.Printf("Error deleting store: %v", err)
-		// Check if store is in use
-		if err.Error() != "" && (err.Error()[:5] == "store") {
+		// Check if store is in use (has audits)
+		if strings.Contains(err.Error(), "audit") {
 			c.JSON(http.StatusConflict, domain.ErrorResponse{
 				Error:   "store_in_use",
-				Message: "No se puede eliminar la tienda porque está asignada a usuarios o tiene auditorías",
+				Message: "No se puede eliminar la tienda porque tiene auditorías asociadas",
 			})
 			return
 		}

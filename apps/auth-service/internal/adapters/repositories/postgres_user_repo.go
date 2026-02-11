@@ -643,25 +643,28 @@ func (r *PostgresUserRepo) UpdateStore(ctx context.Context, id int, name string,
 
 // DeleteStore deletes a store by ID
 func (r *PostgresUserRepo) DeleteStore(ctx context.Context, id int) error {
-	// First check if the store is assigned to any user
-	var count int
-	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_stores WHERE store_id = $1`, id).Scan(&count)
-	if err != nil {
-		return err
-	}
-	if count > 0 {
-		return fmt.Errorf("store is assigned to %d user(s)", count)
-	}
-	
 	// Check if store is used in any audit
-	err = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_sessions WHERE store_id = $1`, id).Scan(&count)
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_sessions WHERE store_id = $1`, id).Scan(&count)
 	if err != nil {
 		return err
 	}
 	if count > 0 {
 		return fmt.Errorf("store is used in %d audit(s)", count)
 	}
-	
+
+	// Remove user-store assignments (clean up before delete)
+	_, err = r.db.ExecContext(ctx, `DELETE FROM user_stores WHERE store_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("error removing user assignments: %w", err)
+	}
+
+	// Nullify references in catalog_imports
+	_, err = r.db.ExecContext(ctx, `UPDATE catalog_imports SET store_id = NULL WHERE store_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("error clearing catalog imports: %w", err)
+	}
+
 	_, err = r.db.ExecContext(ctx, `DELETE FROM stores WHERE id = $1`, id)
 	return err
 }
