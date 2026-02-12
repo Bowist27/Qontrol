@@ -12,16 +12,21 @@ import { SyncProductsUseCase } from './local-core/application/SyncProducts';
 import { AuditUseCase } from './local-core/application/AuditUseCase';
 import { SafeUser } from './local-core/domain/User';
 
-// Load env vars from root of monorepo (2 levels up from apps/app-pos-electron)
-// apps/app-pos-electron -> apps -> Base (root)
-// Note: __dirname is dist-electron/
-const envPath = path.resolve(__dirname, '../../../.env');
+// Load env vars
+// In dev: from monorepo root .env (3 levels up from dist-electron/)
+// In production: from .env.production bundled as extraResource
+const isDev = !app.isPackaged;
+let envPath: string;
+if (isDev) {
+    envPath = path.resolve(__dirname, '../../../.env');
+} else {
+    envPath = path.join(process.resourcesPath, '.env.production');
+}
 console.log('Loading .env from:', envPath);
 dotenv.config({ path: envPath });
 
 let mainWindow: BrowserWindow | null = null;
 let currentUser: SafeUser | null = null; // Store current logged-in user
-const isDev = !app.isPackaged;
 
 function createWindow() {
     mainWindow = new BrowserWindow({
