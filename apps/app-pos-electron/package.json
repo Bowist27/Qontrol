@@ -5,7 +5,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "dev:electron": "tsc -p electron && concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "dev:electron": "tsc -p electron && concurrently -k \"npm run dev\" \"wait-on http://localhost:5174 && electron .\"",
     "build": "tsc -b && vite build",
     "build:electron": "tsc -p electron && vite build && electron-builder --win",
     "lint": "eslint .",
