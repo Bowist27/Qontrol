@@ -26,22 +26,23 @@ const s3 = new S3Client({
 
 const releaseDir = path.join(__dirname, '..', 'release');
 
-const files = [
+// Versioned files go into electron-updates/<version>/
+const versionedFiles = [
   `Qontrol POS Setup ${version}.exe`,
   `Qontrol POS Setup ${version}.exe.blockmap`,
-  'latest.yml',
 ];
 
 async function upload() {
-  for (const file of files) {
+  // 1. Upload installer + blockmap to version subfolder
+  for (const file of versionedFiles) {
     const filePath = path.join(releaseDir, file);
     if (!fs.existsSync(filePath)) {
       console.log(`  Warning: ${file} not found, skipping`);
       continue;
     }
     const body = fs.readFileSync(filePath);
-    const key = `${PREFIX}/${file}`;
-    console.log(`  Uploading ${file} (${(body.length / 1024 / 1024).toFixed(1)} MB)...`);
+    const key = `${PREFIX}/${version}/${file}`;
+    console.log(`  Uploading ${version}/${file} (${(body.length / 1024 / 1024).toFixed(1)} MB)...`);
     await s3.send(new PutObjectCommand({
       Bucket: BUCKET,
       Key: key,
@@ -49,6 +50,26 @@ async function upload() {
     }));
     console.log(`  ✓ ${file}`);
   }
+
+  // 2. Upload latest.yml to root, rewriting URLs to point to version subfolder
+  const ymlPath = path.join(releaseDir, 'latest.yml');
+  if (!fs.existsSync(ymlPath)) {
+    console.log('  Warning: latest.yml not found, skipping');
+  } else {
+    let yml = fs.readFileSync(ymlPath, 'utf8');
+    // Prefix file URLs with version folder (e.g. "url: Setup.exe" → "url: 1.0.0/Setup.exe")
+    yml = yml.replace(/^(\s*url:\s*)(.+)$/gm, `$1${version}/$2`);
+    yml = yml.replace(/^(path:\s*)(.+)$/gm, `$1${version}/$2`);
+    console.log(`  Uploading latest.yml (patched with ${version}/ prefix)...`);
+    await s3.send(new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: `${PREFIX}/latest.yml`,
+      Body: Buffer.from(yml, 'utf8'),
+      ContentType: 'text/yaml',
+    }));
+    console.log('  ✓ latest.yml');
+  }
+
   console.log('\n  All files uploaded successfully.');
 }
 
