@@ -13,6 +13,7 @@ import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AuditProvider } from './context/AuditContext';
 import Login from './pages/Login';
+import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 
@@ -85,6 +86,7 @@ const AppRoutes: React.FC = () => {
       />
 
       {/* Password Reset - Public, no auth redirect */}
+      <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
 
       {/* Protected Routes */}

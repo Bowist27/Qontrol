@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/comex/auth-service/internal/adapters/repositories"
@@ -22,6 +23,29 @@ type UserHandler struct {
 // NewUserHandler creates a new user handler
 func NewUserHandler(repo *repositories.PostgresUserRepo, emailService *email.EmailService) *UserHandler {
 	return &UserHandler{repo: repo, emailService: emailService}
+}
+
+// GetMe handles GET /me - returns current authenticated user's full profile
+func (h *UserHandler) GetMe(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, domain.ErrorResponse{
+			Error:   "unauthorized",
+			Message: "No autenticado",
+		})
+		return
+	}
+
+	user, err := h.repo.GetByID(c.Request.Context(), userID.(string))
+	if err != nil {
+		c.JSON(http.StatusNotFound, domain.ErrorResponse{
+			Error:   "not_found",
+			Message: "Usuario no encontrado",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, user)
 }
 
 // ListUsers handles GET /users
@@ -217,12 +241,38 @@ func (h *UserHandler) UpdateUser(c *gin.Context) {
 	// Fetch the updated user with full data
 	updatedUser, _ := h.repo.GetByID(c.Request.Context(), id)
 
+	// If email was changed, send password reset email to the new address
+	if req.Email != "" && req.Email != existingUser.Email {
+		token, err := crypto.GenerateSecureToken(32)
+		if err == nil {
+			_ = h.repo.SetPasswordResetToken(c.Request.Context(), updatedUser.ID, token, true)
+			appURL := os.Getenv("APP_URL")
+			if appURL == "" {
+				appURL = "http://localhost:5173"
+			}
+			resetLink := fmt.Sprintf("%s/reset-password?token=%s", appURL, token)
+			_ = h.emailService.SendPasswordResetEmail(req.Email, updatedUser.FirstName, resetLink)
+			log.Printf("Password reset email sent to new address: %s", req.Email)
+		}
+	}
+
 	c.JSON(http.StatusOK, updatedUser)
 }
+
+// System admin user ID - cannot be deleted or banned
+const systemAdminID = "a0000000-0000-0000-0000-000000000001"
 
 // DeleteUser handles DELETE /users/:id
 func (h *UserHandler) DeleteUser(c *gin.Context) {
 	id := c.Param("id")
+
+	if id == systemAdminID {
+		c.JSON(http.StatusForbidden, domain.ErrorResponse{
+			Error:   "forbidden",
+			Message: "El administrador global del sistema no puede ser eliminado",
+		})
+		return
+	}
 
 	if err := h.repo.Delete(c.Request.Context(), id); err != nil {
 		log.Printf("Error deleting user: %v", err)
@@ -239,6 +289,14 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 // BanUser handles POST /users/:id/ban
 func (h *UserHandler) BanUser(c *gin.Context) {
 	id := c.Param("id")
+
+	if id == systemAdminID {
+		c.JSON(http.StatusForbidden, domain.ErrorResponse{
+			Error:   "forbidden",
+			Message: "El administrador global del sistema no puede ser baneado",
+		})
+		return
+	}
 
 	var req domain.BanUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -695,6 +753,69 @@ func (h *UserHandler) DeleteZone(c *gin.Context) {
 // =====================================================
 // PASSWORD RESET (Public routes)
 // =====================================================
+
+// ForgotPassword handles POST /forgot-password
+// Generates a reset token and sends a password reset email
+func (h *UserHandler) ForgotPassword(c *gin.Context) {
+	var req struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// Always return 200 to prevent email enumeration
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Si el correo existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña.",
+		})
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+
+	// Look up user
+	user, err := h.repo.GetByEmail(c.Request.Context(), email)
+	if err != nil || !user.IsActive {
+		// Don't reveal whether the email exists
+		log.Printf("Forgot password request for unknown/inactive email: %s", email)
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Si el correo existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña.",
+		})
+		return
+	}
+
+	// Generate reset token
+	token, err := crypto.GenerateSecureToken(32)
+	if err != nil {
+		log.Printf("Error generating reset token for %s: %v", email, err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al procesar la solicitud",
+		})
+		return
+	}
+
+	// Store token (must_change_password = false since user initiated the reset)
+	if err := h.repo.SetPasswordResetToken(c.Request.Context(), user.ID, token, false); err != nil {
+		log.Printf("Error setting reset token for %s: %v", email, err)
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "internal_error",
+			Message: "Error al procesar la solicitud",
+		})
+		return
+	}
+
+	// Send email
+	firstName := user.FirstName
+	if firstName == "" {
+		firstName = "Usuario"
+	}
+	if err := h.emailService.SendPasswordResetEmail(email, firstName, token); err != nil {
+		log.Printf("Error sending reset email to %s: %v", email, err)
+	}
+
+	log.Printf("✅ Password reset requested for %s", email)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Si el correo existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña.",
+	})
+}
 
 // ValidateResetToken handles GET /reset-password/validate?token=xxx
 func (h *UserHandler) ValidateResetToken(c *gin.Context) {

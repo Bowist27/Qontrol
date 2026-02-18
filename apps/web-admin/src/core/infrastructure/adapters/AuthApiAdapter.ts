@@ -101,6 +101,20 @@ export class AuthApiAdapter {
             console.error('Logout error:', error);
         }
     }
+
+    /**
+     * GET /me (direct) or /api/auth/me (via Nginx)
+     * Returns the current authenticated user's full profile
+     */
+    async getMe(token: string): Promise<LoginResponse['user']> {
+        const path = this.isDirectConnection() ? '/me' : '/api/auth/me';
+        const response = await this.api.get(path, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
+        return response.data;
+    }
 }
 
 // Singleton instance

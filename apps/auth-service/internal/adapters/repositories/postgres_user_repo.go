@@ -178,6 +178,9 @@ func (r *PostgresUserRepo) GetByEmail(ctx context.Context, email string) (*domai
 	if user.RoleID > 0 {
 		user.Role, _ = r.GetRoleByID(ctx, user.RoleID)
 	}
+	// Load stores and permissions (same as GetByID)
+	user.Stores, _ = r.GetUserStores(ctx, user.ID)
+	user.Permissions, _ = r.GetUserPermissions(ctx, user.ID)
 
 	return &user, nil
 }

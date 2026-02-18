@@ -137,6 +137,79 @@ func (s *EmailService) SendWelcomeEmail(toEmail, firstName, resetToken string) e
 	return s.sendEmail(toEmail, subject, htmlBody)
 }
 
+// SendPasswordResetEmail sends a password recovery email with a reset link
+func (s *EmailService) SendPasswordResetEmail(toEmail, firstName, resetToken string) error {
+	resetURL := fmt.Sprintf("%s/reset-password?token=%s", s.appURL, resetToken)
+
+	subject := "Recupera tu contraseña - QONTROL"
+
+	htmlBody := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; margin: 0; padding: 40px 20px; color: #334155; }
+        .container { max-width: 520px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.04); }
+        .header { padding: 40px 40px 0; text-align: center; }
+        .logo { font-size: 22px; font-weight: 700; color: #0f172a; letter-spacing: 1.5px; margin: 0; }
+        .logo-dot { color: #2563eb; }
+        .divider { width: 40px; height: 3px; background: #2563eb; border-radius: 2px; margin: 20px auto 0; }
+        .body { padding: 32px 40px 40px; }
+        .title { font-size: 22px; font-weight: 600; color: #0f172a; margin: 0 0 8px; text-align: center; }
+        .subtitle { font-size: 14px; color: #64748b; text-align: center; margin: 0 0 28px; }
+        .greeting { font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 24px; }
+        .cta-wrapper { text-align: center; margin: 0 0 24px; }
+        .btn { display: inline-block; background: #2563eb; color: #ffffff !important; text-decoration: none; padding: 14px 40px; border-radius: 10px; font-weight: 600; font-size: 14px; letter-spacing: 0.3px; }
+        .expire-note { font-size: 13px; color: #94a3b8; text-align: center; margin: 0 0 24px; }
+        .fallback { font-size: 12px; color: #cbd5e1; text-align: center; margin: 0; line-height: 1.6; }
+        .fallback a { color: #94a3b8; word-break: break-all; }
+        .footer { padding: 20px 40px; text-align: center; border-top: 1px solid #f1f5f9; }
+        .footer p { font-size: 11px; color: #cbd5e1; margin: 0; line-height: 1.5; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <p class="logo">QONTROL<span class="logo-dot">.</span></p>
+            <div class="divider"></div>
+        </div>
+        <div class="body">
+            <h1 class="title">Recupera tu contraseña</h1>
+            <p class="subtitle">Recibimos una solicitud para restablecer tu contraseña</p>
+
+            <p class="greeting">Hola, %s:</p>
+            <p class="greeting">Haz clic en el siguiente botón para crear una nueva contraseña. Si no solicitaste este cambio, puedes ignorar este correo de forma segura.</p>
+            
+            <div class="cta-wrapper">
+                <a href="%s" class="btn">Restablecer contraseña</a>
+            </div>
+            
+            <p class="expire-note">Por seguridad, este enlace es válido por 48 horas.</p>
+
+            <p class="fallback">Si el botón no funciona, copia este enlace en tu navegador:<br>
+            <a href="%s">%s</a></p>
+        </div>
+        <div class="footer">
+            <p>Enviado por QONTROL System.<br>Si no solicitaste este cambio, puedes ignorar este correo.</p>
+        </div>
+    </div>
+</body>
+</html>`, firstName, resetURL, resetURL, resetURL)
+
+	if !s.enabled {
+		log.Println("════════════════════════════════════════════════")
+		log.Println("📧 PASSWORD RESET EMAIL (console mode)")
+		log.Printf("   To: %s", toEmail)
+		log.Printf("   Subject: %s", subject)
+		log.Printf("   Reset URL: %s", resetURL)
+		log.Println("════════════════════════════════════════════════")
+		return nil
+	}
+
+	return s.sendEmail(toEmail, subject, htmlBody)
+}
+
 // sendEmail sends an email via SMTP (supports both STARTTLS on 587 and implicit TLS on 465)
 func (s *EmailService) sendEmail(to, subject, htmlBody string) error {
 	// Build MIME message

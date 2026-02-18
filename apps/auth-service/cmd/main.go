@@ -77,6 +77,7 @@ func main() {
 	r.POST("/logout", authHandler.Logout) // Logout requires token but handles it inside
 
 	// Password reset routes (Public - no auth required)
+	r.POST("/forgot-password", userHandler.ForgotPassword)
 	r.GET("/reset-password/validate", userHandler.ValidateResetToken)
 	r.POST("/reset-password", userHandler.ResetPassword)
 
@@ -86,6 +87,9 @@ func main() {
 	{
 		r.GET("/users/sync", authHandler.SyncUsers)
 		r.GET("/products/sync", productHandler.SyncProducts)
+
+		// Current user profile
+		protected.GET("/me", userHandler.GetMe)
 
 		// User management routes (IAM)
 		protected.GET("/users", userHandler.ListUsers)

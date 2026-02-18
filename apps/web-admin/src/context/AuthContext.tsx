@@ -7,6 +7,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { User } from '../core/domain/entities/User';
 import { LoginUseCase, loginUseCase } from '../core/application/usecases/LoginUseCase';
+import { authApi } from '../core/infrastructure/adapters/AuthApiAdapter';
 
 interface AuthContextType {
     user: User | null;
@@ -28,7 +29,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const storedUser = LoginUseCase.getCurrentUser();
         return (storedUser && LoginUseCase.isAuthenticated()) ? storedUser : null;
     });
-    const [isLoading] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+
+    // Fetch fresh user data from /me on mount (page reload)
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+
+        setIsLoading(true);
+        authApi.getMe(token)
+            .then((freshUser) => {
+                setUser(freshUser);
+                localStorage.setItem('user', JSON.stringify(freshUser));
+            })
+            .catch(() => {
+                // Token invalid or expired — keep local data as fallback
+            })
+            .finally(() => setIsLoading(false));
+    }, []);
 
     // Listen for global logout events
     useEffect(() => {

@@ -10,7 +10,7 @@
  */
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import BrandSection from '../components/ui/BrandSection';
 import Logo from '../components/ui/Logo';
@@ -137,6 +137,15 @@ const Login: React.FC = () => {
                             Iniciar Sesión
                         </Button>
                     </form>
+
+                    <div className="text-center mt-4">
+                        <Link
+                            to="/forgot-password"
+                            className="text-sm text-slate-400 hover:text-blue-400 transition-colors"
+                        >
+                            ¿Olvidaste tu contraseña?
+                        </Link>
+                    </div>
 
                     <p className="text-center mt-8 text-xs text-slate-500 leading-relaxed">
                         Este es un sistema privado para uso exclusivo de<br />
