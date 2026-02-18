@@ -58,7 +58,7 @@ async function upload() {
   } else {
     let yml = fs.readFileSync(ymlPath, 'utf8');
     // Prefix file URLs with version folder (e.g. "url: Setup.exe" → "url: 1.0.0/Setup.exe")
-    yml = yml.replace(/^(\s*url:\s*)(.+)$/gm, `$1${version}/$2`);
+    yml = yml.replace(/^(\s*-?\s*url:\s*)(.+)$/gm, `$1${version}/$2`);
     yml = yml.replace(/^(path:\s*)(.+)$/gm, `$1${version}/$2`);
     console.log(`  Uploading latest.yml (patched with ${version}/ prefix)...`);
     await s3.send(new PutObjectCommand({

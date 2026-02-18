@@ -144,7 +144,9 @@ app.on('ready', async () => {
 
         // --- IPC Handlers ---
 
-        ipcMain.handle('auth:login', async (_event, { email, password }) => {
+        ipcMain.handle('app:getVersion', () => app.getVersion());
+
+    ipcMain.handle('auth:login', async (_event, { email, password }) => {
             console.log(`IPC: auth:login for ${email}`);
             const result = await loginUseCase.execute(email, password);
             

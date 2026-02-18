@@ -42,8 +42,14 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     const [password, setPassword] = useState('');
     const [msg, setMsg] = useState('');
     const [syncing, setSyncing] = useState(false);
+    const [appVersion, setAppVersion] = useState('...');
     
     const { login, sync, isLoading, error, clearError } = useAuth();
+
+    // Get app version
+    useEffect(() => {
+        (window as any).appInfo?.getVersion?.().then((v: string) => setAppVersion(v)).catch(() => setAppVersion('dev'));
+    }, []);
 
     // Clear error when user types
     useEffect(() => {
@@ -91,7 +97,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     </p>
                     <div className="mt-8 flex items-center gap-2 text-white/50 text-sm">
                         <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                        Versión Desktop
+                        Versión Desktop v{appVersion}
                     </div>
                 </div>
             </section>
