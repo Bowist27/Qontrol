@@ -106,9 +106,14 @@ const AuditHub: React.FC = () => {
     const [contextZoneId, setContextZoneId] = useState<number | null>(null);
 
     useEffect(() => {
-        Promise.all([usersApi.getZones(), usersApi.getStores()]).then(([z, s]) => {
+        // Fetch zones (for grouping) and the user's ALLOWED stores from audit-service
+        // auditApi.getStores() returns only stores the user has access to (filtered by JWT role/stores)
+        Promise.all([usersApi.getZones(), usersApi.getStores(), auditApi.getStores()]).then(([z, allS, allowedS]) => {
             setZones(z);
-            setAllStores(s);
+            // Filter allStores to only include stores the user is allowed to see
+            const allowedIds = new Set(allowedS.map(s => s.id));
+            const filtered = allS.filter(s => allowedIds.has(s.id));
+            setAllStores(filtered);
         }).catch(err => console.error('Failed to load zones/stores:', err));
     }, []);
 
