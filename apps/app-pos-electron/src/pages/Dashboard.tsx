@@ -32,6 +32,7 @@ const InventoryIcon: React.FC<{ className?: string }> = ({ className }) => (
     </svg>
 );
 
+// @ts-ignore used conditionally
 const UsersIcon: React.FC<{ className?: string }> = ({ className }) => (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />

@@ -1,5 +1,7 @@
 export interface AuthAPI {
     login: (credentials: any) => Promise<any>;
+    getCurrentUser: () => Promise<any>;
+    logout: () => Promise<void>;
     sync: () => Promise<any>;
 }
 
