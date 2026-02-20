@@ -737,7 +737,7 @@ const AuditHub: React.FC = () => {
                                     </button>
 
                                     <div className="max-h-72 overflow-y-auto">
-                                        {zones.map(zone => {
+                                        {zones.filter(zone => allStores.some(s => s.zone_id === zone.id)).map(zone => {
                                             const zoneStores = allStores.filter(s => s.zone_id === zone.id);
                                             const selectedCount = zoneStores.filter(s => filterStoreIds.has(s.id)).length;
                                             const allSelected = zoneStores.length > 0 && selectedCount === zoneStores.length;
