@@ -136,7 +136,7 @@ func (r *PostgresRepository) ResolveReopenRequest(ctx context.Context, requestID
 }
 
 // CreateEmptyAuditSession creates an audit session from POS without PDF/items
-func (r *PostgresRepository) CreateEmptyAuditSession(ctx context.Context, storeID int, createdBy string, name *string) (*domain.AuditSession, error) {
+func (r *PostgresRepository) CreateEmptyAuditSession(ctx context.Context, storeID int, createdBy *string, name *string) (*domain.AuditSession, error) {
 	var session domain.AuditSession
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO audit_sessions (store_id, created_by, name, status, created_at)

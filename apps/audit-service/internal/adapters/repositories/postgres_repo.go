@@ -57,7 +57,7 @@ type AuditRepository interface {
 	ResolveReopenRequest(ctx context.Context, requestID string, resolvedBy string, status string) error
 
 	// POS Audit Creation
-	CreateEmptyAuditSession(ctx context.Context, storeID int, createdBy string, name *string) (*domain.AuditSession, error)
+	CreateEmptyAuditSession(ctx context.Context, storeID int, createdBy *string, name *string) (*domain.AuditSession, error)
 }
 
 // PostgresRepository implements AuditRepository

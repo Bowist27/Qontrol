@@ -230,7 +230,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 body: JSON.stringify({
                     store_id: selectedStoreId,
                     device_id: deviceId,
-                    created_by: user?.id || deviceId,
+                    created_by: user?.id || null,
                     name: newAuditName || undefined,
                 })
             });

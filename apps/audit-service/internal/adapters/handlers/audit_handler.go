@@ -637,10 +637,10 @@ func (h *AuditHandler) GetAuditEvents(c *gin.Context) {
 // POS-accessible endpoint (no JWT) - creates an empty audit session
 func (h *AuditHandler) CreateAuditFromPOS(c *gin.Context) {
 	var req struct {
-		StoreID   int    `json:"store_id" binding:"required"`
-		DeviceID  string `json:"device_id"`
-		CreatedBy string `json:"created_by"`
-		Name      string `json:"name"`
+		StoreID   int     `json:"store_id" binding:"required"`
+		DeviceID  string  `json:"device_id"`
+		CreatedBy *string `json:"created_by"`
+		Name      string  `json:"name"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
@@ -650,10 +650,8 @@ func (h *AuditHandler) CreateAuditFromPOS(c *gin.Context) {
 		return
 	}
 
+	// Use the provided user ID (must be a valid UUID in users table) or nil
 	createdBy := req.CreatedBy
-	if createdBy == "" {
-		createdBy = "pos-device:" + req.DeviceID
-	}
 
 	var name *string
 	if req.Name != "" {

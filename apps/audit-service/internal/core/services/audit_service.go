@@ -363,7 +363,7 @@ func (s *AuditService) GetAuditEvents(ctx context.Context, auditID int) ([]domai
 }
 
 // CreateAuditFromPOS creates an empty audit session from the POS app (no PDF required)
-func (s *AuditService) CreateAuditFromPOS(ctx context.Context, storeID int, createdBy string, name *string) (*domain.AuditSession, error) {
+func (s *AuditService) CreateAuditFromPOS(ctx context.Context, storeID int, createdBy *string, name *string) (*domain.AuditSession, error) {
 	session, err := s.repo.CreateEmptyAuditSession(ctx, storeID, createdBy, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create audit from POS: %w", err)
@@ -375,7 +375,7 @@ func (s *AuditService) CreateAuditFromPOS(ctx context.Context, storeID int, crea
 		"created_by": createdBy,
 		"source":     "POS",
 	}
-	_ = s.repo.LogEvent(ctx, session.ID, &createdBy, "AUDIT_CREATED_FROM_POS", details)
+	_ = s.repo.LogEvent(ctx, session.ID, createdBy, "AUDIT_CREATED_FROM_POS", details)
 
 	return session, nil
 }

@@ -17,7 +17,6 @@ import {
 import { pdf } from '@react-pdf/renderer';
 import { auditApi, type Store as StoreType, type AuditEvent, type PhysicalScan } from '../../services/audit.api';
 import { useAudit } from '../../context/AuditContext';
-import { useAuth } from '../../context/AuthContext';
 import ReporteAjusteInventario from './ReporteAjusteInventario';
 
 // Types
@@ -116,21 +115,13 @@ const AuditSessionDetail: React.FC = () => {
         }
     }, [showEventLog, _sessionId]);
 
-    // Fetch stores from API on mount, filtered by user permissions
-    const { user } = useAuth();
+    // Fetch stores from API on mount (always, to ensure we can resolve store name if state is missing)
     useEffect(() => {
         setIsLoadingStores(true);
         setStoresError(null);
         auditApi.getStores()
             .then(data => {
-                // Admin sees all stores; other roles only see their assigned stores
-                const isAdmin = user?.role?.name === 'Administrador';
-                if (isAdmin) {
-                    setStores(data);
-                } else {
-                    const userStoreIds = new Set((user?.stores || []).map(s => Number(s.id)));
-                    setStores(data.filter(s => userStoreIds.has(s.id)));
-                }
+                setStores(data);
                 setIsLoadingStores(false);
             })
             .catch(err => {
@@ -138,7 +129,7 @@ const AuditSessionDetail: React.FC = () => {
                 setStoresError('Error al cargar tiendas');
                 setIsLoadingStores(false);
             });
-    }, [user]);
+    }, []);
 
     // Get the effective store name (used when creating new audit vs viewing existing)
     // If not passed in state, try to find in loaded stores list by matching store_id (if we had it available easily here, but we fetch it in getAudit)
@@ -196,7 +187,7 @@ const AuditSessionDetail: React.FC = () => {
         confirmLabel: string;
         isLoading: boolean;
         onConfirm: () => Promise<void>;
-    }>({ open: false, type: 'danger', icon: 'trash', title: '', message: '', confirmLabel: '', isLoading: false, onConfirm: async () => { } });
+    }>({ open: false, type: 'danger', icon: 'trash', title: '', message: '', confirmLabel: '', isLoading: false, onConfirm: async () => {} });
 
     const showFeedback = (type: 'success' | 'error' | 'warning', title: string, message: string, onClose?: () => void) => {
         setFeedbackModal({ open: true, type, title, message, onClose });
@@ -816,84 +807,85 @@ const AuditSessionDetail: React.FC = () => {
                     {/* Store Selector (New Audit) OR Store Badge (Existing) */}
                     {isNewAudit ? (
                         <>
-                            <div className="relative">
-                                <button
-                                    onClick={() => theoretical.status !== 'loaded' && setShowStoreDropdown(!showStoreDropdown)}
-                                    disabled={theoretical.status === 'loaded'}
-                                    className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${theoretical.status === 'loaded'
-                                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
-                                        : selectedStoreId
-                                            ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-300'
-                                            : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
-                                        }`}
-                                >
-                                    <Store size={16} />
-                                    <span className="font-medium">
-                                        {selectedStoreId
-                                            ? stores.find(s => s.id === selectedStoreId)?.name
-                                            : isLoadingStores ? 'Cargando...' : 'Selecciona una Tienda'}
-                                    </span>
-                                    {theoretical.status !== 'loaded' && !isLoadingStores && <ChevronDown size={16} className={`transition-transform ${showStoreDropdown ? 'rotate-180' : ''}`} />}
-                                    {isLoadingStores && <Loader2 size={16} className="animate-spin text-slate-400" />}
-                                </button>
-
-                                {showStoreDropdown && theoretical.status !== 'loaded' && (
-                                    <div className="absolute top-full mt-2 left-0 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
-                                        <div className="p-2 border-b border-slate-100">
-                                            <input
-                                                type="text"
-                                                placeholder="Buscar tienda..."
-                                                value={storeSearch}
-                                                onChange={(e) => setStoreSearch(e.target.value)}
-                                                autoFocus
-                                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white placeholder-gray-400"
-                                            />
-                                        </div>
-                                        <div className="max-h-56 overflow-y-auto">
-                                            {stores
-                                                .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
-                                                .map(store => (
-                                                    <button
-                                                        key={store.id}
-                                                        onClick={() => {
-                                                            setSelectedStoreId(store.id);
-                                                            setShowStoreDropdown(false);
-                                                            setStoreSearch('');
-                                                        }}
-                                                        className={`w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50 transition-colors ${selectedStoreId === store.id ? 'bg-blue-50' : ''
-                                                            }`}
-                                                    >
-                                                        <div className={`w-2 h-2 rounded-full ${store.status ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
-                                                        <span className="text-slate-700 font-medium">{store.name}</span>
-                                                    </button>
-                                                ))}
-                                            {isLoadingStores && (
-                                                <div className="p-4 text-center text-slate-500 text-xs">Cargando tiendas...</div>
-                                            )}
-                                            {storesError && (
-                                                <div className="p-4 text-center text-red-500 text-xs">{storesError}</div>
-                                            )}
-                                            {stores.length === 0 && !isLoadingStores && !storesError && (
-                                                <div className="p-4 text-center text-slate-500 text-xs">No hay tiendas disponibles</div>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Audit Name Input (optional) */}
-                            <input
-                                type="text"
-                                placeholder="Nombre de auditoría (opcional)"
-                                value={auditName}
-                                onChange={(e) => setAuditName(e.target.value)}
-                                maxLength={200}
+                        <div className="relative">
+                            <button
+                                onClick={() => theoretical.status !== 'loaded' && setShowStoreDropdown(!showStoreDropdown)}
                                 disabled={theoretical.status === 'loaded'}
-                                className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors w-56 ${theoretical.status === 'loaded'
+                                className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${theoretical.status === 'loaded'
+                                    ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                                    : selectedStoreId
+                                        ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-300'
+                                        : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
+                                    }`}
+                            >
+                                <Store size={16} />
+                                <span className="font-medium">
+                                    {selectedStoreId
+                                        ? stores.find(s => s.id === selectedStoreId)?.name
+                                        : isLoadingStores ? 'Cargando...' : 'Selecciona una Tienda'}
+                                </span>
+                                {theoretical.status !== 'loaded' && !isLoadingStores && <ChevronDown size={16} className={`transition-transform ${showStoreDropdown ? 'rotate-180' : ''}`} />}
+                                {isLoadingStores && <Loader2 size={16} className="animate-spin text-slate-400" />}
+                            </button>
+
+                            {showStoreDropdown && theoretical.status !== 'loaded' && (
+                                <div className="absolute top-full mt-2 left-0 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                                    <div className="p-2 border-b border-slate-100">
+                                        <input
+                                            type="text"
+                                            placeholder="Buscar tienda..."
+                                            value={storeSearch}
+                                            onChange={(e) => setStoreSearch(e.target.value)}
+                                            autoFocus
+                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white placeholder-gray-400"
+                                        />
+                                    </div>
+                                    <div className="max-h-56 overflow-y-auto">
+                                        {stores
+                                            .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
+                                            .map(store => (
+                                                <button
+                                                    key={store.id}
+                                                    onClick={() => {
+                                                        setSelectedStoreId(store.id);
+                                                        setShowStoreDropdown(false);
+                                                        setStoreSearch('');
+                                                    }}
+                                                    className={`w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50 transition-colors ${selectedStoreId === store.id ? 'bg-blue-50' : ''
+                                                        }`}
+                                                >
+                                                    <div className={`w-2 h-2 rounded-full ${store.status ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                                                    <span className="text-slate-700 font-medium">{store.name}</span>
+                                                </button>
+                                            ))}
+                                        {isLoadingStores && (
+                                            <div className="p-4 text-center text-slate-500 text-xs">Cargando tiendas...</div>
+                                        )}
+                                        {storesError && (
+                                            <div className="p-4 text-center text-red-500 text-xs">{storesError}</div>
+                                        )}
+                                        {stores.length === 0 && !isLoadingStores && !storesError && (
+                                            <div className="p-4 text-center text-slate-500 text-xs">No hay tiendas disponibles</div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Audit Name Input (optional) */}
+                        <input
+                            type="text"
+                            placeholder="Nombre de auditoría (opcional)"
+                            value={auditName}
+                            onChange={(e) => setAuditName(e.target.value)}
+                            maxLength={200}
+                            disabled={theoretical.status === 'loaded'}
+                            className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors w-56 ${
+                                theoretical.status === 'loaded'
                                     ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
                                     : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500'
-                                    }`}
-                            />
+                            }`}
+                        />
                         </>
                     ) : (
                         <div className="flex items-center gap-3">
@@ -908,17 +900,19 @@ const AuditSessionDetail: React.FC = () => {
                     )}
 
                     {/* Status Badge */}
-                    <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${displayStatus === 'not_started' ? 'bg-slate-100 text-slate-600' :
+                    <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${
+                        displayStatus === 'not_started' ? 'bg-slate-100 text-slate-600' :
                         displayStatus === 'waiting_pdf' ? 'bg-slate-100 text-slate-500' :
-                            displayStatus === 'waiting_count' ? 'bg-amber-100 text-amber-700' :
-                                displayStatus === 'counting' ? 'bg-blue-100 text-blue-700' :
-                                    'bg-emerald-100 text-emerald-700'
+                        displayStatus === 'waiting_count' ? 'bg-amber-100 text-amber-700' :
+                        displayStatus === 'counting' ? 'bg-blue-100 text-blue-700' :
+                        'bg-emerald-100 text-emerald-700'
                         }`}>
-                        <span className={`w-2 h-2 rounded-full ${displayStatus === 'not_started' ? 'bg-slate-400' :
+                        <span className={`w-2 h-2 rounded-full ${
+                            displayStatus === 'not_started' ? 'bg-slate-400' :
                             displayStatus === 'waiting_pdf' ? 'bg-slate-400' :
-                                displayStatus === 'waiting_count' ? 'bg-amber-500' :
-                                    displayStatus === 'counting' ? 'bg-blue-500 animate-pulse' :
-                                        'bg-emerald-500'
+                            displayStatus === 'waiting_count' ? 'bg-amber-500' :
+                            displayStatus === 'counting' ? 'bg-blue-500 animate-pulse' :
+                            'bg-emerald-500'
                             }`}></span>
                         {displayStatus === 'not_started' && 'Sin Iniciar'}
                         {displayStatus === 'waiting_pdf' && 'Esperando PDF'}
@@ -1991,20 +1985,22 @@ const AuditSessionDetail: React.FC = () => {
                     <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 p-8 animate-in fade-in zoom-in duration-200">
                         <div className="flex flex-col items-center text-center">
                             {/* Icon */}
-                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${feedbackModal.type === 'success' ? 'bg-emerald-100' :
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${
+                                feedbackModal.type === 'success' ? 'bg-emerald-100' :
                                 feedbackModal.type === 'error' ? 'bg-red-100' :
-                                    'bg-amber-100'
-                                }`}>
+                                'bg-amber-100'
+                            }`}>
                                 {feedbackModal.type === 'success' && <CheckCircle2 className="w-8 h-8 text-emerald-600" />}
                                 {feedbackModal.type === 'error' && <AlertCircle className="w-8 h-8 text-red-600" />}
                                 {feedbackModal.type === 'warning' && <AlertTriangle className="w-8 h-8 text-amber-600" />}
                             </div>
 
                             {/* Title */}
-                            <h3 className={`text-xl font-bold mb-2 ${feedbackModal.type === 'success' ? 'text-emerald-800' :
+                            <h3 className={`text-xl font-bold mb-2 ${
+                                feedbackModal.type === 'success' ? 'text-emerald-800' :
                                 feedbackModal.type === 'error' ? 'text-red-800' :
-                                    'text-amber-800'
-                                }`}>
+                                'text-amber-800'
+                            }`}>
                                 {feedbackModal.title}
                             </h3>
 
@@ -2014,10 +2010,11 @@ const AuditSessionDetail: React.FC = () => {
                             {/* Button */}
                             <button
                                 onClick={closeFeedback}
-                                className={`px-6 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg ${feedbackModal.type === 'success' ? 'bg-emerald-600 hover:bg-emerald-700' :
+                                className={`px-6 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg ${
+                                    feedbackModal.type === 'success' ? 'bg-emerald-600 hover:bg-emerald-700' :
                                     feedbackModal.type === 'error' ? 'bg-red-600 hover:bg-red-700' :
-                                        'bg-amber-600 hover:bg-amber-700'
-                                    }`}
+                                    'bg-amber-600 hover:bg-amber-700'
+                                }`}
                             >
                                 Aceptar
                             </button>
@@ -2033,10 +2030,11 @@ const AuditSessionDetail: React.FC = () => {
                     <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 p-8 animate-in fade-in zoom-in duration-200">
                         <div className="flex flex-col items-center text-center">
                             {/* Icon */}
-                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${confirmModal.type === 'danger' ? 'bg-red-100' :
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${
+                                confirmModal.type === 'danger' ? 'bg-red-100' :
                                 confirmModal.type === 'warning' ? 'bg-amber-100' :
-                                    'bg-blue-100'
-                                }`}>
+                                'bg-blue-100'
+                            }`}>
                                 {confirmModal.icon === 'trash' && <Trash2 className={`w-8 h-8 ${confirmModal.type === 'danger' ? 'text-red-600' : 'text-amber-600'}`} />}
                                 {confirmModal.icon === 'lock' && <LockKeyhole className="w-8 h-8 text-amber-600" />}
                                 {confirmModal.icon === 'rotate' && <RotateCcw className="w-8 h-8 text-blue-600" />}
@@ -2045,10 +2043,11 @@ const AuditSessionDetail: React.FC = () => {
                             </div>
 
                             {/* Title */}
-                            <h3 className={`text-xl font-bold mb-2 ${confirmModal.type === 'danger' ? 'text-red-800' :
+                            <h3 className={`text-xl font-bold mb-2 ${
+                                confirmModal.type === 'danger' ? 'text-red-800' :
                                 confirmModal.type === 'warning' ? 'text-amber-800' :
-                                    'text-blue-800'
-                                }`}>
+                                'text-blue-800'
+                            }`}>
                                 {confirmModal.title}
                             </h3>
 
@@ -2070,10 +2069,11 @@ const AuditSessionDetail: React.FC = () => {
                                         await confirmModal.onConfirm();
                                     }}
                                     disabled={confirmModal.isLoading}
-                                    className={`flex-1 px-4 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 ${confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' :
+                                    className={`flex-1 px-4 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 ${
+                                        confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' :
                                         confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700' :
-                                            'bg-blue-600 hover:bg-blue-700'
-                                        }`}
+                                        'bg-blue-600 hover:bg-blue-700'
+                                    }`}
                                 >
                                     {confirmModal.isLoading ? (
                                         <>
