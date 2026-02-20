@@ -17,6 +17,7 @@ import {
 import { pdf } from '@react-pdf/renderer';
 import { auditApi, type Store as StoreType, type AuditEvent, type PhysicalScan } from '../../services/audit.api';
 import { useAudit } from '../../context/AuditContext';
+import { useAuth } from '../../context/AuthContext';
 import ReporteAjusteInventario from './ReporteAjusteInventario';
 
 // Types
@@ -115,13 +116,21 @@ const AuditSessionDetail: React.FC = () => {
         }
     }, [showEventLog, _sessionId]);
 
-    // Fetch stores from API on mount (always, to ensure we can resolve store name if state is missing)
+    // Fetch stores from API on mount, filtered by user permissions
+    const { user } = useAuth();
     useEffect(() => {
         setIsLoadingStores(true);
         setStoresError(null);
         auditApi.getStores()
             .then(data => {
-                setStores(data);
+                // Admin sees all stores; other roles only see their assigned stores
+                const isAdmin = user?.role?.name === 'Administrador';
+                if (isAdmin) {
+                    setStores(data);
+                } else {
+                    const userStoreIds = new Set((user?.stores || []).map(s => Number(s.id)));
+                    setStores(data.filter(s => userStoreIds.has(s.id)));
+                }
                 setIsLoadingStores(false);
             })
             .catch(err => {
@@ -129,7 +138,7 @@ const AuditSessionDetail: React.FC = () => {
                 setStoresError('Error al cargar tiendas');
                 setIsLoadingStores(false);
             });
-    }, []);
+    }, [user]);
 
     // Get the effective store name (used when creating new audit vs viewing existing)
     // If not passed in state, try to find in loaded stores list by matching store_id (if we had it available easily here, but we fetch it in getAudit)
@@ -881,8 +890,8 @@ const AuditSessionDetail: React.FC = () => {
                                 maxLength={200}
                                 disabled={theoretical.status === 'loaded'}
                                 className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors w-56 ${theoretical.status === 'loaded'
-                                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
-                                        : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500'
+                                    ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                                    : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500'
                                     }`}
                             />
                         </>
@@ -900,16 +909,16 @@ const AuditSessionDetail: React.FC = () => {
 
                     {/* Status Badge */}
                     <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${displayStatus === 'not_started' ? 'bg-slate-100 text-slate-600' :
-                            displayStatus === 'waiting_pdf' ? 'bg-slate-100 text-slate-500' :
-                                displayStatus === 'waiting_count' ? 'bg-amber-100 text-amber-700' :
-                                    displayStatus === 'counting' ? 'bg-blue-100 text-blue-700' :
-                                        'bg-emerald-100 text-emerald-700'
+                        displayStatus === 'waiting_pdf' ? 'bg-slate-100 text-slate-500' :
+                            displayStatus === 'waiting_count' ? 'bg-amber-100 text-amber-700' :
+                                displayStatus === 'counting' ? 'bg-blue-100 text-blue-700' :
+                                    'bg-emerald-100 text-emerald-700'
                         }`}>
                         <span className={`w-2 h-2 rounded-full ${displayStatus === 'not_started' ? 'bg-slate-400' :
-                                displayStatus === 'waiting_pdf' ? 'bg-slate-400' :
-                                    displayStatus === 'waiting_count' ? 'bg-amber-500' :
-                                        displayStatus === 'counting' ? 'bg-blue-500 animate-pulse' :
-                                            'bg-emerald-500'
+                            displayStatus === 'waiting_pdf' ? 'bg-slate-400' :
+                                displayStatus === 'waiting_count' ? 'bg-amber-500' :
+                                    displayStatus === 'counting' ? 'bg-blue-500 animate-pulse' :
+                                        'bg-emerald-500'
                             }`}></span>
                         {displayStatus === 'not_started' && 'Sin Iniciar'}
                         {displayStatus === 'waiting_pdf' && 'Esperando PDF'}
@@ -1983,8 +1992,8 @@ const AuditSessionDetail: React.FC = () => {
                         <div className="flex flex-col items-center text-center">
                             {/* Icon */}
                             <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${feedbackModal.type === 'success' ? 'bg-emerald-100' :
-                                    feedbackModal.type === 'error' ? 'bg-red-100' :
-                                        'bg-amber-100'
+                                feedbackModal.type === 'error' ? 'bg-red-100' :
+                                    'bg-amber-100'
                                 }`}>
                                 {feedbackModal.type === 'success' && <CheckCircle2 className="w-8 h-8 text-emerald-600" />}
                                 {feedbackModal.type === 'error' && <AlertCircle className="w-8 h-8 text-red-600" />}
@@ -1993,8 +2002,8 @@ const AuditSessionDetail: React.FC = () => {
 
                             {/* Title */}
                             <h3 className={`text-xl font-bold mb-2 ${feedbackModal.type === 'success' ? 'text-emerald-800' :
-                                    feedbackModal.type === 'error' ? 'text-red-800' :
-                                        'text-amber-800'
+                                feedbackModal.type === 'error' ? 'text-red-800' :
+                                    'text-amber-800'
                                 }`}>
                                 {feedbackModal.title}
                             </h3>
@@ -2006,8 +2015,8 @@ const AuditSessionDetail: React.FC = () => {
                             <button
                                 onClick={closeFeedback}
                                 className={`px-6 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg ${feedbackModal.type === 'success' ? 'bg-emerald-600 hover:bg-emerald-700' :
-                                        feedbackModal.type === 'error' ? 'bg-red-600 hover:bg-red-700' :
-                                            'bg-amber-600 hover:bg-amber-700'
+                                    feedbackModal.type === 'error' ? 'bg-red-600 hover:bg-red-700' :
+                                        'bg-amber-600 hover:bg-amber-700'
                                     }`}
                             >
                                 Aceptar
@@ -2025,8 +2034,8 @@ const AuditSessionDetail: React.FC = () => {
                         <div className="flex flex-col items-center text-center">
                             {/* Icon */}
                             <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${confirmModal.type === 'danger' ? 'bg-red-100' :
-                                    confirmModal.type === 'warning' ? 'bg-amber-100' :
-                                        'bg-blue-100'
+                                confirmModal.type === 'warning' ? 'bg-amber-100' :
+                                    'bg-blue-100'
                                 }`}>
                                 {confirmModal.icon === 'trash' && <Trash2 className={`w-8 h-8 ${confirmModal.type === 'danger' ? 'text-red-600' : 'text-amber-600'}`} />}
                                 {confirmModal.icon === 'lock' && <LockKeyhole className="w-8 h-8 text-amber-600" />}
@@ -2037,8 +2046,8 @@ const AuditSessionDetail: React.FC = () => {
 
                             {/* Title */}
                             <h3 className={`text-xl font-bold mb-2 ${confirmModal.type === 'danger' ? 'text-red-800' :
-                                    confirmModal.type === 'warning' ? 'text-amber-800' :
-                                        'text-blue-800'
+                                confirmModal.type === 'warning' ? 'text-amber-800' :
+                                    'text-blue-800'
                                 }`}>
                                 {confirmModal.title}
                             </h3>
@@ -2062,8 +2071,8 @@ const AuditSessionDetail: React.FC = () => {
                                     }}
                                     disabled={confirmModal.isLoading}
                                     className={`flex-1 px-4 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 ${confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' :
-                                            confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700' :
-                                                'bg-blue-600 hover:bg-blue-700'
+                                        confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700' :
+                                            'bg-blue-600 hover:bg-blue-700'
                                         }`}
                                 >
                                     {confirmModal.isLoading ? (

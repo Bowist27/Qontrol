@@ -18,6 +18,7 @@ import {
 import { auditApi } from '../../services/audit.api';
 import usersApi, { type Zone as ZoneType, type Store as UserStoreType } from '../../services/users.api';
 import { useAudit } from '../../context/AuditContext';
+import { useAuth } from '../../context/AuthContext';
 import { DateRangePicker } from '../ui/DateRangePicker';
 
 // Format date as DD/M/YYYY (strict format per spec)
@@ -105,17 +106,22 @@ const AuditHub: React.FC = () => {
     const [allStores, setAllStores] = useState<UserStoreType[]>([]);
     const [contextZoneId, setContextZoneId] = useState<number | null>(null);
 
+    const { user } = useAuth();
+
     useEffect(() => {
-        // Fetch zones (for grouping) and the user's ALLOWED stores from audit-service
-        // auditApi.getStores() returns only stores the user has access to (filtered by JWT role/stores)
-        Promise.all([usersApi.getZones(), usersApi.getStores(), auditApi.getStores()]).then(([z, allS, allowedS]) => {
+        // Fetch zones (for grouping) and all stores, then filter by user's assigned stores
+        Promise.all([usersApi.getZones(), usersApi.getStores()]).then(([z, allS]) => {
             setZones(z);
-            // Filter allStores to only include stores the user is allowed to see
-            const allowedIds = new Set(allowedS.map(s => s.id));
-            const filtered = allS.filter(s => allowedIds.has(s.id));
-            setAllStores(filtered);
+            // Admin sees all stores; other roles only see their assigned stores
+            const isAdmin = user?.role?.name === 'Administrador';
+            if (isAdmin) {
+                setAllStores(allS);
+            } else {
+                const userStoreIds = new Set((user?.stores || []).map(s => Number(s.id)));
+                setAllStores(allS.filter(s => userStoreIds.has(s.id)));
+            }
         }).catch(err => console.error('Failed to load zones/stores:', err));
-    }, []);
+    }, [user]);
 
     // Context Switcher
     const [showContextDropdown, setShowContextDropdown] = useState(false);
