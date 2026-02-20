@@ -529,6 +529,12 @@ func (r *PostgresRepository) CreateProduct(ctx context.Context, product *domain.
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO products (sku, barcode, name, unit, last_price, source, last_updated, created_at)
 		VALUES ($1, NULLIF($2, ''), $3, $4, $5, 'Manual', NOW(), NOW())
+		ON CONFLICT (sku) DO UPDATE SET
+			barcode = COALESCE(NULLIF(EXCLUDED.barcode, ''), products.barcode),
+			name = EXCLUDED.name,
+			unit = EXCLUDED.unit,
+			last_price = CASE WHEN EXCLUDED.last_price > 0 THEN EXCLUDED.last_price ELSE products.last_price END,
+			last_updated = NOW()
 		RETURNING id`,
 		product.SKU, product.Barcode, product.Name, product.Unit, product.LastPrice).Scan(&id)
 	if err != nil {
