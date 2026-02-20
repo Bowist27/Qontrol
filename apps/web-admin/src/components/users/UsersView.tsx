@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Users,
     Shield,
@@ -10,13 +10,17 @@ import {
     Save,
     X,
     ChevronDown,
+    ChevronRight,
+    ArrowLeft,
     Lock,
     Building2,
     AlertCircle,
+    MapPin,
 } from 'lucide-react';
 import usersApi, {
     type User,
     type Store as StoreType,
+    type Zone as ZoneType,
     type Role,
     type CreateUserRequest,
     type UpdateUserRequest,
@@ -78,6 +82,7 @@ export default function UsersView() {
 function UsersTab() {
     const [users, setUsers] = useState<User[]>([]);
     const [stores, setStores] = useState<StoreType[]>([]);
+    const [zones, setZones] = useState<ZoneType[]>([]);
     const [roles, setRoles] = useState<Role[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -90,13 +95,15 @@ function UsersTab() {
     const loadData = useCallback(async () => {
         try {
             setLoading(true);
-            const [usersData, storesData, rolesData] = await Promise.all([
+            const [usersData, storesData, rolesData, zonesData] = await Promise.all([
                 usersApi.getUsers(),
                 usersApi.getStores(),
                 usersApi.getRoles(),
+                usersApi.getZones(),
             ]);
             setUsers(usersData);
             setStores(storesData);
+            setZones(zonesData);
             setRoles(rolesData);
         } catch (error) {
             console.error('Error loading data:', error);
@@ -116,7 +123,7 @@ function UsersTab() {
             user.last_name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    const handleUpdateUser = async (userId: string, updates: Partial<UpdateUserRequest>) => {
+    const handleUpdateUser = async (userId: string, updates: Partial<UpdateUserRequest>, keepOpen = false) => {
         const user = users.find((u) => u.id === userId);
         if (!user) return;
 
@@ -133,8 +140,10 @@ function UsersTab() {
 
             await usersApi.updateUser(userId, updateData);
             await loadData();
-            setEditingUserId(null);
-            setEditingField(null);
+            if (!keepOpen) {
+                setEditingUserId(null);
+                setEditingField(null);
+            }
         } catch (error) {
             console.error('Error updating user:', error);
             alert('Error al actualizar usuario');
@@ -211,6 +220,7 @@ function UsersTab() {
                 <NewUserForm
                     roles={roles}
                     stores={stores}
+                    zones={zones}
                     onCancel={() => setShowNewUser(false)}
                     onSave={async (data) => {
                         await usersApi.createUser(data);
@@ -240,6 +250,7 @@ function UsersTab() {
                                 user={user}
                                 roles={roles}
                                 stores={stores}
+                                zones={zones}
                                 isEditing={editingUserId === user.id}
                                 editingField={editingField}
                                 onStartEdit={(field) => {
@@ -251,6 +262,7 @@ function UsersTab() {
                                     setEditingField(null);
                                 }}
                                 onUpdate={(updates) => handleUpdateUser(user.id, updates)}
+                                onUpdateKeepOpen={(updates) => handleUpdateUser(user.id, updates, true)}
                                 onBan={() => setBanModal({ userId: user.id, email: user.email })}
                                 onUnban={() => handleUnban(user.id)}
                                 onDelete={() => handleDeleteUser(user.id, user.email)}
@@ -313,11 +325,13 @@ interface UserRowProps {
     user: User;
     roles: Role[];
     stores: StoreType[];
+    zones: ZoneType[];
     isEditing: boolean;
     editingField: string | null;
     onStartEdit: (field: string) => void;
     onCancelEdit: () => void;
     onUpdate: (updates: Partial<UpdateUserRequest>) => void;
+    onUpdateKeepOpen: (updates: Partial<UpdateUserRequest>) => void;
     onBan: () => void;
     onUnban: () => void;
     onDelete: () => void;
@@ -327,19 +341,31 @@ function UserRow({
     user,
     roles,
     stores,
+    zones,
     isEditing,
     editingField,
     onStartEdit,
     onCancelEdit,
     onUpdate,
+    onUpdateKeepOpen,
     onBan,
     onUnban,
     onDelete,
 }: UserRowProps) {
     const [localRoleId, setLocalRoleId] = useState(user.role_id);
     const [localStoreIds, setLocalStoreIds] = useState((user.stores || []).map((s) => s.id));
+    const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
+    const storesDropdownRef = useRef<HTMLDivElement>(null);
+
+    // Sync localStoreIds when user.stores reference changes (after server refresh)
+    const storeIdsKey = (user.stores || []).map((s) => s.id).sort().join(',');
+    useEffect(() => {
+        setLocalStoreIds((user.stores || []).map((s) => s.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [storeIdsKey]);
 
     const isBanned = !!user.banned_at;
+    const isSystemAdmin = user.id === 'a0000000-0000-0000-0000-000000000001';
     const currentRole = roles.find((r) => r.id === user.role_id);
     const userStores = user.stores || [];
 
@@ -368,30 +394,42 @@ function UserRow({
             {/* Email */}
             <td className="px-4 py-3 text-slate-600">{user.email}</td>
 
-            {/* Role - Editable Dropdown */}
-            <td className="px-4 py-3">
-                {isEditing && editingField === 'role' ? (
-                    <div className="flex items-center gap-2">
-                        <select
-                            value={localRoleId}
-                            onChange={(e) => setLocalRoleId(Number(e.target.value))}
-                            className="px-2 py-1 bg-white border border-slate-300 rounded-lg text-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
-                            {roles.map((role) => (
-                                <option key={role.id} value={role.id}>
-                                    {role.name}
-                                </option>
-                            ))}
-                        </select>
+            {/* Role - Custom dropdown styled like stores */}
+            <td className="px-4 py-3 relative">
+                {isBanned || isSystemAdmin ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed">
+                        <Shield className="w-3.5 h-3.5 text-slate-300" />
+                        {currentRole?.name || 'Sin rol'}
+                    </span>
+                ) : isEditing && editingField === 'role' ? (
+                    <div className="relative">
                         <button
-                            onClick={() => onUpdate({ role_id: localRoleId })}
-                            className="p-1.5 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors"
+                            onClick={onCancelEdit}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 transition-colors text-sm font-medium"
                         >
-                            <Save className="w-4 h-4" />
+                            <Shield className="w-3.5 h-3.5 text-blue-500" />
+                            {currentRole?.name || 'Sin rol'}
+                            <X className="w-3 h-3 text-blue-400" />
                         </button>
-                        <button onClick={onCancelEdit} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors">
-                            <X className="w-4 h-4" />
-                        </button>
+                        <div className="absolute z-10 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-auto">
+                            {roles.map((role) => (
+                                <button
+                                    key={role.id}
+                                    onClick={() => {
+                                        setLocalRoleId(role.id);
+                                        onUpdate({ role_id: role.id });
+                                    }}
+                                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors text-left ${
+                                        role.id === user.role_id
+                                            ? 'bg-blue-50 text-blue-700 font-medium'
+                                            : 'text-slate-700 hover:bg-slate-50'
+                                    }`}
+                                >
+                                    <Shield className={`w-3.5 h-3.5 ${role.id === user.role_id ? 'text-blue-500' : 'text-slate-400'}`} />
+                                    {role.name}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 ) : (
                     <button
@@ -405,48 +443,100 @@ function UserRow({
                 )}
             </td>
 
-            {/* Stores - Editable Multi-select */}
+            {/* Stores - Zone→Store drill-down (auto-save on toggle) */}
             <td className="px-4 py-3 relative">
-                {isEditing && editingField === 'stores' ? (
-                    <div className="relative">
-                        <div className="flex items-center gap-2 mb-2">
-                            <button
-                                onClick={() => onUpdate({ store_ids: localStoreIds })}
-                                className="p-1.5 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors"
-                            >
-                                <Save className="w-4 h-4" />
-                            </button>
-                            <button onClick={onCancelEdit} className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg transition-colors">
-                                <X className="w-4 h-4" />
-                            </button>
-                        </div>
-                        <div className="absolute z-10 mt-1 w-52 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-auto">
-                            {stores.map((store) => (
-                                <label
-                                    key={store.id}
-                                    className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer transition-colors"
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={localStoreIds.includes(store.id)}
-                                        onChange={(e) => {
-                                            if (e.target.checked) {
-                                                setLocalStoreIds([...localStoreIds, store.id]);
-                                            } else {
-                                                setLocalStoreIds(localStoreIds.filter((id) => id !== store.id));
-                                            }
-                                        }}
-                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                    />
-                                    <span className="text-sm text-slate-700">{store.name}</span>
-                                </label>
-                            ))}
+                {isBanned ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed">
+                        <Building2 className="w-3.5 h-3.5 text-slate-300" />
+                        {userStores.length > 0 ? `${userStores.length} tienda(s)` : 'Ninguna'}
+                    </span>
+                ) : isEditing && editingField === 'stores' ? (
+                    <div className="relative" ref={storesDropdownRef}>
+                        <button
+                            onClick={() => { setSelectedZoneId(null); onCancelEdit(); }}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 transition-colors text-sm font-medium"
+                        >
+                            <Building2 className="w-3.5 h-3.5 text-blue-500" />
+                            {localStoreIds.length > 0 ? `${localStoreIds.length} tienda(s)` : 'Ninguna'}
+                            <X className="w-3 h-3 text-blue-400" />
+                        </button>
+                        <div className="absolute z-10 mt-1 w-60 bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-auto">
+                            {selectedZoneId === null ? (
+                                /* Zone list */
+                                <>
+                                    <div className="px-3 py-2 border-b border-slate-100">
+                                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Selecciona una zona</span>
+                                    </div>
+                                    {zones.map((zone) => {
+                                        const zoneStores = stores.filter((s) => s.zone_id === zone.id);
+                                        const assignedCount = zoneStores.filter((s) => localStoreIds.includes(s.id)).length;
+                                        return (
+                                            <button
+                                                key={zone.id}
+                                                onClick={() => setSelectedZoneId(zone.id)}
+                                                className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-slate-50 transition-colors text-left"
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                                                    <span className="text-sm text-slate-700 font-medium">{zone.name}</span>
+                                                </div>
+                                                <div className="flex items-center gap-1.5">
+                                                    {assignedCount > 0 && (
+                                                        <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">
+                                                            {assignedCount}
+                                                        </span>
+                                                    )}
+                                                    <span className="text-xs text-slate-400">{zoneStores.length}</span>
+                                                    <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </>
+                            ) : (
+                                /* Stores within selected zone */
+                                <>
+                                    <button
+                                        onClick={() => setSelectedZoneId(null)}
+                                        className="w-full flex items-center gap-2 px-3 py-2 border-b border-slate-100 hover:bg-slate-50 transition-colors text-left"
+                                    >
+                                        <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
+                                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                            {zones.find((z) => z.id === selectedZoneId)?.name || 'Zona'}
+                                        </span>
+                                    </button>
+                                    {stores.filter((s) => s.zone_id === selectedZoneId).map((store) => (
+                                        <label
+                                            key={store.id}
+                                            className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer transition-colors"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={localStoreIds.includes(store.id)}
+                                                onChange={(e) => {
+                                                    const newIds = e.target.checked
+                                                        ? [...localStoreIds, store.id]
+                                                        : localStoreIds.filter((id) => id !== store.id);
+                                                    setLocalStoreIds(newIds);
+                                                    onUpdateKeepOpen({ store_ids: newIds });
+                                                }}
+                                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <span className="text-sm text-slate-700">{store.name}</span>
+                                        </label>
+                                    ))}
+                                    {stores.filter((s) => s.zone_id === selectedZoneId).length === 0 && (
+                                        <div className="px-3 py-3 text-xs text-slate-400 text-center">Sin tiendas en esta zona</div>
+                                    )}
+                                </>
+                            )}
                         </div>
                     </div>
                 ) : (
                     <button
                         onClick={() => {
                             setLocalStoreIds((user.stores || []).map((s) => s.id));
+                            setSelectedZoneId(null);
                             onStartEdit('stores');
                         }}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors text-sm font-medium"
@@ -480,30 +570,43 @@ function UserRow({
             {/* Actions */}
             <td className="px-4 py-3 text-right">
                 <div className="flex items-center justify-end gap-1">
-                    {isBanned ? (
-                        <button
-                            onClick={onUnban}
-                            className="p-2 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors"
-                            title="Desbanear"
-                        >
-                            <CheckCircle className="w-4 h-4" />
-                        </button>
+                    {isSystemAdmin ? (
+                        <span className="text-xs text-slate-400 italic">Protegido</span>
+                    ) : isBanned ? (
+                        <>
+                            <button
+                                onClick={onUnban}
+                                className="p-2 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors"
+                                title="Desbanear"
+                            >
+                                <CheckCircle className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={onDelete}
+                                className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                title="Eliminar"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </>
                     ) : (
-                        <button
-                            onClick={onBan}
-                            className="p-2 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors"
-                            title="Banear"
-                        >
-                            <Ban className="w-4 h-4" />
-                        </button>
+                        <>
+                            <button
+                                onClick={onBan}
+                                className="p-2 text-amber-600 hover:bg-amber-100 rounded-lg transition-colors"
+                                title="Banear"
+                            >
+                                <Ban className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={onDelete}
+                                className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                                title="Eliminar"
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </>
                     )}
-                    <button
-                        onClick={onDelete}
-                        className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
-                        title="Eliminar"
-                    >
-                        <Trash2 className="w-4 h-4" />
-                    </button>
                 </div>
             </td>
         </tr>
@@ -516,11 +619,12 @@ function UserRow({
 interface NewUserFormProps {
     roles: Role[];
     stores: StoreType[];
+    zones: ZoneType[];
     onCancel: () => void;
     onSave: (data: CreateUserRequest) => Promise<void>;
 }
 
-function NewUserForm({ roles, stores: _stores, onCancel, onSave }: NewUserFormProps) {
+function NewUserForm({ roles, stores: _stores, zones: _zones, onCancel, onSave }: NewUserFormProps) {
     const [formData, setFormData] = useState({
         email: '',
         password: 'Test123!', // Default password - user will receive email to change it

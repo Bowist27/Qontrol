@@ -12,10 +12,11 @@ import {
     Store, Play, CheckCircle2, Lock, KeyRound,
     Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
     ChevronLeft, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole,
-    FileSpreadsheet, FileDown, Loader2, Trash2, RefreshCw
+    FileSpreadsheet, FileDown, Loader2, Trash2, RefreshCw, MapPin, ArrowLeft, Check
 } from 'lucide-react';
 
 import { auditApi } from '../../services/audit.api';
+import usersApi, { type Zone as ZoneType, type Store as UserStoreType } from '../../services/users.api';
 import { useAudit } from '../../context/AuditContext';
 import { DateRangePicker } from '../ui/DateRangePicker';
 
@@ -46,6 +47,7 @@ export interface AuditSession {
     id: string;
     storeId: number;
     storeName: string;
+    auditName?: string;
     managerName: string;
     status: AuditSessionStatus;
     hasPdf: boolean;
@@ -94,13 +96,24 @@ const AuditHub: React.FC = () => {
     const [itemsPerPage, setItemsPerPage] = useState(10);
 
     // Filters
-    const [filterStore, setFilterStore] = useState<string>('all');
+    const [filterStoreIds, setFilterStoreIds] = useState<Set<number>>(new Set()); // empty = global
     const [filterDateFrom, setFilterDateFrom] = useState('');
     const [filterDateTo, setFilterDateTo] = useState('');
 
+    // Zones data for context switcher drill-down
+    const [zones, setZones] = useState<ZoneType[]>([]);
+    const [allStores, setAllStores] = useState<UserStoreType[]>([]);
+    const [contextZoneId, setContextZoneId] = useState<number | null>(null);
+
+    useEffect(() => {
+        Promise.all([usersApi.getZones(), usersApi.getStores()]).then(([z, s]) => {
+            setZones(z);
+            setAllStores(s);
+        }).catch(err => console.error('Failed to load zones/stores:', err));
+    }, []);
+
     // Context Switcher
     const [showContextDropdown, setShowContextDropdown] = useState(false);
-    const [contextSearch, setContextSearch] = useState('');
     const contextRef = useRef<HTMLDivElement>(null);
 
     // Kebab Menu State
@@ -151,16 +164,15 @@ const AuditHub: React.FC = () => {
     const sessions: AuditSession[] = (audits || []).map(item => {
         const s = item.session;
 
-        // Map Status
+        // Map Status — pdf_url drives "Esperando PDF" regardless of counting progress
         let status: AuditSessionStatus = 'IN_PROGRESS';
-        if (s.status === 'waiting_pdf' || s.status === 'UPLOADING' || s.status === 'REVIEW_PENDING') status = 'WAITING_PDF';
-        else if (s.status === 'waiting_count' || (s.status === 'IN_PROGRESS' && !!s.pdf_url)) status = 'WAITING_COUNT';
-        else if (s.status === 'waiting_valuation') status = 'WAITING_COUNT';
-        else if (s.status === 'IN_PROGRESS' && !s.pdf_url) status = 'WAITING_PDF';
-        else if (s.status === 'COUNTING') status = 'IN_PROGRESS';
-        else if (s.status === 'closed' || s.status === 'COMPLETED' || s.status === 'finalizado') status = 'LOCKED_BY_STORE';
+        if (s.status === 'closed' || s.status === 'COMPLETED' || s.status === 'finalizado') status = 'LOCKED_BY_STORE';
         else if (s.status === 'ARCHIVED') status = 'ARCHIVED';
         else if (s.status === 'CANCELLED') status = 'CANCELLED';
+        else if (!s.pdf_url) status = 'WAITING_PDF';  // No PDF yet — always show "Esperando PDF"
+        else if (s.status === 'COUNTING' || ((s.status === 'IN_PROGRESS' || s.status === 'activa') && (item.scanned_skus || 0) > 0)) status = 'IN_PROGRESS';
+        else if (s.status === 'waiting_count' || s.status === 'IN_PROGRESS' || s.status === 'waiting_valuation') status = 'WAITING_COUNT';
+        else status = 'WAITING_PDF';
 
         // If it's finalized but recent, we treat it effectively as "Active" for the purpose of the list,
         // though the status badge will show it's locked/completed.
@@ -181,6 +193,7 @@ const AuditHub: React.FC = () => {
             id: s.id.toString(),
             storeId: s.store_id,
             storeName: item.store_name,
+            auditName: s.name || undefined,
             managerName: 'Admin User',
             status: status,
             hasPdf: !!s.pdf_url,
@@ -195,9 +208,11 @@ const AuditHub: React.FC = () => {
     });
 
     // Reset page when filters change
+    const filterStoreKey = Array.from(filterStoreIds).sort().join(',');
     useEffect(() => {
         setCurrentPage(1);
-    }, [activeTab, focusFilter, filterStore, filterDateFrom, filterDateTo, sortField, sortDir]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab, focusFilter, filterStoreKey, filterDateFrom, filterDateTo, sortField, sortDir]);
 
     // Auto-refresh audits every 30s while this page is visible
     useEffect(() => {
@@ -274,8 +289,8 @@ const AuditHub: React.FC = () => {
 
     // Apply store filter to any session list
     const applyStoreFilter = (sessions: AuditSession[]) => {
-        if (filterStore === 'all') return sessions;
-        return sessions.filter(s => s.storeName === filterStore);
+        if (filterStoreIds.size === 0) return sessions;
+        return sessions.filter(s => filterStoreIds.has(s.storeId));
     };
 
     // Filtered counts for display (update when store filter changes)
@@ -371,10 +386,6 @@ const AuditHub: React.FC = () => {
         uniqueStoresMap.set(audit.session.store_id, audit.store_name);
     });
     const realStores = Array.from(uniqueStoresMap.entries()).map(([id, name]) => ({ id, name }));
-
-    const filteredStores = realStores.filter(store =>
-        store.name.toLowerCase().includes(contextSearch.toLowerCase())
-    );
 
 
     const handleSort = (field: SortField) => {
@@ -595,22 +606,51 @@ const AuditHub: React.FC = () => {
         );
     };
 
-    const handleStoreSelect = (store: { id: number; name: string }) => {
-        setShowContextDropdown(false);
-        setContextSearch('');
-        setFilterStore(store.name);
+    // Toggle a single store in the filter
+    const toggleStoreFilter = (storeId: number) => {
+        setFilterStoreIds(prev => {
+            const next = new Set(prev);
+            if (next.has(storeId)) next.delete(storeId);
+            else next.add(storeId);
+            return next;
+        });
+    };
+
+    // Toggle all stores in a zone
+    const toggleZoneFilter = (zoneId: number) => {
+        const zoneStoreIds = allStores.filter(s => s.zone_id === zoneId).map(s => s.id);
+        setFilterStoreIds(prev => {
+            const next = new Set(prev);
+            const allSelected = zoneStoreIds.every(id => next.has(id));
+            if (allSelected) {
+                zoneStoreIds.forEach(id => next.delete(id));
+            } else {
+                zoneStoreIds.forEach(id => next.add(id));
+            }
+            return next;
+        });
     };
 
     const handleGlobalView = () => {
+        setFilterStoreIds(new Set());
         setShowContextDropdown(false);
-        setContextSearch('');
-        setFilterStore('all');
+        setContextZoneId(null);
     };
 
     const clearFilters = () => {
-        setFilterStore('all');
+        setFilterStoreIds(new Set());
         setFilterDateFrom('');
         setFilterDateTo('');
+    };
+
+    // Get label for the context switcher button
+    const getContextLabel = () => {
+        if (filterStoreIds.size === 0) return 'Vista Global';
+        if (filterStoreIds.size === 1) {
+            const id = Array.from(filterStoreIds)[0];
+            return allStores.find(s => s.id === id)?.name || 'Tienda';
+        }
+        return `${filterStoreIds.size} tiendas`;
     };
 
     // SortHeader removed from here, will be defined outside or inlined
@@ -660,59 +700,131 @@ const AuditHub: React.FC = () => {
             <div className="flex items-center justify-between">
                 <div className="relative" ref={contextRef}>
                     <button
-                        onClick={() => setShowContextDropdown(!showContextDropdown)}
+                        onClick={() => { setShowContextDropdown(!showContextDropdown); setContextZoneId(null); }}
                         className="flex items-center gap-3 px-4 py-2.5 bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors"
                     >
-                        {filterStore === 'all' ? (
+                        {filterStoreIds.size === 0 ? (
                             <Globe size={18} className="text-slate-500" />
                         ) : (
                             <Store size={18} className="text-blue-500" />
                         )}
                         <span className="font-medium text-slate-700">
-                            {filterStore === 'all' ? 'Vista Global' : filterStore}
+                            {getContextLabel()}
                         </span>
-                        <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{realStores.length}</span>
+                        <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">{allStores.length}</span>
                         <ChevronDown size={16} className={`text-slate-400 transition-transform ${showContextDropdown ? 'rotate-180' : ''}`} />
                     </button>
 
                     {showContextDropdown && (
                         <div className="absolute top-full mt-2 left-0 w-80 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
-                            <div className="p-3 border-b border-slate-100">
-                                <div className="relative">
-                                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                    <input
-                                        type="text"
-                                        placeholder="Buscar tienda..."
-                                        value={contextSearch}
-                                        onChange={(e) => setContextSearch(e.target.value)}
-                                        autoFocus
-                                        className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    />
-                                </div>
-                            </div>
-
-                            <button
-                                onClick={handleGlobalView}
-                                className={`w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-50 border-b border-slate-100 ${filterStore === 'all' ? 'bg-blue-50' : ''}`}
-                            >
-                                <Globe size={16} className={filterStore === 'all' ? 'text-blue-600' : 'text-slate-400'} />
-                                <span className={`text-sm font-medium flex-1 text-left ${filterStore === 'all' ? 'text-blue-700' : 'text-slate-600'}`}>Vista Global</span>
-                                {filterStore === 'all' && <CheckCircle2 size={16} className="text-blue-600" />}
-                            </button>
-
-                            <div className="max-h-64 overflow-y-auto">
-                                {filteredStores.map(store => (
+                            {contextZoneId === null ? (
+                                /* ZONE LIST VIEW */
+                                <>
                                     <button
-                                        key={store.id}
-                                        onClick={() => handleStoreSelect(store)}
-                                        className="w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50 transition-colors"
+                                        onClick={handleGlobalView}
+                                        className={`w-full px-4 py-3 flex items-center gap-3 hover:bg-slate-50 border-b border-slate-100 ${filterStoreIds.size === 0 ? 'bg-blue-50' : ''}`}
                                     >
-                                        <Store size={14} className="text-slate-400" />
-                                        <p className="text-sm font-medium text-slate-700 flex-1 text-left">{store.name}</p>
-                                        <ChevronRight size={14} className="text-slate-300" />
+                                        <Globe size={16} className={filterStoreIds.size === 0 ? 'text-blue-600' : 'text-slate-400'} />
+                                        <span className={`text-sm font-medium flex-1 text-left ${filterStoreIds.size === 0 ? 'text-blue-700' : 'text-slate-600'}`}>Vista Global</span>
+                                        {filterStoreIds.size === 0 && <Check size={16} className="text-blue-600" />}
                                     </button>
-                                ))}
-                            </div>
+
+                                    <div className="max-h-72 overflow-y-auto">
+                                        {zones.map(zone => {
+                                            const zoneStores = allStores.filter(s => s.zone_id === zone.id);
+                                            const selectedCount = zoneStores.filter(s => filterStoreIds.has(s.id)).length;
+                                            const allSelected = zoneStores.length > 0 && selectedCount === zoneStores.length;
+                                            return (
+                                                <div key={zone.id} className="flex items-center border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
+                                                    {/* Zone checkbox */}
+                                                    <button
+                                                        onClick={() => toggleZoneFilter(zone.id)}
+                                                        className="pl-4 pr-2 py-2.5 flex items-center"
+                                                    >
+                                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                                                            allSelected ? 'bg-blue-600 border-blue-600' :
+                                                            selectedCount > 0 ? 'bg-blue-100 border-blue-400' :
+                                                            'border-slate-300'
+                                                        }`}>
+                                                            {allSelected && <Check size={12} className="text-white" />}
+                                                            {!allSelected && selectedCount > 0 && <div className="w-2 h-0.5 bg-blue-500 rounded" />}
+                                                        </div>
+                                                    </button>
+                                                    {/* Zone row → drill-down */}
+                                                    <button
+                                                        onClick={() => setContextZoneId(zone.id)}
+                                                        className="flex-1 flex items-center justify-between pr-3 py-2.5"
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <MapPin size={14} className="text-slate-400" />
+                                                            <span className="text-sm font-medium text-slate-700">{zone.name}</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-1.5">
+                                                            {selectedCount > 0 && (
+                                                                <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">
+                                                                    {selectedCount}
+                                                                </span>
+                                                            )}
+                                                            <span className="text-xs font-medium text-slate-500">{zoneStores.length}</span>
+                                                            <ChevronRight size={14} className="text-slate-300" />
+                                                        </div>
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </>
+                            ) : (
+                                /* STORE LIST WITHIN ZONE */
+                                <>
+                                    <button
+                                        onClick={() => setContextZoneId(null)}
+                                        className="w-full flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 hover:bg-slate-50 transition-colors text-left"
+                                    >
+                                        <ArrowLeft size={14} className="text-slate-400" />
+                                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                            {zones.find(z => z.id === contextZoneId)?.name || 'Zona'}
+                                        </span>
+                                    </button>
+                                    {(() => {
+                                        const zoneStores = allStores.filter(s => s.zone_id === contextZoneId);
+                                        const allSelected = zoneStores.length > 0 && zoneStores.every(s => filterStoreIds.has(s.id));
+                                        return (
+                                            <button
+                                                onClick={() => toggleZoneFilter(contextZoneId)}
+                                                className="w-full px-4 py-2 flex items-center gap-2 hover:bg-slate-50 border-b border-slate-100 transition-colors"
+                                            >
+                                                <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                                                    allSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
+                                                }`}>
+                                                    {allSelected && <Check size={12} className="text-white" />}
+                                                </div>
+                                                <span className="text-xs font-semibold text-slate-500">Seleccionar toda la zona</span>
+                                            </button>
+                                        );
+                                    })()}
+                                    <div className="max-h-64 overflow-y-auto">
+                                        {allStores.filter(s => s.zone_id === contextZoneId).map(store => (
+                                            <label
+                                                key={store.id}
+                                                className="w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50 cursor-pointer transition-colors"
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={filterStoreIds.has(store.id)}
+                                                    onChange={() => toggleStoreFilter(store.id)}
+                                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                                />
+                                                <Store size={14} className="text-slate-400" />
+                                                <span className="text-sm text-slate-700 font-medium">{store.name}</span>
+                                            </label>
+                                        ))}
+                                        {allStores.filter(s => s.zone_id === contextZoneId).length === 0 && (
+                                            <div className="px-4 py-3 text-xs text-slate-400 text-center">Sin tiendas en esta zona</div>
+                                        )}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
                 </div>
@@ -864,9 +976,14 @@ const AuditHub: React.FC = () => {
                                                 </div>
                                                 <div>
                                                     <p className={`font-medium ${session.status === 'CANCELLED' ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
-                                                        {session.storeName}
+                                                        {session.auditName || session.storeName}
                                                     </p>
-                                                    <p className="text-xs text-slate-400">{session.managerName}</p>
+                                                    {session.auditName && (
+                                                        <p className="text-xs text-slate-400">{session.storeName}</p>
+                                                    )}
+                                                    {!session.auditName && (
+                                                        <p className="text-xs text-slate-400">{session.managerName}</p>
+                                                    )}
                                                 </div>
                                             </div>
                                         </td>

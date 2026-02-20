@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ChevronDown, User, Settings, LogOut, Shield, Store, Clock } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 
 
 interface TopbarProps {
@@ -22,8 +23,20 @@ const PAGE_TITLES: Record<string, string> = {
 
 const Topbar: React.FC<TopbarProps> = ({ onLogout }) => {
     const { pathname } = useLocation();
+    const { user } = useAuth();
     const [showProfileMenu, setShowProfileMenu] = useState(false);
     const profileRef = useRef<HTMLDivElement>(null);
+
+    // Derive display values from real user data
+    const firstName = user?.first_name || '';
+    const lastName = user?.last_name || '';
+    const fullName = [firstName, lastName].filter(Boolean).join(' ') || user?.email || 'Usuario';
+    const email = user?.email || '';
+    const roleName = user?.role?.name || 'Usuario';
+    const initials = firstName && lastName
+        ? `${firstName[0]}${lastName[0]}`.toUpperCase()
+        : email ? email.substring(0, 2).toUpperCase() : 'US';
+    const storeCount = user?.stores?.length || 0;
 
     const getTitle = () => {
         // Simple direct match
@@ -49,7 +62,7 @@ const Topbar: React.FC<TopbarProps> = ({ onLogout }) => {
             {/* Dynamic Title */}
             <div>
                 <h2 className="text-lg font-bold text-slate-800">{getTitle()}</h2>
-                <p className="text-xs text-slate-500">Bienvenido de vuelta, Administrador</p>
+                <p className="text-xs text-slate-500">Bienvenido de vuelta, {firstName || email}</p>
             </div>
 
             {/* Profile Dropdown */}
@@ -59,11 +72,11 @@ const Topbar: React.FC<TopbarProps> = ({ onLogout }) => {
                     className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-50 transition-colors"
                 >
                     <div className="text-right">
-                        <p className="text-sm font-bold text-slate-800">Administrador Global</p>
-                        <p className="text-xs text-slate-500">admin@qontrol.com</p>
+                        <p className="text-sm font-bold text-slate-800">{fullName}</p>
+                        <p className="text-xs text-slate-500">{email}</p>
                     </div>
                     <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-700 rounded-full flex items-center justify-center text-white font-bold">
-                        AD
+                        {initials}
                     </div>
                     <ChevronDown size={16} className={`text-slate-400 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
                 </button>
@@ -75,11 +88,11 @@ const Topbar: React.FC<TopbarProps> = ({ onLogout }) => {
                         <div className="px-4 py-3 border-b border-slate-100">
                             <div className="flex items-center gap-3">
                                 <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-full flex items-center justify-center text-white font-bold text-lg">
-                                    AD
+                                    {initials}
                                 </div>
                                 <div>
-                                    <p className="font-bold text-slate-800">Jose Admin</p>
-                                    <p className="text-sm text-slate-500">admin@qontrol.com</p>
+                                    <p className="font-bold text-slate-800">{fullName}</p>
+                                    <p className="text-sm text-slate-500">{email}</p>
                                 </div>
                             </div>
                         </div>
@@ -89,12 +102,12 @@ const Topbar: React.FC<TopbarProps> = ({ onLogout }) => {
                             <div className="flex items-center gap-3 text-sm">
                                 <Shield size={16} className="text-blue-500" />
                                 <span className="text-slate-600">Rol:</span>
-                                <span className="font-medium text-slate-800">Administrador Global</span>
+                                <span className="font-medium text-slate-800">{roleName}</span>
                             </div>
                             <div className="flex items-center gap-3 text-sm">
                                 <Store size={16} className="text-green-500" />
                                 <span className="text-slate-600">Tiendas:</span>
-                                <span className="font-medium text-slate-800">Todas (31)</span>
+                                <span className="font-medium text-slate-800">{storeCount > 0 ? storeCount : 'Sin asignar'}</span>
                             </div>
                             <div className="flex items-center gap-3 text-sm">
                                 <Clock size={16} className="text-amber-500" />

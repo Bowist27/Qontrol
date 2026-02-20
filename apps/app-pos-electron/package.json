@@ -1,13 +1,14 @@
 {
   "name": "app-pos-electron",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.1.0",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "dev:electron": "tsc -p electron && concurrently -k \"npm run dev\" \"wait-on http://localhost:5174 && electron .\"",
     "build": "tsc -b && vite build",
     "build:electron": "tsc -p electron && vite build && electron-builder --win",
+    "deploy:electron": "tsc -p electron && vite build && electron-builder --win",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -31,13 +32,19 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://comex-auditorias-2026-production.s3.mx-central-1.amazonaws.com/electron-updates"
     },
     "asar": true,
     "asarUnpack": [
@@ -50,12 +57,14 @@
     "axios": "^1.13.2",
     "better-sqlite3": "^12.6.2",
     "dotenv": "^17.2.3",
+    "electron-updater": "^6.7.3",
     "fs-extra": "^11.3.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.992.0",
     "@eslint/js": "^9.39.1",
     "@tailwindcss/vite": "^4.1.18",
     "@types/better-sqlite3": "^7.6.13",

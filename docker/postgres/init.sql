@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS audit_sessions (
     id SERIAL PRIMARY KEY,
     store_id INT NOT NULL REFERENCES stores(id),
     created_by UUID REFERENCES users(id),
+    name VARCHAR(200) DEFAULT NULL,
     status VARCHAR(20) DEFAULT 'UPLOADING',
     reference_date DATE,
     pdf_url VARCHAR(500),

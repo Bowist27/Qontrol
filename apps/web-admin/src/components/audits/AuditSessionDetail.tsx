@@ -12,15 +12,16 @@ import {
     CheckCircle2, RefreshCw, Search, FileSpreadsheet, X, ArrowLeft,
     Activity, AlertCircle, BarChart3, History, MapPin, Calendar, User,
     ChevronDown, Store, Save, Loader2, FileDown, DownloadCloud,
-    Trash2, LockKeyhole, RotateCcw, ShieldAlert, Info
+    Trash2, LockKeyhole, RotateCcw, ShieldAlert, Info, ScanLine, Package
 } from 'lucide-react';
 import { pdf } from '@react-pdf/renderer';
-import { auditApi, type Store as StoreType, type AuditEvent } from '../../services/audit.api';
+import { auditApi, type Store as StoreType, type AuditEvent, type PhysicalScan } from '../../services/audit.api';
 import { useAudit } from '../../context/AuditContext';
 import ReporteAjusteInventario from './ReporteAjusteInventario';
 
 // Types
-type AuditStatus = 'not_started' | 'partial' | 'in_progress' | 'reconciled' | 'locked';
+// Status types used in detail display logic
+// DB statuses: IN_PROGRESS, COUNTING, UPLOADING, REVIEW_PENDING, COMPLETED, CLOSED, CANCELLED, ARCHIVED
 
 interface TheoreticalData {
     status: 'empty' | 'loaded' | 'error';
@@ -88,6 +89,10 @@ const AuditSessionDetail: React.FC = () => {
     const [stores, setStores] = useState<StoreType[]>([]);
     const [isLoadingStores, setIsLoadingStores] = useState(true);
     const [storesError, setStoresError] = useState<string | null>(null);
+    // Audit name state for new audit
+    const [auditName, setAuditName] = useState('');
+    // Existing audit name (from DB)
+    const [existingAuditName, setExistingAuditName] = useState<string | undefined>(undefined);
 
     // Export Dropdown State
     const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
@@ -98,7 +103,7 @@ const AuditSessionDetail: React.FC = () => {
     const [isLoadingEvents, setIsLoadingEvents] = useState(false);
 
     // Audit Session State (for close/reopen functionality) 
-    const [sessionStatus, setSessionStatus] = useState<'activa' | 'finalizado' | 'IN_PROGRESS'>('activa');
+    const [sessionStatus, setSessionStatus] = useState<string>('activa');
 
     useEffect(() => {
         if (showEventLog && _sessionId) {
@@ -147,6 +152,7 @@ const AuditSessionDetail: React.FC = () => {
         activeUsers: []
     });
     const [diffItems, setDiffItems] = useState<DiffItem[]>([]);
+    const [rawScans, setRawScans] = useState<PhysicalScan[]>([]);
     const [activeTab, setActiveTab] = useState<'all' | 'differences' | 'extras'>('differences'); // Default to discrepancies
     const [searchQuery, setSearchQuery] = useState('');
     const [isDragging, setIsDragging] = useState(false);
@@ -181,7 +187,7 @@ const AuditSessionDetail: React.FC = () => {
         confirmLabel: string;
         isLoading: boolean;
         onConfirm: () => Promise<void>;
-    }>({ open: false, type: 'danger', icon: 'trash', title: '', message: '', confirmLabel: '', isLoading: false, onConfirm: async () => {} });
+    }>({ open: false, type: 'danger', icon: 'trash', title: '', message: '', confirmLabel: '', isLoading: false, onConfirm: async () => { } });
 
     const showFeedback = (type: 'success' | 'error' | 'warning', title: string, message: string, onClose?: () => void) => {
         setFeedbackModal({ open: true, type, title, message, onClose });
@@ -226,8 +232,8 @@ const AuditSessionDetail: React.FC = () => {
                     auditApi.getPhysicalScanSummary(auditId)
                 ]);
 
-
-
+                // Store raw scans for pre-PDF preview table
+                setRawScans(scans);
 
                 // Extract unique device IDs as "users"
                 const devices = [...new Set(scans.map(s => s.device_id).filter(Boolean))];
@@ -364,6 +370,10 @@ const AuditSessionDetail: React.FC = () => {
             auditApi.getAudit(parseInt(_sessionId))
                 .then((data) => {
                     console.log('[AuditSessionDetail] Loaded audit data:', data.items?.length, 'items');
+                    // Set audit name if present
+                    if (data.session.name) {
+                        setExistingAuditName(data.session.name);
+                    }
                     // If no store name from state, try to find it in the stores list using store_id
                     // If no store name from state, try to find it in the stores list using store_id
                     if (!existingStoreName && stores.length > 0) {
@@ -401,7 +411,7 @@ const AuditSessionDetail: React.FC = () => {
                     // Set initial session status from DB
                     if (data.session.status) {
                         // Map specific DB statuses if needed, or cast directly if they match
-                        setSessionStatus(data.session.status as any);
+                        setSessionStatus(data.session.status);
                     }
                 })
                 .catch(err => {
@@ -413,16 +423,43 @@ const AuditSessionDetail: React.FC = () => {
         }
     }, [isNewAudit, _sessionId, existingStoreName, stores]);
 
-    // Calculate audit status
-    const getAuditStatus = (): AuditStatus => {
-        if (theoretical.status === 'empty' && physical.status === 'disconnected') return 'not_started';
-        if (theoretical.status === 'loaded' && physical.status === 'disconnected') return 'partial';
-        if (theoretical.status === 'empty' && physical.status === 'active') return 'partial';
-        if (theoretical.status === 'loaded' && physical.status === 'active') return 'in_progress';
-        return 'not_started';
+    // Calculate audit status — consistent with AuditHub list view labels
+    type DetailDisplayStatus = 'not_started' | 'waiting_pdf' | 'waiting_count' | 'counting' | 'locked';
+
+    const getDetailDisplayStatus = (): DetailDisplayStatus => {
+        const dbStatus = sessionStatus;
+        // Closed / finalized
+        if (dbStatus === 'finalizado' || dbStatus === 'closed' || dbStatus === 'COMPLETED') return 'locked';
+
+        // No PDF loaded yet → always "Esperando PDF", even if counting is happening
+        if (theoretical.status !== 'loaded' && dbStatus !== 'finalizado' && dbStatus !== 'closed' && dbStatus !== 'COMPLETED') {
+            // COUNTING or IN_PROGRESS without PDF → waiting_pdf
+            if (dbStatus === 'COUNTING' || dbStatus === 'IN_PROGRESS' || dbStatus === 'activa'
+                || dbStatus === 'REVIEW_PENDING' || dbStatus === 'UPLOADING' || dbStatus === 'waiting_pdf') {
+                return 'waiting_pdf';
+            }
+        }
+
+        // Already counting (with PDF)
+        if (dbStatus === 'COUNTING') return 'counting';
+        // Waiting for PDF upload
+        if (dbStatus === 'REVIEW_PENDING' || dbStatus === 'UPLOADING' || dbStatus === 'waiting_pdf') return 'waiting_pdf';
+        // Waiting for physical count
+        if (dbStatus === 'waiting_count' || dbStatus === 'waiting_valuation') return 'waiting_count';
+
+        // IN_PROGRESS — disambiguate by data state
+        if (dbStatus === 'IN_PROGRESS' || dbStatus === 'activa') {
+            if (physical.status === 'active' || physical.scannedItems > 0) return 'counting';
+            if (theoretical.status === 'loaded') return 'waiting_count';
+            return 'waiting_pdf';
+        }
+
+        // New / unknown
+        if (theoretical.status === 'empty') return isNewAudit ? 'not_started' : 'waiting_pdf';
+        return 'waiting_count';
     };
 
-    const displayStatus = getAuditStatus();
+    const displayStatus = getDetailDisplayStatus();
 
     // Simulate live updates
     useEffect(() => {
@@ -769,92 +806,116 @@ const AuditSessionDetail: React.FC = () => {
 
                     {/* Store Selector (New Audit) OR Store Badge (Existing) */}
                     {isNewAudit ? (
-                        <div className="relative">
-                            <button
-                                onClick={() => theoretical.status !== 'loaded' && setShowStoreDropdown(!showStoreDropdown)}
-                                disabled={theoretical.status === 'loaded'}
-                                className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${theoretical.status === 'loaded'
-                                    ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
-                                    : selectedStoreId
-                                        ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-300'
-                                        : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
-                                    }`}
-                            >
-                                <Store size={16} />
-                                <span className="font-medium">
-                                    {selectedStoreId
-                                        ? stores.find(s => s.id === selectedStoreId)?.name
-                                        : isLoadingStores ? 'Cargando...' : 'Selecciona una Tienda'}
-                                </span>
-                                {theoretical.status !== 'loaded' && !isLoadingStores && <ChevronDown size={16} className={`transition-transform ${showStoreDropdown ? 'rotate-180' : ''}`} />}
-                                {isLoadingStores && <Loader2 size={16} className="animate-spin text-slate-400" />}
-                            </button>
+                        <>
+                            <div className="relative">
+                                <button
+                                    onClick={() => theoretical.status !== 'loaded' && setShowStoreDropdown(!showStoreDropdown)}
+                                    disabled={theoretical.status === 'loaded'}
+                                    className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${theoretical.status === 'loaded'
+                                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                                        : selectedStoreId
+                                            ? 'bg-blue-50 border-blue-200 text-blue-700 hover:border-blue-300'
+                                            : 'bg-white border-slate-300 text-slate-600 hover:border-slate-400'
+                                        }`}
+                                >
+                                    <Store size={16} />
+                                    <span className="font-medium">
+                                        {selectedStoreId
+                                            ? stores.find(s => s.id === selectedStoreId)?.name
+                                            : isLoadingStores ? 'Cargando...' : 'Selecciona una Tienda'}
+                                    </span>
+                                    {theoretical.status !== 'loaded' && !isLoadingStores && <ChevronDown size={16} className={`transition-transform ${showStoreDropdown ? 'rotate-180' : ''}`} />}
+                                    {isLoadingStores && <Loader2 size={16} className="animate-spin text-slate-400" />}
+                                </button>
 
-                            {showStoreDropdown && theoretical.status !== 'loaded' && (
-                                <div className="absolute top-full mt-2 left-0 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
-                                    <div className="p-2 border-b border-slate-100">
-                                        <input
-                                            type="text"
-                                            placeholder="Buscar tienda..."
-                                            value={storeSearch}
-                                            onChange={(e) => setStoreSearch(e.target.value)}
-                                            autoFocus
-                                            className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white placeholder-gray-400"
-                                        />
+                                {showStoreDropdown && theoretical.status !== 'loaded' && (
+                                    <div className="absolute top-full mt-2 left-0 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                                        <div className="p-2 border-b border-slate-100">
+                                            <input
+                                                type="text"
+                                                placeholder="Buscar tienda..."
+                                                value={storeSearch}
+                                                onChange={(e) => setStoreSearch(e.target.value)}
+                                                autoFocus
+                                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 bg-white placeholder-gray-400"
+                                            />
+                                        </div>
+                                        <div className="max-h-56 overflow-y-auto">
+                                            {stores
+                                                .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
+                                                .map(store => (
+                                                    <button
+                                                        key={store.id}
+                                                        onClick={() => {
+                                                            setSelectedStoreId(store.id);
+                                                            setShowStoreDropdown(false);
+                                                            setStoreSearch('');
+                                                        }}
+                                                        className={`w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50 transition-colors ${selectedStoreId === store.id ? 'bg-blue-50' : ''
+                                                            }`}
+                                                    >
+                                                        <div className={`w-2 h-2 rounded-full ${store.status ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                                                        <span className="text-slate-700 font-medium">{store.name}</span>
+                                                    </button>
+                                                ))}
+                                            {isLoadingStores && (
+                                                <div className="p-4 text-center text-slate-500 text-xs">Cargando tiendas...</div>
+                                            )}
+                                            {storesError && (
+                                                <div className="p-4 text-center text-red-500 text-xs">{storesError}</div>
+                                            )}
+                                            {stores.length === 0 && !isLoadingStores && !storesError && (
+                                                <div className="p-4 text-center text-slate-500 text-xs">No hay tiendas disponibles</div>
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="max-h-56 overflow-y-auto">
-                                        {stores
-                                            .filter(s => s.name.toLowerCase().includes(storeSearch.toLowerCase()))
-                                            .map(store => (
-                                                <button
-                                                    key={store.id}
-                                                    onClick={() => {
-                                                        setSelectedStoreId(store.id);
-                                                        setShowStoreDropdown(false);
-                                                        setStoreSearch('');
-                                                    }}
-                                                    className={`w-full px-4 py-2.5 flex items-center gap-3 hover:bg-slate-50 transition-colors ${selectedStoreId === store.id ? 'bg-blue-50' : ''
-                                                        }`}
-                                                >
-                                                    <div className={`w-2 h-2 rounded-full ${store.status ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
-                                                    <span className="text-slate-700 font-medium">{store.name}</span>
-                                                </button>
-                                            ))}
-                                        {isLoadingStores && (
-                                            <div className="p-4 text-center text-slate-500 text-xs">Cargando tiendas...</div>
-                                        )}
-                                        {storesError && (
-                                            <div className="p-4 text-center text-red-500 text-xs">{storesError}</div>
-                                        )}
-                                        {stores.length === 0 && !isLoadingStores && !storesError && (
-                                            <div className="p-4 text-center text-slate-500 text-xs">No hay tiendas disponibles</div>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
+                                )}
+                            </div>
+
+                            {/* Audit Name Input (optional) */}
+                            <input
+                                type="text"
+                                placeholder="Nombre de auditoría (opcional)"
+                                value={auditName}
+                                onChange={(e) => setAuditName(e.target.value)}
+                                maxLength={200}
+                                disabled={theoretical.status === 'loaded'}
+                                className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors w-56 ${theoretical.status === 'loaded'
+                                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                                        : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500'
+                                    }`}
+                            />
+                        </>
                     ) : (
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-md border border-slate-200">
-                            <Store size={14} className="text-slate-500" />
-                            <span className="text-sm font-medium text-slate-700">{effectiveStoreName}</span>
+                        <div className="flex items-center gap-3">
+                            {existingAuditName && (
+                                <span className="text-sm font-semibold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-md border border-blue-200">{existingAuditName}</span>
+                            )}
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-md border border-slate-200">
+                                <Store size={14} className="text-slate-500" />
+                                <span className="text-sm font-medium text-slate-700">{effectiveStoreName}</span>
+                            </div>
                         </div>
                     )}
 
                     {/* Status Badge */}
                     <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${displayStatus === 'not_started' ? 'bg-slate-100 text-slate-600' :
-                        displayStatus === 'partial' ? 'bg-amber-100 text-amber-700' :
-                            displayStatus === 'in_progress' ? 'bg-blue-100 text-blue-700' :
-                                'bg-emerald-100 text-emerald-700'
+                            displayStatus === 'waiting_pdf' ? 'bg-slate-100 text-slate-500' :
+                                displayStatus === 'waiting_count' ? 'bg-amber-100 text-amber-700' :
+                                    displayStatus === 'counting' ? 'bg-blue-100 text-blue-700' :
+                                        'bg-emerald-100 text-emerald-700'
                         }`}>
                         <span className={`w-2 h-2 rounded-full ${displayStatus === 'not_started' ? 'bg-slate-400' :
-                            displayStatus === 'partial' ? 'bg-amber-500' :
-                                displayStatus === 'in_progress' ? 'bg-blue-500 animate-pulse' :
-                                    'bg-emerald-500'
+                                displayStatus === 'waiting_pdf' ? 'bg-slate-400' :
+                                    displayStatus === 'waiting_count' ? 'bg-amber-500' :
+                                        displayStatus === 'counting' ? 'bg-blue-500 animate-pulse' :
+                                            'bg-emerald-500'
                             }`}></span>
                         {displayStatus === 'not_started' && 'Sin Iniciar'}
-                        {displayStatus === 'partial' && 'Parcial'}
-                        {displayStatus === 'in_progress' && 'En Progreso'}
-                        {displayStatus === 'reconciled' && 'Conciliado'}
+                        {displayStatus === 'waiting_pdf' && 'Esperando PDF'}
+                        {displayStatus === 'waiting_count' && 'Esperando Conteo'}
+                        {displayStatus === 'counting' && 'En Conteo'}
+                        {displayStatus === 'locked' && 'Finalizado'}
                     </div>
                 </div>
 
@@ -894,7 +955,7 @@ const AuditSessionDetail: React.FC = () => {
                                     setIsSaving(true);
                                     try {
                                         // Call API to Create Audit (Saves to DB)
-                                        await auditApi.createAudit(selectedStoreId, uploadedFile);
+                                        await auditApi.createAudit(selectedStoreId, uploadedFile, auditName || undefined);
                                         await loadAudits(); // Refresh context
                                         showFeedback('success', 'Auditoría creada', 'La auditoría ha sido creada exitosamente.', () => onBack());
                                     } catch (err) {
@@ -1201,14 +1262,120 @@ const AuditSessionDetail: React.FC = () => {
             < div className="flex-1 bg-white rounded-xl border border-slate-200 flex flex-col overflow-hidden" >
                 {
                     theoretical.status !== 'loaded' ? (
-                        /* Waiting State */
-                        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-                            <BarChart3 size={48} className="text-slate-300 mb-4" />
-                            <p className="text-lg font-medium text-slate-600">Esperando datos para conciliar</p>
-                            <p className="text-sm text-slate-400 max-w-md mt-1">
-                                Sube el PDF de valuación{physical.status !== 'active' && ' y espera los escaneos de la App de Escritorio'} para ver las diferencias.
-                            </p>
-                        </div>
+                        rawScans.length > 0 ? (
+                            /* Pre-PDF: Show live scan feed */
+                            <div className="flex-1 flex flex-col overflow-hidden">
+                                {/* Header */}
+                                <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <ScanLine size={18} className="text-blue-500" />
+                                        <h3 className="text-sm font-semibold text-slate-700">Conteo Físico en Vivo</h3>
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700">
+                                            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span>
+                                            {physical.uniqueProducts} productos
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-400">
+                                        Sube el PDF de valuación para ver la conciliación completa
+                                    </p>
+                                </div>
+
+                                {/* Scan table */}
+                                <div className="flex-1 overflow-auto">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-slate-50 sticky top-0">
+                                            <tr>
+                                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">#</th>
+                                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">SKU / Código</th>
+                                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Producto</th>
+                                                <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Cantidad</th>
+                                                <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Escaneos</th>
+                                                <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Último Escaneo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {(() => {
+                                                // Aggregate scans by SKU/barcode
+                                                const grouped = new Map<string, { sku: string; barcode: string; name: string; qty: number; scanCount: number; lastScan: string; isUnknown: boolean }>();
+                                                rawScans.forEach(scan => {
+                                                    const key = scan.sku || scan.barcode;
+                                                    const existing = grouped.get(key);
+                                                    if (existing) {
+                                                        existing.qty += scan.quantity;
+                                                        existing.scanCount += 1;
+                                                        if (scan.scanned_at > existing.lastScan) existing.lastScan = scan.scanned_at;
+                                                    } else {
+                                                        grouped.set(key, {
+                                                            sku: scan.sku || scan.barcode,
+                                                            barcode: scan.barcode,
+                                                            name: scan.product_name || (scan.is_unknown ? `⚠ ${scan.barcode} (no catalogado)` : scan.barcode),
+                                                            qty: scan.quantity,
+                                                            scanCount: 1,
+                                                            lastScan: scan.scanned_at,
+                                                            isUnknown: scan.is_unknown
+                                                        });
+                                                    }
+                                                });
+                                                const rows = Array.from(grouped.values()).sort((a, b) => b.lastScan.localeCompare(a.lastScan));
+
+                                                return rows.map((row, idx) => (
+                                                    <tr key={row.sku} className={`hover:bg-slate-50 transition-colors ${idx === 0 ? 'bg-blue-50/30' : ''}`}>
+                                                        <td className="px-4 py-2.5 text-slate-400 text-xs">{idx + 1}</td>
+                                                        <td className="px-4 py-2.5">
+                                                            <span className="font-mono text-xs text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
+                                                                {row.sku}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-2.5">
+                                                            <div className="flex items-center gap-2">
+                                                                <Package size={14} className={row.isUnknown ? 'text-amber-400' : 'text-slate-400'} />
+                                                                <span className={`text-sm ${row.isUnknown ? 'text-amber-600 italic' : 'text-slate-700'}`}>
+                                                                    {row.name}
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-2.5 text-right">
+                                                            <span className="text-sm font-semibold text-blue-700">{row.qty}</span>
+                                                        </td>
+                                                        <td className="px-4 py-2.5 text-right">
+                                                            <span className="text-xs text-slate-500">{row.scanCount}×</span>
+                                                        </td>
+                                                        <td className="px-4 py-2.5 text-right text-xs text-slate-400">
+                                                            {new Date(row.lastScan).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                                                        </td>
+                                                    </tr>
+                                                ));
+                                            })()}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* Footer summary */}
+                                <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
+                                    <div className="flex items-center gap-4">
+                                        <span>{physical.uniqueProducts} productos únicos</span>
+                                        <span>{physical.totalQuantity} unidades totales</span>
+                                        <span>{physical.scannedItems} escaneos</span>
+                                        {physical.unknownItems > 0 && (
+                                            <span className="text-amber-600 font-medium">{physical.unknownItems} no catalogados</span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-blue-500">
+                                        <Activity size={12} className="animate-pulse" />
+                                        <span className="font-medium">Actualizando en vivo</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            /* No scans and no PDF — true empty state */
+                            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                                <BarChart3 size={48} className="text-slate-300 mb-4" />
+                                <p className="text-lg font-medium text-slate-600">Esperando datos para conciliar</p>
+                                <p className="text-sm text-slate-400 max-w-md mt-1">
+                                    Sube el PDF de valuación y espera los escaneos de la App de Escritorio para ver las diferencias.
+                                </p>
+                            </div>
+                        )
                     ) : (
                         <>
                             {/* Action Bar: Tabs LEFT | Tools RIGHT (Dumbbell Pattern) */}
@@ -1815,22 +1982,20 @@ const AuditSessionDetail: React.FC = () => {
                     <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 p-8 animate-in fade-in zoom-in duration-200">
                         <div className="flex flex-col items-center text-center">
                             {/* Icon */}
-                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${
-                                feedbackModal.type === 'success' ? 'bg-emerald-100' :
-                                feedbackModal.type === 'error' ? 'bg-red-100' :
-                                'bg-amber-100'
-                            }`}>
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${feedbackModal.type === 'success' ? 'bg-emerald-100' :
+                                    feedbackModal.type === 'error' ? 'bg-red-100' :
+                                        'bg-amber-100'
+                                }`}>
                                 {feedbackModal.type === 'success' && <CheckCircle2 className="w-8 h-8 text-emerald-600" />}
                                 {feedbackModal.type === 'error' && <AlertCircle className="w-8 h-8 text-red-600" />}
                                 {feedbackModal.type === 'warning' && <AlertTriangle className="w-8 h-8 text-amber-600" />}
                             </div>
 
                             {/* Title */}
-                            <h3 className={`text-xl font-bold mb-2 ${
-                                feedbackModal.type === 'success' ? 'text-emerald-800' :
-                                feedbackModal.type === 'error' ? 'text-red-800' :
-                                'text-amber-800'
-                            }`}>
+                            <h3 className={`text-xl font-bold mb-2 ${feedbackModal.type === 'success' ? 'text-emerald-800' :
+                                    feedbackModal.type === 'error' ? 'text-red-800' :
+                                        'text-amber-800'
+                                }`}>
                                 {feedbackModal.title}
                             </h3>
 
@@ -1840,11 +2005,10 @@ const AuditSessionDetail: React.FC = () => {
                             {/* Button */}
                             <button
                                 onClick={closeFeedback}
-                                className={`px-6 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg ${
-                                    feedbackModal.type === 'success' ? 'bg-emerald-600 hover:bg-emerald-700' :
-                                    feedbackModal.type === 'error' ? 'bg-red-600 hover:bg-red-700' :
-                                    'bg-amber-600 hover:bg-amber-700'
-                                }`}
+                                className={`px-6 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg ${feedbackModal.type === 'success' ? 'bg-emerald-600 hover:bg-emerald-700' :
+                                        feedbackModal.type === 'error' ? 'bg-red-600 hover:bg-red-700' :
+                                            'bg-amber-600 hover:bg-amber-700'
+                                    }`}
                             >
                                 Aceptar
                             </button>
@@ -1860,11 +2024,10 @@ const AuditSessionDetail: React.FC = () => {
                     <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 p-8 animate-in fade-in zoom-in duration-200">
                         <div className="flex flex-col items-center text-center">
                             {/* Icon */}
-                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${
-                                confirmModal.type === 'danger' ? 'bg-red-100' :
-                                confirmModal.type === 'warning' ? 'bg-amber-100' :
-                                'bg-blue-100'
-                            }`}>
+                            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${confirmModal.type === 'danger' ? 'bg-red-100' :
+                                    confirmModal.type === 'warning' ? 'bg-amber-100' :
+                                        'bg-blue-100'
+                                }`}>
                                 {confirmModal.icon === 'trash' && <Trash2 className={`w-8 h-8 ${confirmModal.type === 'danger' ? 'text-red-600' : 'text-amber-600'}`} />}
                                 {confirmModal.icon === 'lock' && <LockKeyhole className="w-8 h-8 text-amber-600" />}
                                 {confirmModal.icon === 'rotate' && <RotateCcw className="w-8 h-8 text-blue-600" />}
@@ -1873,11 +2036,10 @@ const AuditSessionDetail: React.FC = () => {
                             </div>
 
                             {/* Title */}
-                            <h3 className={`text-xl font-bold mb-2 ${
-                                confirmModal.type === 'danger' ? 'text-red-800' :
-                                confirmModal.type === 'warning' ? 'text-amber-800' :
-                                'text-blue-800'
-                            }`}>
+                            <h3 className={`text-xl font-bold mb-2 ${confirmModal.type === 'danger' ? 'text-red-800' :
+                                    confirmModal.type === 'warning' ? 'text-amber-800' :
+                                        'text-blue-800'
+                                }`}>
                                 {confirmModal.title}
                             </h3>
 
@@ -1899,11 +2061,10 @@ const AuditSessionDetail: React.FC = () => {
                                         await confirmModal.onConfirm();
                                     }}
                                     disabled={confirmModal.isLoading}
-                                    className={`flex-1 px-4 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 ${
-                                        confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' :
-                                        confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700' :
-                                        'bg-blue-600 hover:bg-blue-700'
-                                    }`}
+                                    className={`flex-1 px-4 py-2.5 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 ${confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' :
+                                            confirmModal.type === 'warning' ? 'bg-amber-600 hover:bg-amber-700' :
+                                                'bg-blue-600 hover:bg-blue-700'
+                                        }`}
                                 >
                                     {confirmModal.isLoading ? (
                                         <>

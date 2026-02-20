@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 // Expose auth API to renderer
+contextBridge.exposeInMainWorld('appInfo', {
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
+});
+
 contextBridge.exposeInMainWorld('auth', {
     login: (credentials: { email: string; password: string }) => 
         ipcRenderer.invoke('auth:login', credentials),

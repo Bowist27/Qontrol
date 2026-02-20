@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
 import dotenv from 'dotenv';
+import { autoUpdater } from 'electron-updater';
 import { SQLiteUserRepo } from './local-core/adapters/sqlite/SQLiteUserRepo';
 import { SQLiteProductRepo } from './local-core/adapters/sqlite/SQLiteProductRepo';
 import { SQLiteAuditRepo } from './local-core/adapters/sqlite/SQLiteAuditRepo';
@@ -24,6 +25,50 @@ if (isDev) {
 }
 console.log('Loading .env from:', envPath);
 dotenv.config({ path: envPath });
+
+// --- Auto-Updater Configuration (S3) ---
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+
+autoUpdater.on('checking-for-update', () => {
+    console.log('[AutoUpdater] Checking for updates...');
+});
+
+autoUpdater.on('update-available', (info) => {
+    console.log(`[AutoUpdater] Update available: v${info.version}`);
+});
+
+autoUpdater.on('update-not-available', () => {
+    console.log('[AutoUpdater] App is up to date.');
+});
+
+autoUpdater.on('download-progress', (progress) => {
+    console.log(`[AutoUpdater] Downloading: ${Math.round(progress.percent)}%`);
+    if (mainWindow) {
+        mainWindow.setProgressBar(progress.percent / 100);
+    }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[AutoUpdater] Update downloaded: v${info.version}`);
+    if (mainWindow) {
+        mainWindow.setProgressBar(-1); // Remove progress bar
+    }
+    dialog.showMessageBox(mainWindow!, {
+        type: 'info',
+        title: 'Actualización disponible',
+        message: `Se descargó la versión ${info.version}. La app se actualizará al cerrarla.`,
+        buttons: ['Reiniciar ahora', 'Después'],
+    }).then((result) => {
+        if (result.response === 0) {
+            autoUpdater.quitAndInstall();
+        }
+    });
+});
+
+autoUpdater.on('error', (err) => {
+    console.error('[AutoUpdater] Error:', err.message);
+});
 
 let mainWindow: BrowserWindow | null = null;
 let currentUser: SafeUser | null = null; // Store current logged-in user
@@ -51,6 +96,16 @@ function createWindow() {
 
 app.on('ready', async () => {
     createWindow();
+
+    // --- Auto-Update: check on startup (only in production) ---
+    if (!isDev) {
+        setTimeout(() => {
+            console.log('[AutoUpdater] Checking for updates on startup...');
+            autoUpdater.checkForUpdates().catch(err => {
+                console.error('[AutoUpdater] Failed to check:', err.message);
+            });
+        }, 5000); // Wait 5s for app to fully load before checking
+    }
 
     try {
         // --- Hexagonal Initialization ---
@@ -89,7 +144,9 @@ app.on('ready', async () => {
 
         // --- IPC Handlers ---
 
-        ipcMain.handle('auth:login', async (_event, { email, password }) => {
+        ipcMain.handle('app:getVersion', () => app.getVersion());
+
+    ipcMain.handle('auth:login', async (_event, { email, password }) => {
             console.log(`IPC: auth:login for ${email}`);
             const result = await loginUseCase.execute(email, password);
             

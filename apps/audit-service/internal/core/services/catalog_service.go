@@ -11,7 +11,7 @@ import (
 type CatalogRepository interface {
 	UpsertProducts(ctx context.Context, products []domain.Product, source string) (*domain.CatalogImportResult, error)
 	GetAllProducts(ctx context.Context) ([]domain.Product, error)
-	GetProductsPaginated(ctx context.Context, page, limit int, search string) ([]domain.Product, int, error)
+	GetProductsPaginated(ctx context.Context, page, limit int, search string, sortBy string, hideZero bool) ([]domain.Product, int, error)
 	FindProductByBarcode(ctx context.Context, barcode string) (*domain.Product, error)
 	FindProductBySKU(ctx context.Context, sku string) (*domain.Product, error)
 	GetProductByID(ctx context.Context, id int) (*domain.Product, error)
@@ -56,9 +56,9 @@ func (s *CatalogService) GetAllProducts(ctx context.Context) ([]domain.Product, 
 	return s.repo.GetAllProducts(ctx)
 }
 
-// GetProductsPaginated returns paginated products with optional search
-func (s *CatalogService) GetProductsPaginated(ctx context.Context, page, limit int, search string) ([]domain.Product, int, error) {
-	return s.repo.GetProductsPaginated(ctx, page, limit, search)
+// GetProductsPaginated returns paginated products with optional search, sorting, and zero-price filtering
+func (s *CatalogService) GetProductsPaginated(ctx context.Context, page, limit int, search string, sortBy string, hideZero bool) ([]domain.Product, int, error) {
+	return s.repo.GetProductsPaginated(ctx, page, limit, search, sortBy, hideZero)
 }
 
 // FindByBarcode finds a product by barcode
@@ -196,7 +196,7 @@ func (s *CatalogService) AnalyzeValuationReport(ctx context.Context, items []dom
 	for _, item := range items {
 		// Look up existing product
 		existing, err := s.repo.FindProductBySKU(ctx, item.ProductCode)
-		
+
 		diffItem := domain.CatalogDiffItem{
 			SKU:      item.ProductCode,
 			Name:     item.ProductName,

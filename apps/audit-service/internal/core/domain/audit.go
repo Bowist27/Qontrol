@@ -8,6 +8,8 @@ type Store struct {
 	Name      string    `json:"name"`
 	Status    bool      `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
+	ZoneID    *int      `json:"zone_id,omitempty"`
+	ZoneName  *string   `json:"zone_name,omitempty"`
 }
 
 // AuditSession represents an audit session for a store
@@ -15,6 +17,7 @@ type AuditSession struct {
 	ID            int        `json:"id"`
 	StoreID       int        `json:"store_id"`
 	CreatedBy     *string    `json:"created_by,omitempty"`
+	Name          *string    `json:"name,omitempty"`
 	Status        string     `json:"status"` // UPLOADING, REVIEW_PENDING, IN_PROGRESS, COMPLETED, ERROR
 	ReferenceDate *time.Time `json:"reference_date,omitempty"`
 	PDFURL        *string    `json:"pdf_url,omitempty"`
@@ -35,10 +38,11 @@ type AuditItem struct {
 }
 
 // NewAuditSession creates a new session with UPLOADING status
-func NewAuditSession(storeID int, createdBy *string) *AuditSession {
+func NewAuditSession(storeID int, createdBy *string, name *string) *AuditSession {
 	return &AuditSession{
 		StoreID:   storeID,
 		CreatedBy: createdBy,
+		Name:      name,
 		Status:    "UPLOADING",
 		CreatedAt: time.Now(),
 	}

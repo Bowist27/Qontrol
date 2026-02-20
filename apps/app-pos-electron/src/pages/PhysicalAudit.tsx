@@ -13,6 +13,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useAuth } from '../context/AuthContext';
 import type { ProductsAPI } from '../declarations';
 
 // Types from backend
@@ -20,6 +21,7 @@ interface RemoteAudit {
     session: {
         id: number;
         store_id: number;
+        name?: string;
         status: string;
         pdf_url?: string;
         created_at: string;
@@ -50,7 +52,7 @@ interface ScanSummary {
     last_scan_at?: string;
 }
 
-type KeyboardMode = 'SCAN' | 'QUANTITY_INPUT' | 'QUANTITY_READY' | 'MANUAL_INPUT' | 'MANUAL_QTY' | 'REGISTER_PRODUCT';
+type KeyboardMode = 'SCAN' | 'QUANTITY_INPUT' | 'QUANTITY_READY' | 'MANUAL_INPUT' | 'MANUAL_QTY' | 'REGISTER_PRODUCT' | 'MODIFY_SEARCH' | 'MODIFY_QTY';
 
 interface LocalProduct {
     id: number;
@@ -65,6 +67,8 @@ interface Store {
     id: number;
     name: string;
     status: boolean;
+    zone_id?: number | null;
+    zone_name?: string | null;
 }
 
 interface PhysicalAuditProps {
@@ -75,6 +79,8 @@ interface PhysicalAuditProps {
 const AUDIT_API = `${import.meta.env.VITE_AUDIT_API_URL || 'http://localhost:8085'}/api`;
 
 export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
+    // Auth context for store-based filtering
+    const { user } = useAuth();
     // Connection state
     const [activeAudits, setActiveAudits] = useState<RemoteAudit[]>([]);
     const [selectedAudit, setSelectedAudit] = useState<RemoteAudit | null>(null);
@@ -92,6 +98,10 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const [barcodeBuffer, setBarcodeBuffer] = useState<string>('');
     const [isSending, setIsSending] = useState(false);
     const [flashColor, setFlashColor] = useState<'green' | 'red' | 'amber' | null>(null);
+
+    // Undo confirmation state
+    const [undoConfirm, setUndoConfirm] = useState<{ scan: PhysicalScan; step: 'confirm' } | null>(null);
+    const undoTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Manual input state
     const [manualQuery, setManualQuery] = useState<string>('');
@@ -114,6 +124,15 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const [registerFromScan, setRegisterFromScan] = useState<boolean>(false);
     const registerSkuRef = useRef<HTMLInputElement>(null);
 
+    // Modify quantity state (F4)
+    const [modifyQuery, setModifyQuery] = useState<string>('');
+    const [modifyResults, setModifyResults] = useState<LocalProduct[]>([]);
+    const [modifySelectedIndex, setModifySelectedIndex] = useState<number>(0);
+    const [modifyProduct, setModifyProduct] = useState<{ barcode: string; sku: string; name: string; currentQty: number } | null>(null);
+    const [modifyNewQty, setModifyNewQty] = useState<string>('');
+    const modifyInputRef = useRef<HTMLInputElement>(null);
+    const modifyQtyInputRef = useRef<HTMLInputElement>(null);
+
     // Finalize state
     const [showFinalizeConfirm, setShowFinalizeConfirm] = useState(false);
     const [isFinalizing, setIsFinalizing] = useState(false);
@@ -125,6 +144,8 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const [isLoadingStores, setIsLoadingStores] = useState(false);
     const [isCreatingAudit, setIsCreatingAudit] = useState(false);
     const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+    const [expandedZone, setExpandedZone] = useState<string | null>(null);
+    const [newAuditName, setNewAuditName] = useState('');
 
     // Reopen request state
     const [finalizedAudits, setFinalizedAudits] = useState<RemoteAudit[]>([]);
@@ -150,7 +171,17 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             const response = await fetch(`${AUDIT_API}/audits/active`);
             if (!response.ok) throw new Error('Error de conexión');
             const data = await response.json();
-            const allAudits: RemoteAudit[] = data.audits || [];
+            let allAudits: RemoteAudit[] = data.audits || [];
+
+            // Filter by user's assigned stores (admin/gerente with no stores = see none)
+            const userStores = user?.store_ids || [];
+            const isAdmin = user?.role_name === 'Administrador';
+            if (!isAdmin && userStores.length > 0) {
+                allAudits = allAudits.filter(a => userStores.includes(a.session.store_id));
+            } else if (!isAdmin && userStores.length === 0) {
+                allAudits = [];
+            }
+
             // Split into active and finalized
             setActiveAudits(allAudits.filter(a => a.session.status !== 'finalizado'));
             setFinalizedAudits(allAudits.filter(a => a.session.status === 'finalizado'));
@@ -162,14 +193,25 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
         }
     };
 
-    // Fetch stores for creating new audit
+    // Fetch stores for creating new audit (filtered by user's stores)
     const fetchStores = async () => {
         setIsLoadingStores(true);
         try {
             const response = await fetch(`${AUDIT_API}/pos/stores`);
             if (!response.ok) throw new Error('Error fetching stores');
             const data = await response.json();
-            setStores(data.stores || []);
+            let allStores: Store[] = data.stores || [];
+
+            // Filter by user's assigned stores
+            const userStores = user?.store_ids || [];
+            const isAdmin = user?.role_name === 'Administrador';
+            if (!isAdmin && userStores.length > 0) {
+                allStores = allStores.filter(s => userStores.includes(s.id));
+            } else if (!isAdmin) {
+                allStores = [];
+            }
+
+            setStores(allStores);
         } catch (err) {
             console.error('Failed to fetch stores:', err);
         } finally {
@@ -188,7 +230,8 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 body: JSON.stringify({
                     store_id: selectedStoreId,
                     device_id: deviceId,
-                    created_by: userName || deviceId,
+                    created_by: user?.id || deviceId,
+                    name: newAuditName || undefined,
                 })
             });
             if (!response.ok) {
@@ -199,6 +242,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             await fetchActiveAudits();
             setShowCreateAudit(false);
             setSelectedStoreId(null);
+            setNewAuditName('');
         } catch (err) {
             console.error('Failed to create audit:', err);
             setConnectionError(err instanceof Error ? err.message : 'Error al crear auditoría');
@@ -216,7 +260,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     device_id: deviceId,
-                    requested_by: userName || deviceId,
+                    requested_by: user?.id || deviceId,
                     reason: reopenReason,
                 })
             });
@@ -261,13 +305,12 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     useEffect(() => {
         fetchActiveAudits();
 
-        // Get current user name from window.users if available
-        if (typeof window !== 'undefined' && (window as any).users?.getCurrentUser) {
-            (window as any).users.getCurrentUser().then((user: { name: string } | null) => {
-                if (user) setUserName(user.name);
-            }).catch(() => { });
+        // Set username from auth context
+        if (user) {
+            setUserName(`${user.first_name} ${user.last_name}`.trim() || user.email);
         }
-    }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user]);
 
     // Poll for updates when connected to an audit
     useEffect(() => {
@@ -299,7 +342,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 body: JSON.stringify({
                     barcode,
                     quantity,
-                    scanned_by: userName || undefined,
+                    scanned_by: user?.id || undefined,
                     device_id: deviceId
                 })
             });
@@ -474,6 +517,10 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                         console.warn('Auto-scan after register failed:', scanErr);
                     }
                 }
+                // Refresh scan list immediately so product names resolve and new scans appear
+                if (selectedAudit) {
+                    fetchScans(selectedAudit.session.id);
+                }
                 setLastScan({ product: `✓ REGISTRADO: ${productData.name}`, quantity: registerQty });
                 setFlashColor('green');
                 setTimeout(() => setFlashColor(null), 400);
@@ -500,9 +547,26 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
         setRegisterPrice('');
     }, [registerSku, registerBarcode, registerName, registerUnit, registerPrice, registerQty, registerFromScan, selectedAudit, sendScan]);
 
-    // Handle undo (delete last scan)
-    const handleUndo = useCallback(async () => {
-        if (!selectedAudit) return;
+    // Handle undo (delete last scan) — two-step confirmation
+    const handleUndoStep1 = useCallback(() => {
+        if (!selectedAudit || scans.length === 0) return;
+        // Get the most recent individual scan (first in list, sorted by newest)
+        const lastScanItem = scans[0];
+        if (!lastScanItem) return;
+
+        // Show confirmation with product details
+        setUndoConfirm({ scan: lastScanItem, step: 'confirm' });
+
+        // Auto-cancel after 8 seconds
+        if (undoTimeout.current) clearTimeout(undoTimeout.current);
+        undoTimeout.current = setTimeout(() => setUndoConfirm(null), 8000);
+    }, [selectedAudit, scans]);
+
+    const handleUndoConfirm = useCallback(async () => {
+        if (!selectedAudit || !undoConfirm) return;
+
+        if (undoTimeout.current) clearTimeout(undoTimeout.current);
+        setUndoConfirm(null);
 
         try {
             const response = await fetch(`${AUDIT_API}/audits/${selectedAudit.session.id}/scans/last`, {
@@ -510,16 +574,108 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             });
 
             if (response.ok) {
+                const deleted = undoConfirm.scan;
                 setScans(prev => prev.slice(1));
-                fetchScans(selectedAudit.session.id); // Refresh summary
-                setLastScan({ product: '↩️ DESHACER', quantity: 0 });
+                fetchScans(selectedAudit.session.id);
+                setLastScan({ product: `↩️ ELIMINADO: ${deleted.product_name || deleted.barcode} (×${deleted.quantity})`, quantity: 0 });
+                setFlashColor('amber');
+                setTimeout(() => setFlashColor(null), 300);
                 if (lastScanTimeout.current) clearTimeout(lastScanTimeout.current);
-                lastScanTimeout.current = setTimeout(() => setLastScan(null), 1500);
+                lastScanTimeout.current = setTimeout(() => setLastScan(null), 3000);
             }
         } catch (err) {
             console.error('Undo failed:', err);
         }
-    }, [selectedAudit]);
+    }, [selectedAudit, undoConfirm]);
+
+    const handleUndoCancel = useCallback(() => {
+        if (undoTimeout.current) clearTimeout(undoTimeout.current);
+        setUndoConfirm(null);
+    }, []);
+
+    // ===== F4: Modify quantity flow =====
+    const handleModifySearch = useCallback(async (query: string) => {
+        if (query.length < 2) { setModifyResults([]); return; }
+        try {
+            const results = await searchLocalProducts(query);
+            setModifyResults(results);
+            setModifySelectedIndex(0);
+        } catch { setModifyResults([]); }
+    }, []);
+
+    const handleModifySelectProduct = useCallback((product: LocalProduct) => {
+        // Find current quantity from scans
+        const currentQty = scans
+            .filter(s => s.barcode === product.barcode || s.sku === product.sku)
+            .reduce((sum, s) => sum + s.quantity, 0);
+
+        setModifyProduct({
+            barcode: product.barcode,
+            sku: product.sku,
+            name: product.name,
+            currentQty
+        });
+        setModifyNewQty(currentQty > 0 ? String(currentQty) : '');
+        setMode('MODIFY_QTY');
+        setTimeout(() => modifyQtyInputRef.current?.focus(), 50);
+    }, [scans]);
+
+    const handleModifyFromBarcode = useCallback((barcode: string) => {
+        // Find product in scans or local DB
+        const existingScan = scans.find(s => s.barcode === barcode);
+        const currentQty = scans
+            .filter(s => s.barcode === barcode)
+            .reduce((sum, s) => sum + s.quantity, 0);
+
+        setModifyProduct({
+            barcode,
+            sku: existingScan?.sku || barcode,
+            name: existingScan?.product_name || barcode,
+            currentQty
+        });
+        setModifyNewQty(currentQty > 0 ? String(currentQty) : '');
+        setMode('MODIFY_QTY');
+        setTimeout(() => modifyQtyInputRef.current?.focus(), 50);
+    }, [scans]);
+
+    const handleModifyConfirm = useCallback(async () => {
+        if (!selectedAudit || !modifyProduct) return;
+        const newQty = parseFloat(modifyNewQty);
+        if (isNaN(newQty) || newQty < 0) return;
+
+        try {
+            const response = await fetch(`${AUDIT_API}/audits/${selectedAudit.session.id}/scans/modify`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    barcode: modifyProduct.barcode,
+                    new_quantity: newQty
+                })
+            });
+
+            if (response.ok) {
+                fetchScans(selectedAudit.session.id);
+                const action = modifyProduct.currentQty === 0 ? 'AGREGADO' : 'MODIFICADO';
+                setLastScan({ product: `✏️ ${action}: ${modifyProduct.name} → ${newQty}`, quantity: newQty });
+                setFlashColor('green');
+                setTimeout(() => setFlashColor(null), 300);
+                if (lastScanTimeout.current) clearTimeout(lastScanTimeout.current);
+                lastScanTimeout.current = setTimeout(() => setLastScan(null), 3000);
+            } else {
+                setLastScan({ product: '❌ Error al modificar', quantity: 0 });
+            }
+        } catch (err) {
+            console.error('Modify failed:', err);
+            setLastScan({ product: '❌ Error al modificar', quantity: 0 });
+        }
+
+        // Reset modify state
+        setModifyProduct(null);
+        setModifyQuery('');
+        setModifyResults([]);
+        setModifyNewQty('');
+        setMode('SCAN');
+    }, [selectedAudit, modifyProduct, modifyNewQty]);
 
     // Disconnect from audit
     const handleDisconnect = useCallback(() => {
@@ -543,7 +699,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     device_id: deviceId,
-                    closed_by: userName || deviceId,
+                    closed_by: user?.id || deviceId,
                 }),
             });
             if (!response.ok) {
@@ -591,7 +747,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             }
 
             // In input modes, only intercept ESC and actual function keys (F1-F12)
-            if (mode === 'MANUAL_INPUT' || mode === 'MANUAL_QTY' || mode === 'REGISTER_PRODUCT') {
+            if (mode === 'MANUAL_INPUT' || mode === 'MANUAL_QTY' || mode === 'REGISTER_PRODUCT' || mode === 'MODIFY_SEARCH' || mode === 'MODIFY_QTY') {
                 if (e.key === 'Escape') {
                     setMode('SCAN');
                     setPendingQuantity('');
@@ -605,6 +761,10 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                     setRegisterName('');
                     setRegisterUnit('pz');
                     setRegisterPrice('');
+                    setModifyQuery('');
+                    setModifyResults([]);
+                    setModifyProduct(null);
+                    setModifyNewQty('');
                 }
                 return;
             }
@@ -624,9 +784,27 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 return;
             }
 
-            // F3: Undo
+            // F3: Undo — two-step
             if (e.key === 'F3') {
-                handleUndo();
+                if (undoConfirm) {
+                    handleUndoConfirm();
+                } else {
+                    handleUndoStep1();
+                }
+                return;
+            }
+
+            // F4: Modify quantity
+            if (e.key === 'F4') {
+                if (barcodeTimeout.current) clearTimeout(barcodeTimeout.current);
+                setBarcodeBuffer('');
+                setMode('MODIFY_SEARCH');
+                setModifyQuery('');
+                setModifyResults([]);
+                setModifySelectedIndex(0);
+                setModifyProduct(null);
+                setModifyNewQty('');
+                setTimeout(() => modifyInputRef.current?.focus(), 50);
                 return;
             }
 
@@ -650,8 +828,17 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 return;
             }
 
-            // ESC: Cancel mode
+            // ESC: Cancel undo confirmation, cancel mode, or disconnect
             if (e.key === 'Escape') {
+                if (undoConfirm) {
+                    handleUndoCancel();
+                    return;
+                }
+                // If already in SCAN mode, ESC = disconnect/exit
+                if (mode === 'SCAN') {
+                    handleDisconnect();
+                    return;
+                }
                 setMode('SCAN');
                 setPendingQuantity('');
                 setBarcodeBuffer('');
@@ -733,7 +920,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [selectedAudit, mode, pendingQuantity, barcodeBuffer, sendScan, handleUndo, searchLocalProducts, confirmManualProduct, isFinalized, showFinalizeConfirm, handleFinalize, handleDisconnect]);
+    }, [selectedAudit, mode, pendingQuantity, barcodeBuffer, sendScan, handleUndoStep1, handleUndoConfirm, handleUndoCancel, undoConfirm, searchLocalProducts, confirmManualProduct, handleModifySearch, handleModifySelectProduct, handleModifyFromBarcode, handleModifyConfirm, modifyResults, modifySelectedIndex, isFinalized, showFinalizeConfirm, handleFinalize, handleDisconnect]);
 
     // Select an audit to connect to
     const handleSelectAudit = (audit: RemoteAudit) => {
@@ -814,28 +1001,83 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                     <div className="text-center py-6 text-slate-500">
                                         No se encontraron tiendas
                                     </div>
-                                ) : (
-                                    <div className="grid gap-2 max-h-60 overflow-auto mb-4">
-                                        {stores.map(store => (
-                                            <button
-                                                key={store.id}
-                                                onClick={() => setSelectedStoreId(store.id)}
-                                                className={`p-3 rounded-xl text-left transition-all border-2 ${selectedStoreId === store.id
-                                                        ? 'border-emerald-500 bg-emerald-500/20'
-                                                        : 'border-transparent bg-slate-700 hover:bg-slate-600'
-                                                    }`}
-                                            >
-                                                <span className="font-medium">{store.name}</span>
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
+                                ) : (() => {
+                                    // Group stores by zone
+                                    const zoneMap = new Map<string, Store[]>();
+                                    stores.forEach(store => {
+                                        const zoneName = store.zone_name || 'Sin Zona';
+                                        if (!zoneMap.has(zoneName)) zoneMap.set(zoneName, []);
+                                        zoneMap.get(zoneName)!.push(store);
+                                    });
+                                    const zoneEntries = Array.from(zoneMap.entries());
+                                    const singleZone = zoneEntries.length === 1;
+
+                                    return (
+                                        <div className="max-h-60 overflow-auto mb-4">
+                                            {zoneEntries.map(([zoneName, zoneStores]) => (
+                                                <div key={zoneName}>
+                                                    {!singleZone && (
+                                                        <button
+                                                            onClick={() => setExpandedZone(prev => prev === zoneName ? null : zoneName)}
+                                                            className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-700/50 hover:bg-slate-600/50 rounded-lg mb-1 transition-colors"
+                                                        >
+                                                            <div className="flex items-center gap-2">
+                                                                <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                                </svg>
+                                                                <span className="text-sm font-semibold text-slate-300">{zoneName}</span>
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-xs text-slate-500">{zoneStores.length}</span>
+                                                                <svg className={`w-4 h-4 text-slate-400 transition-transform ${expandedZone === zoneName ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                                </svg>
+                                                            </div>
+                                                        </button>
+                                                    )}
+                                                    {(singleZone || expandedZone === zoneName) && (
+                                                        <div className={`grid gap-2 ${!singleZone ? 'pl-2 mb-2' : ''}`}>
+                                                            {zoneStores.map(store => (
+                                                                <button
+                                                                    key={store.id}
+                                                                    onClick={() => setSelectedStoreId(store.id)}
+                                                                    className={`p-3 rounded-xl text-left transition-all border-2 ${selectedStoreId === store.id
+                                                                            ? 'border-emerald-500 bg-emerald-500/20'
+                                                                            : 'border-transparent bg-slate-700 hover:bg-slate-600'
+                                                                        }`}
+                                                                >
+                                                                    <span className="font-medium">{store.name}</span>
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Audit name input (optional) */}
+                                <div className="mb-2">
+                                    <label className="block text-sm text-slate-400 mb-1">Nombre de auditoría (opcional)</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ej: Auditoría semanal, Conteo rápido..."
+                                        value={newAuditName}
+                                        onChange={(e) => setNewAuditName(e.target.value)}
+                                        maxLength={200}
+                                        className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                                    />
+                                </div>
 
                                 <div className="flex gap-3 mt-4">
                                     <button
                                         onClick={() => {
                                             setShowCreateAudit(false);
                                             setSelectedStoreId(null);
+                                            setExpandedZone(null);
+                                            setNewAuditName('');
                                         }}
                                         className="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl"
                                     >
@@ -917,7 +1159,10 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                     >
                                         <div className="flex items-center justify-between">
                                             <div>
-                                                <h2 className="text-lg font-bold">{audit.store_name}</h2>
+                                                <h2 className="text-lg font-bold">{audit.session.name || audit.store_name}</h2>
+                                                {audit.session.name && (
+                                                    <div className="text-slate-500 text-xs">{audit.store_name}</div>
+                                                )}
                                                 <div className="text-slate-400 text-sm mt-1">
                                                     Creada: {new Date(audit.session.created_at).toLocaleString()}
                                                 </div>
@@ -951,7 +1196,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                     >
                                         <div className="flex items-center justify-between">
                                             <div>
-                                                <h3 className="font-medium text-slate-300">{audit.store_name}</h3>
+                                                <h3 className="font-medium text-slate-300">{audit.session.name || audit.store_name}</h3>
                                                 <div className="text-slate-500 text-xs mt-1">
                                                     Finalizada: {new Date(audit.session.created_at).toLocaleDateString()}
                                                 </div>
@@ -986,24 +1231,22 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             <div className="bg-gray-900 border-b border-gray-700 px-4 py-2 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                        <span className="font-bold text-sm uppercase tracking-wide">{selectedAudit.store_name}</span>
+                        <span className="font-bold text-sm uppercase tracking-wide">{selectedAudit.session.name || selectedAudit.store_name}</span>
                     </div>
                     <span className="text-gray-500 text-xs font-mono">{deviceId}</span>
                 </div>
                 <div className="flex items-center gap-6">
                     {/* Inline stats */}
-                    <div className="flex items-center gap-5 text-xs font-mono">
-                        <span className="text-blue-400">SCAN:<span className="text-white font-bold ml-1">{summary?.total_scans || 0}</span></span>
-                        <span className="text-emerald-400">UDS:<span className="text-white font-bold ml-1">{summary?.total_quantity || 0}</span></span>
-                        <span className="text-purple-400">PROD:<span className="text-white font-bold ml-1">{summary?.unique_products || 0}</span></span>
+                    <div className="flex items-center gap-6 font-mono">
+                        <span className="text-emerald-400 text-sm">UNIDADES:<span className="text-white font-bold ml-1 text-xl">{summary?.total_quantity || 0}</span></span>
+                        <span className="text-purple-400 text-sm">PRODUCTOS:<span className="text-white font-bold ml-1 text-xl">{summary?.unique_products || 0}</span></span>
                         {(summary?.unknown_items || 0) > 0 && (
-                            <span className="text-amber-400">N/F:<span className="text-white font-bold ml-1">{summary?.unknown_items}</span></span>
+                            <span className="text-amber-400 text-sm">N/F:<span className="text-white font-bold ml-1 text-xl">{summary?.unknown_items}</span></span>
                         )}
                     </div>
                     <button
                         onClick={handleDisconnect}
-                        className="text-gray-500 hover:text-red-400 text-xs uppercase tracking-wider transition-colors"
+                        className="bg-red-600/20 hover:bg-red-600 border border-red-500/50 hover:border-red-400 text-red-400 hover:text-white px-5 py-2 rounded-lg text-sm font-bold uppercase tracking-wider transition-all duration-200 flex items-center gap-2"
                     >
                         ✕ SALIR
                     </button>
@@ -1024,6 +1267,175 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                     <span className="font-mono text-lg font-bold tracking-widest">
                         ✓ CANT: {pendingQuantity} → ESCANEA PRODUCTO
                     </span>
+                </div>
+            )}
+
+            {/* ===== UNDO CONFIRMATION STRIP ===== */}
+            {undoConfirm && (
+                <div className="bg-red-900/90 border-y-2 border-red-500 px-4 py-3 shrink-0 animate-pulse-once">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <span className="text-red-400 text-2xl">⚠</span>
+                            <div>
+                                <p className="text-red-300 text-xs font-mono uppercase tracking-wider mb-1">¿Eliminar del conteo?</p>
+                                <div className="flex items-center gap-3">
+                                    <span className="bg-red-800 text-red-200 font-mono text-sm px-2 py-0.5 rounded">
+                                        {undoConfirm.scan.sku || undoConfirm.scan.barcode}
+                                    </span>
+                                    <span className="text-white font-bold text-base">
+                                        {undoConfirm.scan.product_name || undoConfirm.scan.barcode}
+                                    </span>
+                                    <span className="text-red-300 font-mono text-lg font-bold">
+                                        ×{undoConfirm.scan.quantity}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={handleUndoCancel}
+                                className="bg-gray-700 hover:bg-gray-600 text-gray-300 px-4 py-2 rounded font-mono text-sm font-bold uppercase tracking-wider transition-colors"
+                            >
+                                ESC Cancelar
+                            </button>
+                            <button
+                                onClick={handleUndoConfirm}
+                                className="bg-red-600 hover:bg-red-500 text-white px-5 py-2 rounded font-mono text-sm font-bold uppercase tracking-wider transition-colors flex items-center gap-2"
+                            >
+                                <span className="bg-red-800 text-red-200 text-xs px-1.5 py-0.5 rounded">F3</span>
+                                Confirmar Eliminación
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ===== F4: MODIFY SEARCH ===== */}
+            {mode === 'MODIFY_SEARCH' && (
+                <div className="bg-cyan-900 border-b border-cyan-700 px-4 py-3 shrink-0">
+                    <div className="flex items-center gap-3 mb-2">
+                        <span className="text-cyan-300 text-xs uppercase font-bold tracking-wider">✏️ MODIFICAR CANTIDAD</span>
+                        <span className="text-cyan-500 text-xs font-mono">Busca por nombre, SKU o escanea código de barras</span>
+                    </div>
+                    <input
+                        ref={modifyInputRef}
+                        type="text"
+                        value={modifyQuery}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            setModifyQuery(val);
+                            handleModifySearch(val);
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                setModifySelectedIndex(prev => Math.min(prev + 1, modifyResults.length - 1));
+                            } else if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                setModifySelectedIndex(prev => Math.max(prev - 1, 0));
+                            } else if (e.key === 'Enter') {
+                                e.preventDefault();
+                                // Check if typed a barcode (all digits, length >= 5)
+                                if (/^\d{5,}$/.test(modifyQuery) && modifyResults.length === 0) {
+                                    handleModifyFromBarcode(modifyQuery);
+                                } else if (modifyResults.length > 0) {
+                                    handleModifySelectProduct(modifyResults[modifySelectedIndex]);
+                                }
+                            } else if (e.key === 'Escape') {
+                                setMode('SCAN');
+                                setModifyQuery('');
+                                setModifyResults([]);
+                            }
+                        }}
+                        className="w-full bg-black border border-cyan-600 rounded px-3 py-2 text-white font-mono text-base focus:outline-none focus:ring-2 focus:ring-cyan-500 placeholder:text-gray-600"
+                        placeholder="Escribe nombre, SKU o escanea código..."
+                        autoFocus
+                    />
+                    {modifyResults.length > 0 && (
+                        <div className="mt-2 max-h-48 overflow-auto rounded border border-cyan-800">
+                            {modifyResults.slice(0, 8).map((p, idx) => {
+                                const currentQty = scans.filter(s => s.barcode === p.barcode || s.sku === p.sku).reduce((sum, s) => sum + s.quantity, 0);
+                                return (
+                                    <div
+                                        key={p.id}
+                                        className={`flex items-center gap-3 px-3 py-2 cursor-pointer font-mono text-sm transition-colors
+                                            ${idx === modifySelectedIndex ? 'bg-cyan-800 text-white' : 'bg-gray-900 text-gray-400 hover:bg-gray-800'}`}
+                                        onClick={() => handleModifySelectProduct(p)}
+                                    >
+                                        <span className="text-cyan-400 w-24 shrink-0">{p.sku}</span>
+                                        <span className="flex-1 truncate">{p.name}</span>
+                                        {currentQty > 0 ? (
+                                            <span className="bg-emerald-900 text-emerald-400 px-2 py-0.5 rounded text-xs font-bold">
+                                                CONTEO: {currentQty}
+                                            </span>
+                                        ) : (
+                                            <span className="bg-gray-800 text-gray-500 px-2 py-0.5 rounded text-xs">
+                                                SIN CONTEO
+                                            </span>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ===== F4: MODIFY QUANTITY INPUT ===== */}
+            {mode === 'MODIFY_QTY' && modifyProduct && (
+                <div className="bg-cyan-900 border-b-2 border-cyan-500 px-4 py-3 shrink-0">
+                    <div className="flex items-center gap-4 mb-3">
+                        <span className="text-cyan-300 text-xs uppercase font-bold tracking-wider">✏️ MODIFICAR CANTIDAD</span>
+                    </div>
+                    <div className="flex items-center gap-4 bg-black/40 rounded-lg px-4 py-3">
+                        {/* Product info */}
+                        <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-1">
+                                <span className="bg-cyan-800 text-cyan-200 font-mono text-sm px-2 py-0.5 rounded">{modifyProduct.sku}</span>
+                                <span className="text-white font-bold text-base">{modifyProduct.name}</span>
+                            </div>
+                            <div className="flex items-center gap-4 text-sm">
+                                <span className="text-gray-400">Conteo actual:</span>
+                                <span className={`font-bold font-mono text-xl ${modifyProduct.currentQty > 0 ? 'text-emerald-400' : 'text-gray-500'}`}>
+                                    {modifyProduct.currentQty > 0 ? modifyProduct.currentQty : '0 (sin conteo)'}
+                                </span>
+                            </div>
+                        </div>
+                        {/* New quantity input */}
+                        <div className="flex items-center gap-3">
+                            <span className="text-cyan-300 text-sm font-bold">NUEVA CANT:</span>
+                            <input
+                                ref={modifyQtyInputRef}
+                                type="number"
+                                min="0"
+                                value={modifyNewQty}
+                                onChange={(e) => setModifyNewQty(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleModifyConfirm();
+                                    } else if (e.key === 'Escape') {
+                                        setMode('SCAN');
+                                        setModifyProduct(null);
+                                        setModifyNewQty('');
+                                    }
+                                }}
+                                className="w-28 bg-black border-2 border-cyan-500 rounded px-3 py-2 text-white font-mono text-2xl font-bold text-center focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                                autoFocus
+                            />
+                            <button
+                                onClick={handleModifyConfirm}
+                                className="bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded font-mono text-sm font-bold uppercase tracking-wider transition-colors"
+                            >
+                                Enter ✓
+                            </button>
+                        </div>
+                    </div>
+                    {modifyProduct.currentQty === 0 && (
+                        <p className="text-cyan-400/70 text-xs font-mono mt-2">
+                            Este producto no ha sido escaneado aún. Ingresa la cantidad para agregarlo al conteo.
+                        </p>
+                    )}
                 </div>
             )}
 
@@ -1327,7 +1739,8 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                 mode === 'QUANTITY_INPUT' || mode === 'QUANTITY_READY' ? 'text-purple-400' :
                                     mode === 'MANUAL_INPUT' || mode === 'MANUAL_QTY' ? 'text-cyan-400' :
                                         mode === 'REGISTER_PRODUCT' ? 'text-amber-400' :
-                                            'text-gray-500'
+                                            mode === 'MODIFY_SEARCH' || mode === 'MODIFY_QTY' ? 'text-cyan-400' :
+                                                'text-gray-500'
                             }`}>
                             {mode === 'SCAN' && '● LISTO PARA ESCANEAR'}
                             {mode === 'QUANTITY_INPUT' && '▶ INGRESANDO CANTIDAD'}
@@ -1335,6 +1748,8 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                             {mode === 'MANUAL_INPUT' && '▶ BÚSQUEDA MANUAL'}
                             {mode === 'MANUAL_QTY' && '▶ CONFIRMAR CANTIDAD'}
                             {mode === 'REGISTER_PRODUCT' && '▶ REGISTRAR PRODUCTO'}
+                            {mode === 'MODIFY_SEARCH' && '▶ MODIFICAR: BUSCAR PRODUCTO'}
+                            {mode === 'MODIFY_QTY' && '▶ MODIFICAR: NUEVA CANTIDAD'}
                         </span>
                     </div>
                 </div>
@@ -1342,11 +1757,11 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 {/* ===== RIGHT PANEL: HISTORIAL (scan history table) ===== */}
                 <div className="w-3/5 flex flex-col bg-black">
                     {/* Table header */}
-                    <div className="bg-gray-900 border-b border-gray-700 px-3 py-2 flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-gray-500 shrink-0">
-                        <span className="w-16">HORA</span>
+                    <div className="bg-gray-900 border-b border-gray-700 px-4 py-2 flex items-center gap-3 text-xs font-mono uppercase tracking-widest text-gray-500 shrink-0">
+                        <span className="w-20">HORA</span>
                         <span className="w-28">SKU</span>
                         <span className="flex-1">PRODUCTO</span>
-                        <span className="w-14 text-right">CANT.</span>
+                        <span className="w-20 text-right">CANT.</span>
                     </div>
 
                     {/* Scan rows - dense table */}
@@ -1379,21 +1794,21 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                             return items.map((item, index) => (
                                 <div
                                     key={item.key}
-                                    className={`flex items-center gap-2 px-3 py-2 border-b border-gray-900 text-sm font-mono transition-colors
+                                    className={`flex items-center gap-3 px-4 py-2.5 border-b border-gray-900 font-mono transition-colors
                                         ${index === 0 ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-900'}
                                         ${item.is_unknown ? 'border-l-2 border-l-amber-600' : ''}`}
                                 >
-                                    <span className="w-16 text-sm text-gray-600 tabular-nums shrink-0">
+                                    <span className="w-20 text-sm text-gray-600 tabular-nums shrink-0">
                                         {item.lastTime ? new Date(item.lastTime).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--'}
                                     </span>
-                                    <span className={`w-28 text-sm shrink-0 ${item.is_unknown ? 'text-amber-500' : 'text-blue-400'}`}>
+                                    <span className={`w-28 text-base shrink-0 ${item.is_unknown ? 'text-amber-500' : 'text-blue-400'}`}>
                                         {item.sku || item.barcode.substring(0, 12)}
                                     </span>
-                                    <span className={`flex-1 truncate text-sm ${index === 0 ? 'text-white' : 'text-gray-300'}`}>
+                                    <span className={`flex-1 truncate text-base ${index === 0 ? 'text-white' : 'text-gray-300'}`}>
                                         {item.product_name}
                                         {item.is_unknown && ' ⚠'}
                                     </span>
-                                    <span className={`w-14 text-right font-bold tabular-nums ${index === 0 ? 'text-green-400 text-lg' : 'text-gray-400 text-base'
+                                    <span className={`w-20 text-right font-bold tabular-nums ${index === 0 ? 'text-green-400 text-2xl' : 'text-gray-300 text-xl'
                                         }`}>
                                         {item.quantity}
                                     </span>
@@ -1518,12 +1933,12 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                     <span className="text-gray-300 text-sm font-mono">Deshacer</span>
                 </div>
                 <div className="flex items-center gap-1">
-                    <span className="bg-yellow-500 text-black text-xs font-mono font-bold px-2 py-0.5 rounded">F7</span>
-                    <span className="text-gray-300 text-sm font-mono">Manual</span>
+                    <span className="bg-cyan-500 text-black text-xs font-mono font-bold px-2 py-0.5 rounded">F4</span>
+                    <span className="text-gray-300 text-sm font-mono">Modificar</span>
                 </div>
                 <div className="flex items-center gap-1">
-                    <span className="bg-yellow-500 text-black text-xs font-mono font-bold px-2 py-0.5 rounded">ESC</span>
-                    <span className="text-gray-300 text-sm font-mono">Cancelar</span>
+                    <span className="bg-yellow-500 text-black text-xs font-mono font-bold px-2 py-0.5 rounded">F7</span>
+                    <span className="text-gray-300 text-sm font-mono">Manual</span>
                 </div>
                 <div className="flex-1"></div>
                 {isSending && (

@@ -5,6 +5,7 @@
 
 import { NavLink } from 'react-router-dom';
 import { BarChart3, Package, ClipboardList, FileSpreadsheet, Users, MapPin, LogOut, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
+import { usePermissions, type Permission } from '../../hooks/usePermissions';
 import type { SystemHealth } from '../../types';
 
 interface SidebarProps {
@@ -22,17 +23,22 @@ const Sidebar: React.FC<SidebarProps> = ({
     isCollapsed,
     onToggleCollapse,
 }) => {
-    const navItems = [
-        { path: '/dashboard/overview', label: 'Dashboard', icon: BarChart3 },
-        { path: '/dashboard/inventory', label: 'Inventarios', icon: Package },
-        { path: '/dashboard/audits', label: 'Auditorías', icon: ClipboardList },
+    const { hasPermission } = usePermissions();
+
+    const navItems: { path: string; label: string; icon: any; permission?: Permission }[] = [
+        { path: '/dashboard/overview', label: 'Dashboard', icon: BarChart3, permission: 'web:dashboard' },
+        { path: '/dashboard/inventory', label: 'Inventarios', icon: Package, permission: 'web:inventories' },
+        { path: '/dashboard/audits', label: 'Auditorías', icon: ClipboardList, permission: 'web:audits' },
     ];
 
-    const configItems = [
-        { path: '/dashboard/catalog', label: 'Catálogo Maestro', icon: FileSpreadsheet },
-        { path: '/dashboard/users', label: 'Usuarios (IAM)', icon: Users },
-        { path: '/dashboard/stores', label: 'Red Comercial', icon: MapPin },
+    const configItems: { path: string; label: string; icon: any; permission?: Permission }[] = [
+        { path: '/dashboard/catalog', label: 'Catálogo Maestro', icon: FileSpreadsheet, permission: 'web:catalog' },
+        { path: '/dashboard/users', label: 'Usuarios (IAM)', icon: Users, permission: 'web:users' },
+        { path: '/dashboard/stores', label: 'Red Comercial', icon: MapPin, permission: 'web:users' },
     ];
+
+    const visibleNavItems = navItems.filter(item => !item.permission || hasPermission(item.permission));
+    const visibleConfigItems = configItems.filter(item => !item.permission || hasPermission(item.permission));
 
     return (
         <aside className={`bg-slate-900 text-slate-300 flex flex-col transition-all duration-300 ${isCollapsed ? 'w-16' : 'w-64'}`}>
@@ -50,7 +56,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
             {/* Navigation */}
             <nav className="flex-1 py-6 px-2 space-y-1">
-                {navItems.map((item) => {
+                {visibleNavItems.map((item) => {
                     const Icon = item.icon;
                     return (
                         <NavLink
@@ -66,11 +72,15 @@ const Sidebar: React.FC<SidebarProps> = ({
                     );
                 })}
 
-                {/* Separator */}
-                <div className="border-t border-slate-700 my-3"></div>
-                {!isCollapsed && <p className="px-3 text-xs text-slate-500 uppercase tracking-wide">Configuración</p>}
+                {/* Separator - only show if there are config items */}
+                {visibleConfigItems.length > 0 && (
+                    <>
+                        <div className="border-t border-slate-700 my-3"></div>
+                        {!isCollapsed && <p className="px-3 text-xs text-slate-500 uppercase tracking-wide">Configuración</p>}
+                    </>
+                )}
 
-                {configItems.map((item) => {
+                {visibleConfigItems.map((item) => {
                     const Icon = item.icon;
                     return (
                         <NavLink

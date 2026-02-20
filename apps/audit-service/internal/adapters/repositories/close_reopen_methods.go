@@ -75,22 +75,40 @@ func (r *PostgresRepository) ReopenAudit(ctx context.Context, auditID int, userI
 		return fmt.Errorf("failed to get current status: %w", err)
 	}
 
-	// Update audit status to 'activa' and clear closed_at
+	// Check if there are existing physical scans — if so, set COUNTING instead of IN_PROGRESS
+	var scanCount int
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_physical WHERE audit_id = $1`, auditID).Scan(&scanCount)
+	if err != nil {
+		return fmt.Errorf("failed to check scan count: %w", err)
+	}
+	newStatus := "IN_PROGRESS"
+	if scanCount > 0 {
+		newStatus = "COUNTING"
+	}
+
+	// Update audit status and clear closed_at
 	_, err = tx.ExecContext(ctx, `
 		UPDATE audit_sessions 
-		SET status = 'IN_PROGRESS', 
+		SET status = $2, 
 			closed_at = NULL
 		WHERE id = $1
-	`, auditID)
+	`, auditID, newStatus)
 	if err != nil {
 		return fmt.Errorf("failed to reopen audit: %w", err)
 	}
 
+	// Resolve any pending reopen requests for this audit
+	_, _ = tx.ExecContext(ctx, `
+		UPDATE reopen_requests 
+		SET status = 'approved', resolved_by = $2, resolved_at = NOW()
+		WHERE audit_id = $1 AND status = 'pending'
+	`, auditID, userID)
+
 	// Log the reopen event
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO audit_events (audit_id, user_id, action, previous_status, new_status)
-		VALUES ($1, $2, 'reabrir', $3, 'IN_PROGRESS')
-	`, auditID, userID, previousStatus)
+		VALUES ($1, $2, 'reabrir', $3, $4)
+	`, auditID, userID, previousStatus, newStatus)
 	if err != nil {
 		return fmt.Errorf("failed to log reopen event: %w", err)
 	}

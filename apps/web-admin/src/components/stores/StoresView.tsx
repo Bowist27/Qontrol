@@ -17,6 +17,8 @@ import {
     MapPin,
     Building2,
     Users,
+    ChevronRight,
+    ArrowLeft,
 } from 'lucide-react';
 import usersApi, {
     type Store as StoreType,
@@ -24,52 +26,62 @@ import usersApi, {
     type User,
 } from '../../services/users.api';
 
-type TabType = 'zonas' | 'sucursales';
+type ViewMode = 'zones' | 'zone-stores';
 
 // =====================================================
-// MAIN COMPONENT
+// MAIN COMPONENT - Zone Drill-Down Navigation
 // =====================================================
 export default function StoresView() {
-    const [activeTab, setActiveTab] = useState<TabType>('zonas');
+    const [viewMode, setViewMode] = useState<ViewMode>('zones');
+    const [selectedZone, setSelectedZone] = useState<Zone | null>(null);
+
+    const handleZoneClick = (zone: Zone) => {
+        setSelectedZone(zone);
+        setViewMode('zone-stores');
+    };
+
+    const handleBack = () => {
+        setSelectedZone(null);
+        setViewMode('zones');
+    };
 
     return (
         <div className="p-6 space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-800">Red Comercial</h1>
-                    <p className="text-slate-500 mt-1">Gestiona zonas y sucursales del sistema</p>
+                    {viewMode === 'zones' ? (
+                        <>
+                            <h1 className="text-2xl font-bold text-slate-800">Red Comercial</h1>
+                            <p className="text-slate-500 mt-1">Selecciona una zona para ver sus sucursales</p>
+                        </>
+                    ) : (
+                        <div className="flex items-center gap-3">
+                            <button
+                                onClick={handleBack}
+                                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                            >
+                                <ArrowLeft className="w-5 h-5" />
+                            </button>
+                            <div>
+                                <div className="flex items-center gap-2 text-sm text-slate-500">
+                                    <span className="hover:text-blue-600 cursor-pointer" onClick={handleBack}>Red Comercial</span>
+                                    <ChevronRight className="w-3 h-3" />
+                                    <span className="text-slate-800 font-medium">{selectedZone?.name}</span>
+                                </div>
+                                <h1 className="text-2xl font-bold text-slate-800">{selectedZone?.name}</h1>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* Tabs */}
-            <div className="flex gap-1 border-b border-slate-200">
-                <button
-                    onClick={() => setActiveTab('zonas')}
-                    className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors ${
-                        activeTab === 'zonas'
-                            ? 'text-blue-600 border-b-2 border-blue-600'
-                            : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                >
-                    <MapPin className="w-4 h-4" />
-                    Zonas
-                </button>
-                <button
-                    onClick={() => setActiveTab('sucursales')}
-                    className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors ${
-                        activeTab === 'sucursales'
-                            ? 'text-blue-600 border-b-2 border-blue-600'
-                            : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                >
-                    <Building2 className="w-4 h-4" />
-                    Sucursales
-                </button>
-            </div>
-
-            {/* Tab Content */}
-            {activeTab === 'zonas' ? <ZonasTab /> : <SucursalesTab />}
+            {/* Content */}
+            {viewMode === 'zones' ? (
+                <ZonasTab onZoneClick={handleZoneClick} />
+            ) : (
+                <SucursalesTab preselectedZone={selectedZone} onBack={handleBack} />
+            )}
         </div>
     );
 }
@@ -77,7 +89,7 @@ export default function StoresView() {
 // =====================================================
 // ZONAS TAB
 // =====================================================
-function ZonasTab() {
+function ZonasTab({ onZoneClick }: { onZoneClick: (zone: Zone) => void }) {
     const [zones, setZones] = useState<Zone[]>([]);
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
@@ -269,13 +281,16 @@ function ZonasTab() {
                             </tr>
                         ) : (
                             filteredZones.map((zone) => (
-                                <tr key={zone.id} className="hover:bg-slate-50 transition-colors">
+                                <tr key={zone.id} className="hover:bg-slate-50 transition-colors cursor-pointer" onClick={() => onZoneClick(zone)}>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center gap-3">
                                             <div className="w-10 h-10 bg-linear-to-br from-purple-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-semibold">
                                                 <MapPin className="w-5 h-5" />
                                             </div>
-                                            <span className="font-medium text-slate-800">{zone.name}</span>
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-medium text-slate-800">{zone.name}</span>
+                                                <ChevronRight className="w-4 h-4 text-slate-400" />
+                                            </div>
                                         </div>
                                     </td>
                                     <td className="px-6 py-4">
@@ -300,7 +315,7 @@ function ZonasTab() {
                                     </td>
                                     <td className="px-6 py-4">
                                         <button
-                                            onClick={() => handleToggleStatus(zone)}
+                                            onClick={(e) => { e.stopPropagation(); handleToggleStatus(zone); }}
                                             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                                                 zone.status
                                                     ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
@@ -323,7 +338,7 @@ function ZonasTab() {
                                     <td className="px-6 py-4">
                                         <div className="flex items-center justify-end gap-2">
                                             <button
-                                                onClick={() => openEditModal(zone)}
+                                                onClick={(e) => { e.stopPropagation(); openEditModal(zone); }}
                                                 className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                                                 title="Editar"
                                             >
@@ -332,7 +347,7 @@ function ZonasTab() {
                                                 </svg>
                                             </button>
                                             <button
-                                                onClick={() => setDeleteModal({ id: zone.id, name: zone.name })}
+                                                onClick={(e) => { e.stopPropagation(); setDeleteModal({ id: zone.id, name: zone.name }); }}
                                                 className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                 title="Eliminar"
                                             >
@@ -513,14 +528,14 @@ function ZonasTab() {
 // =====================================================
 // SUCURSALES TAB
 // =====================================================
-function SucursalesTab() {
+function SucursalesTab({ preselectedZone, onBack }: { preselectedZone: Zone | null; onBack: () => void }) {
     const [stores, setStores] = useState<StoreType[]>([]);
     const [zones, setZones] = useState<Zone[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
     const [editingStore, setEditingStore] = useState<StoreType | null>(null);
-    const [formData, setFormData] = useState({ name: '', zone_id: 0 });
+    const [formData, setFormData] = useState({ name: '', zone_id: preselectedZone?.id || 0 });
     const [saving, setSaving] = useState(false);
     const [deleteModal, setDeleteModal] = useState<{ id: number; name: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -528,9 +543,6 @@ function SucursalesTab() {
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(25);
-
-    // Zone filter state
-    const [selectedZoneFilter, setSelectedZoneFilter] = useState<number | 'all'>('all');
 
     const loadData = useCallback(async () => {
         try {
@@ -554,11 +566,9 @@ function SucursalesTab() {
 
     const filteredStores = stores.filter(store => {
         const matchesSearch = store.name.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesZone = selectedZoneFilter === 'all'
-            ? true
-            : selectedZoneFilter === 0
-                ? !store.zone_id
-                : store.zone_id === selectedZoneFilter;
+        const matchesZone = preselectedZone
+            ? store.zone_id === preselectedZone.id
+            : true;
         return matchesSearch && matchesZone;
     });
 
@@ -573,11 +583,11 @@ function SucursalesTab() {
     // Reset page when filters change
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchTerm, selectedZoneFilter]);
+    }, [searchTerm]);
 
     const openCreateModal = () => {
         setEditingStore(null);
-        setFormData({ name: '', zone_id: 0 });
+        setFormData({ name: '', zone_id: preselectedZone?.id || 0 });
         setShowModal(true);
     };
 
@@ -585,7 +595,7 @@ function SucursalesTab() {
         setEditingStore(store);
         setFormData({
             name: store.name,
-            zone_id: store.zone_id || 0,
+            zone_id: store.zone_id || preselectedZone?.id || 0,
         });
         setShowModal(true);
     };
@@ -678,7 +688,7 @@ function SucursalesTab() {
                 </div>
             )}
 
-            {/* Header with Search, Zone Filter, and Add button */}
+            {/* Header with Search and Add button */}
             <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3 flex-1">
                     <div className="relative flex-1 max-w-md">
@@ -691,22 +701,12 @@ function SucursalesTab() {
                             className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         />
                     </div>
-                    <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-slate-400" />
-                        <select
-                            value={selectedZoneFilter === 'all' ? 'all' : selectedZoneFilter}
-                            onChange={(e) => setSelectedZoneFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-                            className="px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        >
-                            <option value="all">Todas las zonas</option>
-                            <option value="0">Sin zona</option>
-                            {zones.map((zone) => (
-                                <option key={zone.id} value={zone.id}>
-                                    {zone.name}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
+                    {preselectedZone && (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
+                            <MapPin className="w-3.5 h-3.5" />
+                            {preselectedZone.name}
+                        </span>
+                    )}
                 </div>
                 <button
                     onClick={openCreateModal}
@@ -740,7 +740,7 @@ function SucursalesTab() {
                         {paginatedStores.length === 0 ? (
                             <tr>
                                 <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
-                                    {searchTerm || selectedZoneFilter !== 'all' ? 'No se encontraron sucursales con los filtros aplicados' : 'No hay sucursales registradas'}
+                                    {searchTerm ? 'No se encontraron sucursales con los filtros aplicados' : 'No hay sucursales en esta zona'}
                                 </td>
                             </tr>
                         ) : (

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { ArrowUpDown, ArrowUp, ArrowDown, EyeOff } from 'lucide-react';
 import { catalogApi, type ValuationProduct, type ValuationSummary, type ImportHistoryItem, type Product, type ProductChange, type CreateProductRequest } from '../../services/catalog.api';
 
 type FilterType = 'all' | 'price_up' | 'price_down' | 'new' | 'unchanged';
 type HistoryTabType = 'imports' | 'changes';
+type PriceMode = 'none' | 'hide_zero' | 'price_asc' | 'price_desc';
 
 interface UndoState {
   show: boolean;
@@ -86,6 +88,9 @@ const CatalogView: React.FC = () => {
   const [editModalProduct, setEditModalProduct] = useState<Product | null>(null);
   const [editFormData, setEditFormData] = useState({ name: '', barcode: '', unit: '', price: 0 });
   const [savingEditModal, setSavingEditModal] = useState(false);
+
+  // Price column filter/sort state (4-click cycle)
+  const [priceMode, setPriceMode] = useState<PriceMode>('none');
   
   // Undo state
   const [undoState, setUndoState] = useState<UndoState>({
@@ -119,14 +124,16 @@ const CatalogView: React.FC = () => {
     loadData();
   }, []);
 
-  // Load products whenever pagination or debounced search changes
+  // Load products whenever pagination, search, or price mode changes
   useEffect(() => {
     loadCatalogProducts();
-  }, [currentPage, itemsPerPage, debouncedSearchTerm]);
+  }, [currentPage, itemsPerPage, debouncedSearchTerm, priceMode]);
 
   const loadCatalogProducts = async () => {
     try {
-      const catalogData = await catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm);
+      const sortBy = priceMode === 'price_asc' ? 'price_asc' : priceMode === 'price_desc' ? 'price_desc' : '';
+      const hideZero = priceMode === 'hide_zero';
+      const catalogData = await catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm, sortBy, hideZero);
       setCatalogProducts(catalogData.products || []);
       setCatalogStats({ totalCount: catalogData.total_count || 0, totalValue: catalogData.total_value || 0 });
     } catch (err) {
@@ -143,7 +150,7 @@ const CatalogView: React.FC = () => {
       // Get more items for pagination (up to 200)
       const [historyData, catalogData, changesData] = await Promise.all([
         catalogApi.getImportHistory(200),
-        catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm),
+        catalogApi.getProducts(currentPage, itemsPerPage, debouncedSearchTerm, '', false),
         catalogApi.getProductChanges(1, 200)
       ]);
       
@@ -1020,7 +1027,25 @@ const CatalogView: React.FC = () => {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Código de Barras</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unidad</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Precio</th>
+                    <th
+                      onClick={() => {
+                        setPriceMode(prev => {
+                          const cycle: PriceMode[] = ['none', 'hide_zero', 'price_asc', 'price_desc'];
+                          const next = cycle[(cycle.indexOf(prev) + 1) % cycle.length];
+                          return next;
+                        });
+                        setCurrentPage(1);
+                      }}
+                      className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer select-none hover:bg-gray-100 transition-colors"
+                    >
+                      <span className="inline-flex items-center gap-1 justify-end">
+                        Precio
+                        {priceMode === 'none' && <ArrowUpDown size={12} className="text-gray-300" />}
+                        {priceMode === 'hide_zero' && <EyeOff size={12} className="text-amber-500" />}
+                        {priceMode === 'price_asc' && <ArrowUp size={12} className="text-blue-500" />}
+                        {priceMode === 'price_desc' && <ArrowDown size={12} className="text-blue-500" />}
+                      </span>
+                    </th>
                     <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Acciones</th>
                   </tr>
                 </thead>
