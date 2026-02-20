@@ -148,9 +148,15 @@ func (h *AuditHandler) CreateAudit(c *gin.Context) {
 		}
 	}
 
+	// Get optional audit name from form
+	var name *string
+	if n := c.PostForm("name"); n != "" {
+		name = &n
+	}
+
 	// Call service - now saves everything (session + S3 + items)
 	// Pass original filename to preserve it in S3 key
-	result, err := h.service.CreateAudit(c.Request.Context(), storeID, pdfData, createdBy, header.Filename)
+	result, err := h.service.CreateAudit(c.Request.Context(), storeID, pdfData, createdBy, header.Filename, name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "create_failed",
@@ -634,6 +640,7 @@ func (h *AuditHandler) CreateAuditFromPOS(c *gin.Context) {
 		StoreID   int    `json:"store_id" binding:"required"`
 		DeviceID  string `json:"device_id"`
 		CreatedBy string `json:"created_by"`
+		Name      string `json:"name"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
@@ -648,7 +655,12 @@ func (h *AuditHandler) CreateAuditFromPOS(c *gin.Context) {
 		createdBy = "pos-device:" + req.DeviceID
 	}
 
-	session, err := h.service.CreateAuditFromPOS(c.Request.Context(), req.StoreID, createdBy)
+	var name *string
+	if req.Name != "" {
+		name = &req.Name
+	}
+
+	session, err := h.service.CreateAuditFromPOS(c.Request.Context(), req.StoreID, createdBy, name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "create_failed",

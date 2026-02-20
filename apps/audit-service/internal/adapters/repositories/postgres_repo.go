@@ -57,7 +57,7 @@ type AuditRepository interface {
 	ResolveReopenRequest(ctx context.Context, requestID string, resolvedBy string, status string) error
 
 	// POS Audit Creation
-	CreateEmptyAuditSession(ctx context.Context, storeID int, createdBy string) (*domain.AuditSession, error)
+	CreateEmptyAuditSession(ctx context.Context, storeID int, createdBy string, name *string) (*domain.AuditSession, error)
 }
 
 // PostgresRepository implements AuditRepository
@@ -154,9 +154,9 @@ func (r *PostgresRepository) FindStoresByIDs(ctx context.Context, storeIDs []int
 
 // InsertSession creates a new audit session and returns its ID
 func (r *PostgresRepository) InsertSession(ctx context.Context, session *domain.AuditSession) (int, error) {
-	query := `INSERT INTO audit_sessions (store_id, created_by, status) VALUES ($1, $2, $3) RETURNING id`
+	query := `INSERT INTO audit_sessions (store_id, created_by, name, status) VALUES ($1, $2, $3, $4) RETURNING id`
 	var id int
-	err := r.db.QueryRowContext(ctx, query, session.StoreID, session.CreatedBy, session.Status).Scan(&id)
+	err := r.db.QueryRowContext(ctx, query, session.StoreID, session.CreatedBy, session.Name, session.Status).Scan(&id)
 	return id, err
 }
 
@@ -210,9 +210,9 @@ func (r *PostgresRepository) SaveAuditBatch(ctx context.Context, auditID int, it
 
 // GetSessionByID retrieves a session by ID
 func (r *PostgresRepository) GetSessionByID(ctx context.Context, id int) (*domain.AuditSession, error) {
-	query := `SELECT id, store_id, created_by, status, reference_date, pdf_url, created_at, closed_at FROM audit_sessions WHERE id = $1`
+	query := `SELECT id, store_id, created_by, name, status, reference_date, pdf_url, created_at, closed_at FROM audit_sessions WHERE id = $1`
 	var s domain.AuditSession
-	err := r.db.QueryRowContext(ctx, query, id).Scan(&s.ID, &s.StoreID, &s.CreatedBy, &s.Status, &s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt)
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&s.ID, &s.StoreID, &s.CreatedBy, &s.Name, &s.Status, &s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +299,7 @@ func (r *PostgresRepository) SaveAuditBatchWithStatus(ctx context.Context, audit
 // FindAllSessions retrieves all sessions with store names
 func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.AuditListDTO, error) {
 	query := `
-		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
+		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
 		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
 		       COALESCE((
@@ -330,9 +330,9 @@ func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.Audi
 		var storeName string
 
 		err := rows.Scan(
-			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
+			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Name, &s.Status,
 			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
-			&dto.TheoreticalSKUs, &dto.ScannedSKUs,
+			&dto.TheoreticalSKUs, &dto.ScannedSKUs, &dto.TotalLoss,
 		)
 		if err != nil {
 			return nil, err
@@ -1228,7 +1228,7 @@ func formatDateSpanish(t time.Time) string {
 // - Ordered by creation date DESC
 func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.AuditListDTO, error) {
 	query := `
-		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
+		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
 		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
 		       COALESCE((
@@ -1260,7 +1260,7 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 		var storeName string
 
 		err := rows.Scan(
-			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
+			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Name, &s.Status,
 			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
 			&dto.TheoreticalSKUs, &dto.ScannedSKUs, &dto.TotalLoss,
 		)
@@ -1547,7 +1547,7 @@ func (r *PostgresRepository) GetAuditEvents(ctx context.Context, auditID int) ([
 // GetActiveAuditsForPOS returns audits available for the POS app to connect
 func (r *PostgresRepository) GetActiveAuditsForPOS(ctx context.Context) ([]domain.AuditListDTO, error) {
 	query := `
-		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at
+		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
 		WHERE s.status IN ('IN_PROGRESS', 'REVIEW_PENDING', 'COUNTING')
@@ -1565,7 +1565,7 @@ func (r *PostgresRepository) GetActiveAuditsForPOS(ctx context.Context) ([]domai
 		var dto domain.AuditListDTO
 		var s domain.AuditSession
 		var storeName string
-		err := rows.Scan(&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status, &s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt)
+		err := rows.Scan(&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Name, &s.Status, &s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -1655,7 +1655,7 @@ func (r *PostgresRepository) GetDashboardAuditsByStores(ctx context.Context, sto
 	}
 
 	query := fmt.Sprintf(`
-		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
+		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
 		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
 		       COALESCE((
@@ -1688,7 +1688,7 @@ func (r *PostgresRepository) GetDashboardAuditsByStores(ctx context.Context, sto
 		var storeName string
 
 		err := rows.Scan(
-			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
+			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Name, &s.Status,
 			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
 			&dto.TheoreticalSKUs, &dto.ScannedSKUs, &dto.TotalLoss,
 		)

@@ -78,9 +78,9 @@ func (s *AuditService) ParsePDF(ctx context.Context, pdfData []byte) (*ParseResu
 // CreateAudit is called AFTER user confirms the preview
 // This implements FASE 5 of the new sequence diagram
 // It saves: Session → S3 → Items (all in transaction)
-func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []byte, createdBy *string, originalFilename string) (*domain.AuditDTO, error) {
+func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []byte, createdBy *string, originalFilename string, name *string) (*domain.AuditDTO, error) {
 	// 1. session := NewAuditSession(storeID)
-	session := domain.NewAuditSession(storeID, createdBy)
+	session := domain.NewAuditSession(storeID, createdBy, name)
 
 	// 2. repo.InsertSession(session) → session_id
 	sessionID, err := s.repo.InsertSession(ctx, session)
@@ -363,8 +363,8 @@ func (s *AuditService) GetAuditEvents(ctx context.Context, auditID int) ([]domai
 }
 
 // CreateAuditFromPOS creates an empty audit session from the POS app (no PDF required)
-func (s *AuditService) CreateAuditFromPOS(ctx context.Context, storeID int, createdBy string) (*domain.AuditSession, error) {
-	session, err := s.repo.CreateEmptyAuditSession(ctx, storeID, createdBy)
+func (s *AuditService) CreateAuditFromPOS(ctx context.Context, storeID int, createdBy string, name *string) (*domain.AuditSession, error) {
+	session, err := s.repo.CreateEmptyAuditSession(ctx, storeID, createdBy, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create audit from POS: %w", err)
 	}

@@ -21,6 +21,7 @@ interface RemoteAudit {
     session: {
         id: number;
         store_id: number;
+        name?: string;
         status: string;
         pdf_url?: string;
         created_at: string;
@@ -144,6 +145,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const [isCreatingAudit, setIsCreatingAudit] = useState(false);
     const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
     const [expandedZone, setExpandedZone] = useState<string | null>(null);
+    const [newAuditName, setNewAuditName] = useState('');
 
     // Reopen request state
     const [finalizedAudits, setFinalizedAudits] = useState<RemoteAudit[]>([]);
@@ -229,6 +231,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                     store_id: selectedStoreId,
                     device_id: deviceId,
                     created_by: user?.id || deviceId,
+                    name: newAuditName || undefined,
                 })
             });
             if (!response.ok) {
@@ -239,6 +242,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             await fetchActiveAudits();
             setShowCreateAudit(false);
             setSelectedStoreId(null);
+            setNewAuditName('');
         } catch (err) {
             console.error('Failed to create audit:', err);
             setConnectionError(err instanceof Error ? err.message : 'Error al crear auditoría');
@@ -1054,12 +1058,26 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                     );
                                 })()}
 
+                                {/* Audit name input (optional) */}
+                                <div className="mb-2">
+                                    <label className="block text-sm text-slate-400 mb-1">Nombre de auditoría (opcional)</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Ej: Auditoría semanal, Conteo rápido..."
+                                        value={newAuditName}
+                                        onChange={(e) => setNewAuditName(e.target.value)}
+                                        maxLength={200}
+                                        className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+
                                 <div className="flex gap-3 mt-4">
                                     <button
                                         onClick={() => {
                                             setShowCreateAudit(false);
                                             setSelectedStoreId(null);
                                             setExpandedZone(null);
+                                            setNewAuditName('');
                                         }}
                                         className="flex-1 bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded-xl"
                                     >
@@ -1141,7 +1159,10 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                     >
                                         <div className="flex items-center justify-between">
                                             <div>
-                                                <h2 className="text-lg font-bold">{audit.store_name}</h2>
+                                                <h2 className="text-lg font-bold">{audit.session.name || audit.store_name}</h2>
+                                                {audit.session.name && (
+                                                    <div className="text-slate-500 text-xs">{audit.store_name}</div>
+                                                )}
                                                 <div className="text-slate-400 text-sm mt-1">
                                                     Creada: {new Date(audit.session.created_at).toLocaleString()}
                                                 </div>
@@ -1175,7 +1196,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                     >
                                         <div className="flex items-center justify-between">
                                             <div>
-                                                <h3 className="font-medium text-slate-300">{audit.store_name}</h3>
+                                                <h3 className="font-medium text-slate-300">{audit.session.name || audit.store_name}</h3>
                                                 <div className="text-slate-500 text-xs mt-1">
                                                     Finalizada: {new Date(audit.session.created_at).toLocaleDateString()}
                                                 </div>
@@ -1210,7 +1231,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             <div className="bg-gray-900 border-b border-gray-700 px-4 py-2 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm uppercase tracking-wide">{selectedAudit.store_name}</span>
+                        <span className="font-bold text-sm uppercase tracking-wide">{selectedAudit.session.name || selectedAudit.store_name}</span>
                     </div>
                     <span className="text-gray-500 text-xs font-mono">{deviceId}</span>
                 </div>

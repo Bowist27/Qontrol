@@ -25,6 +25,7 @@ export interface Store {
 export interface AuditSession {
     id: number;
     store_id: number;
+    name?: string;
     status: string;
     pdf_url?: string;
     created_at: string;
@@ -108,10 +109,11 @@ export const auditApi = {
      * POST /api/audits - Create audit session (FASE 5)
      * Called AFTER user confirms the preview - saves everything
      */
-    createAudit: async (storeId: number, file: File): Promise<AuditDTO> => {
+    createAudit: async (storeId: number, file: File, name?: string): Promise<AuditDTO> => {
         const formData = new FormData();
         formData.append('store_id', storeId.toString());
         formData.append('file', file);
+        if (name) formData.append('name', name);
         return httpClient.postMultipart<AuditDTO>(`${API_BASE}/api/audits`, formData);
     },
 

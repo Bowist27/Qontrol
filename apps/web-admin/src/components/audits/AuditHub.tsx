@@ -47,6 +47,7 @@ export interface AuditSession {
     id: string;
     storeId: number;
     storeName: string;
+    auditName?: string;
     managerName: string;
     status: AuditSessionStatus;
     hasPdf: boolean;
@@ -192,6 +193,7 @@ const AuditHub: React.FC = () => {
             id: s.id.toString(),
             storeId: s.store_id,
             storeName: item.store_name,
+            auditName: s.name || undefined,
             managerName: 'Admin User',
             status: status,
             hasPdf: !!s.pdf_url,
@@ -974,9 +976,14 @@ const AuditHub: React.FC = () => {
                                                 </div>
                                                 <div>
                                                     <p className={`font-medium ${session.status === 'CANCELLED' ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
-                                                        {session.storeName}
+                                                        {session.auditName || session.storeName}
                                                     </p>
-                                                    <p className="text-xs text-slate-400">{session.managerName}</p>
+                                                    {session.auditName && (
+                                                        <p className="text-xs text-slate-400">{session.storeName}</p>
+                                                    )}
+                                                    {!session.auditName && (
+                                                        <p className="text-xs text-slate-400">{session.managerName}</p>
+                                                    )}
                                                 </div>
                                             </div>
                                         </td>

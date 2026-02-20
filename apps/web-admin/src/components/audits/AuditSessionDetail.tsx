@@ -89,6 +89,10 @@ const AuditSessionDetail: React.FC = () => {
     const [stores, setStores] = useState<StoreType[]>([]);
     const [isLoadingStores, setIsLoadingStores] = useState(true);
     const [storesError, setStoresError] = useState<string | null>(null);
+    // Audit name state for new audit
+    const [auditName, setAuditName] = useState('');
+    // Existing audit name (from DB)
+    const [existingAuditName, setExistingAuditName] = useState<string | undefined>(undefined);
 
     // Export Dropdown State
     const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
@@ -366,6 +370,10 @@ const AuditSessionDetail: React.FC = () => {
             auditApi.getAudit(parseInt(_sessionId))
                 .then((data) => {
                     console.log('[AuditSessionDetail] Loaded audit data:', data.items?.length, 'items');
+                    // Set audit name if present
+                    if (data.session.name) {
+                        setExistingAuditName(data.session.name);
+                    }
                     // If no store name from state, try to find it in the stores list using store_id
                     // If no store name from state, try to find it in the stores list using store_id
                     if (!existingStoreName && stores.length > 0) {
@@ -862,10 +870,30 @@ const AuditSessionDetail: React.FC = () => {
                                 </div>
                             )}
                         </div>
+
+                        {/* Audit Name Input (optional) */}
+                        <input
+                            type="text"
+                            placeholder="Nombre de auditoría (opcional)"
+                            value={auditName}
+                            onChange={(e) => setAuditName(e.target.value)}
+                            maxLength={200}
+                            disabled={theoretical.status === 'loaded'}
+                            className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors w-56 ${
+                                theoretical.status === 'loaded'
+                                    ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                                    : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500'
+                            }`}
+                        />
                     ) : (
-                        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-md border border-slate-200">
-                            <Store size={14} className="text-slate-500" />
-                            <span className="text-sm font-medium text-slate-700">{effectiveStoreName}</span>
+                        <div className="flex items-center gap-3">
+                            {existingAuditName && (
+                                <span className="text-sm font-semibold text-blue-700 bg-blue-50 px-3 py-1.5 rounded-md border border-blue-200">{existingAuditName}</span>
+                            )}
+                            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-md border border-slate-200">
+                                <Store size={14} className="text-slate-500" />
+                                <span className="text-sm font-medium text-slate-700">{effectiveStoreName}</span>
+                            </div>
                         </div>
                     )}
 
@@ -928,7 +956,7 @@ const AuditSessionDetail: React.FC = () => {
                                     setIsSaving(true);
                                     try {
                                         // Call API to Create Audit (Saves to DB)
-                                        await auditApi.createAudit(selectedStoreId, uploadedFile);
+                                        await auditApi.createAudit(selectedStoreId, uploadedFile, auditName || undefined);
                                         await loadAudits(); // Refresh context
                                         showFeedback('success', 'Auditoría creada', 'La auditoría ha sido creada exitosamente.', () => onBack());
                                     } catch (err) {
