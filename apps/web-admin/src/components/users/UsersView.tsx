@@ -7,7 +7,7 @@ import {
     Ban,
     CheckCircle,
     Search,
-    Save,
+
     X,
     ChevronDown,
     ChevronRight,
@@ -47,22 +47,20 @@ export default function UsersView() {
             <div className="flex gap-1 border-b border-slate-200">
                 <button
                     onClick={() => setActiveTab('users')}
-                    className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors ${
-                        activeTab === 'users'
+                    className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors ${activeTab === 'users'
                             ? 'text-blue-600 border-b-2 border-blue-600'
                             : 'text-slate-500 hover:text-slate-700'
-                    }`}
+                        }`}
                 >
                     <Users className="w-4 h-4" />
                     Usuarios
                 </button>
                 <button
                     onClick={() => setActiveTab('roles')}
-                    className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors ${
-                        activeTab === 'roles'
+                    className={`flex items-center gap-2 px-4 py-3 font-medium transition-colors ${activeTab === 'roles'
                             ? 'text-blue-600 border-b-2 border-blue-600'
                             : 'text-slate-500 hover:text-slate-700'
-                    }`}
+                        }`}
                 >
                     <Shield className="w-4 h-4" />
                     Roles
@@ -352,7 +350,7 @@ function UserRow({
     onUnban,
     onDelete,
 }: UserRowProps) {
-    const [localRoleId, setLocalRoleId] = useState(user.role_id);
+    const [_localRoleId, setLocalRoleId] = useState(user.role_id);
     const [localStoreIds, setLocalStoreIds] = useState((user.stores || []).map((s) => s.id));
     const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
     const storesDropdownRef = useRef<HTMLDivElement>(null);
@@ -361,7 +359,7 @@ function UserRow({
     const storeIdsKey = (user.stores || []).map((s) => s.id).sort().join(',');
     useEffect(() => {
         setLocalStoreIds((user.stores || []).map((s) => s.id));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [storeIdsKey]);
 
     const isBanned = !!user.banned_at;
@@ -419,11 +417,10 @@ function UserRow({
                                         setLocalRoleId(role.id);
                                         onUpdate({ role_id: role.id });
                                     }}
-                                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors text-left ${
-                                        role.id === user.role_id
+                                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors text-left ${role.id === user.role_id
                                             ? 'bg-blue-50 text-blue-700 font-medium'
                                             : 'text-slate-700 hover:bg-slate-50'
-                                    }`}
+                                        }`}
                                 >
                                     <Shield className={`w-3.5 h-3.5 ${role.id === user.role_id ? 'text-blue-500' : 'text-slate-400'}`} />
                                     {role.name}
@@ -814,9 +811,8 @@ function RolesTab() {
                 {roles.map((role) => (
                     <div
                         key={role.id}
-                        className={`bg-white rounded-xl border ${
-                            role.is_system ? 'border-blue-200 bg-blue-50/30' : 'border-slate-200'
-                        } p-5 shadow-sm hover:shadow-md transition-shadow`}
+                        className={`bg-white rounded-xl border ${role.is_system ? 'border-blue-200 bg-blue-50/30' : 'border-slate-200'
+                            } p-5 shadow-sm hover:shadow-md transition-shadow`}
                     >
                         <div className="flex items-start justify-between mb-3">
                             <div>
@@ -857,11 +853,10 @@ function RolesTab() {
                                     role.permissions.map((perm) => (
                                         <span
                                             key={perm}
-                                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                                                perm.startsWith('web:')
+                                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${perm.startsWith('web:')
                                                     ? 'bg-purple-100 text-purple-700'
                                                     : 'bg-emerald-100 text-emerald-700'
-                                            }`}
+                                                }`}
                                         >
                                             {perm.split(':')[1]}
                                         </span>

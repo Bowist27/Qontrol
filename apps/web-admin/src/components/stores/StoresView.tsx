@@ -316,11 +316,10 @@ function ZonasTab({ onZoneClick }: { onZoneClick: (zone: Zone) => void }) {
                                     <td className="px-6 py-4">
                                         <button
                                             onClick={(e) => { e.stopPropagation(); handleToggleStatus(zone); }}
-                                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                                                zone.status
-                                                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                            }`}
+                                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${zone.status
+                                                ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                                }`}
                                         >
                                             {zone.status ? (
                                                 <>
@@ -528,7 +527,7 @@ function ZonasTab({ onZoneClick }: { onZoneClick: (zone: Zone) => void }) {
 // =====================================================
 // SUCURSALES TAB
 // =====================================================
-function SucursalesTab({ preselectedZone, onBack }: { preselectedZone: Zone | null; onBack: () => void }) {
+function SucursalesTab({ preselectedZone, onBack: _onBack }: { preselectedZone: Zone | null; onBack: () => void }) {
     const [stores, setStores] = useState<StoreType[]>([]);
     const [zones, setZones] = useState<Zone[]>([]);
     const [loading, setLoading] = useState(true);
@@ -755,11 +754,10 @@ function SucursalesTab({ preselectedZone, onBack }: { preselectedZone: Zone | nu
                                         </div>
                                     </td>
                                     <td className="px-6 py-4">
-                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                                            store.zone_name
-                                                ? 'bg-purple-100 text-purple-700'
-                                                : 'bg-slate-100 text-slate-500'
-                                        }`}>
+                                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${store.zone_name
+                                            ? 'bg-purple-100 text-purple-700'
+                                            : 'bg-slate-100 text-slate-500'
+                                            }`}>
                                             <MapPin className="w-3 h-3" />
                                             {store.zone_name || 'Sin zona'}
                                         </span>
@@ -767,11 +765,10 @@ function SucursalesTab({ preselectedZone, onBack }: { preselectedZone: Zone | nu
                                     <td className="px-6 py-4">
                                         <button
                                             onClick={() => handleToggleStatus(store)}
-                                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                                                store.status
-                                                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                            }`}
+                                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${store.status
+                                                ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                                }`}
                                         >
                                             {store.status ? (
                                                 <>
