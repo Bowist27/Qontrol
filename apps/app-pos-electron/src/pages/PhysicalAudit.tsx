@@ -493,7 +493,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
 
             // 2. Also save to backend PostgreSQL (so web-admin sees it)
             try {
-                await fetch(`${AUDIT_API.replace('/api', '')}/api/pos/catalog/products`, {
+                await fetch(`${AUDIT_API}/pos/catalog/products`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -597,8 +597,8 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const handleModifySearch = useCallback(async (query: string) => {
         if (query.length < 2) { setModifyResults([]); return; }
         try {
-            const results = await searchLocalProducts(query);
-            setModifyResults(results);
+            const searchResults = await (window as Window & { products: { search: (q: string) => Promise<LocalProduct[]> } }).products.search(query);
+            setModifyResults(searchResults || []);
             setModifySelectedIndex(0);
         } catch { setModifyResults([]); }
     }, []);
@@ -610,7 +610,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
             .reduce((sum, s) => sum + s.quantity, 0);
 
         setModifyProduct({
-            barcode: product.barcode,
+            barcode: product.barcode || '',
             sku: product.sku,
             name: product.name,
             currentQty
