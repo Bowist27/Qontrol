@@ -10,7 +10,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     Store, Play, CheckCircle2, Lock, KeyRound,
-    Search, Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
+    Calendar, ChevronRight, Plus, ChevronDown, Globe, Eye, XCircle, Clock,
     ChevronLeft, FileUp, ScanLine, ArrowUpDown, MoreVertical, LockKeyhole,
     FileSpreadsheet, FileDown, Loader2, Trash2, RefreshCw, MapPin, ArrowLeft, Check
 } from 'lucide-react';
@@ -211,7 +211,7 @@ const AuditHub: React.FC = () => {
     const filterStoreKey = Array.from(filterStoreIds).sort().join(',');
     useEffect(() => {
         setCurrentPage(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, focusFilter, filterStoreKey, filterDateFrom, filterDateTo, sortField, sortDir]);
 
     // Auto-refresh audits every 30s while this page is visible
@@ -381,11 +381,7 @@ const AuditHub: React.FC = () => {
     const showPagination = activeTab === 'history' || totalItems > 20;
 
     // Extract unique stores from actual audit data (not mock)
-    const uniqueStoresMap = new Map<number, string>();
-    audits.forEach(audit => {
-        uniqueStoresMap.set(audit.session.store_id, audit.store_name);
-    });
-    const realStores = Array.from(uniqueStoresMap.entries()).map(([id, name]) => ({ id, name }));
+    // (Available via audits context when needed)
 
 
     const handleSort = (field: SortField) => {
@@ -741,11 +737,10 @@ const AuditHub: React.FC = () => {
                                                         onClick={() => toggleZoneFilter(zone.id)}
                                                         className="pl-4 pr-2 py-2.5 flex items-center"
                                                     >
-                                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                                                            allSelected ? 'bg-blue-600 border-blue-600' :
+                                                        <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${allSelected ? 'bg-blue-600 border-blue-600' :
                                                             selectedCount > 0 ? 'bg-blue-100 border-blue-400' :
-                                                            'border-slate-300'
-                                                        }`}>
+                                                                'border-slate-300'
+                                                            }`}>
                                                             {allSelected && <Check size={12} className="text-white" />}
                                                             {!allSelected && selectedCount > 0 && <div className="w-2 h-0.5 bg-blue-500 rounded" />}
                                                         </div>
@@ -794,9 +789,8 @@ const AuditHub: React.FC = () => {
                                                 onClick={() => toggleZoneFilter(contextZoneId)}
                                                 className="w-full px-4 py-2 flex items-center gap-2 hover:bg-slate-50 border-b border-slate-100 transition-colors"
                                             >
-                                                <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                                                    allSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
-                                                }`}>
+                                                <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${allSelected ? 'bg-blue-600 border-blue-600' : 'border-slate-300'
+                                                    }`}>
                                                     {allSelected && <Check size={12} className="text-white" />}
                                                 </div>
                                                 <span className="text-xs font-semibold text-slate-500">Seleccionar toda la zona</span>

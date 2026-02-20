@@ -12,7 +12,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { usePermissions, type Permission } from '../hooks/usePermissions';
+import { usePermissions, type Permission } from '../../hooks/usePermissions';
 
 interface PermissionGateProps {
     /** Single permission check */
