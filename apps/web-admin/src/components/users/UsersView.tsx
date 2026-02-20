@@ -10,13 +10,17 @@ import {
     Save,
     X,
     ChevronDown,
+    ChevronRight,
+    ArrowLeft,
     Lock,
     Building2,
     AlertCircle,
+    MapPin,
 } from 'lucide-react';
 import usersApi, {
     type User,
     type Store as StoreType,
+    type Zone as ZoneType,
     type Role,
     type CreateUserRequest,
     type UpdateUserRequest,
@@ -78,6 +82,7 @@ export default function UsersView() {
 function UsersTab() {
     const [users, setUsers] = useState<User[]>([]);
     const [stores, setStores] = useState<StoreType[]>([]);
+    const [zones, setZones] = useState<ZoneType[]>([]);
     const [roles, setRoles] = useState<Role[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
@@ -90,13 +95,15 @@ function UsersTab() {
     const loadData = useCallback(async () => {
         try {
             setLoading(true);
-            const [usersData, storesData, rolesData] = await Promise.all([
+            const [usersData, storesData, rolesData, zonesData] = await Promise.all([
                 usersApi.getUsers(),
                 usersApi.getStores(),
                 usersApi.getRoles(),
+                usersApi.getZones(),
             ]);
             setUsers(usersData);
             setStores(storesData);
+            setZones(zonesData);
             setRoles(rolesData);
         } catch (error) {
             console.error('Error loading data:', error);
@@ -213,6 +220,7 @@ function UsersTab() {
                 <NewUserForm
                     roles={roles}
                     stores={stores}
+                    zones={zones}
                     onCancel={() => setShowNewUser(false)}
                     onSave={async (data) => {
                         await usersApi.createUser(data);
@@ -242,6 +250,7 @@ function UsersTab() {
                                 user={user}
                                 roles={roles}
                                 stores={stores}
+                                zones={zones}
                                 isEditing={editingUserId === user.id}
                                 editingField={editingField}
                                 onStartEdit={(field) => {
@@ -316,6 +325,7 @@ interface UserRowProps {
     user: User;
     roles: Role[];
     stores: StoreType[];
+    zones: ZoneType[];
     isEditing: boolean;
     editingField: string | null;
     onStartEdit: (field: string) => void;
@@ -331,6 +341,7 @@ function UserRow({
     user,
     roles,
     stores,
+    zones,
     isEditing,
     editingField,
     onStartEdit,
@@ -343,6 +354,7 @@ function UserRow({
 }: UserRowProps) {
     const [localRoleId, setLocalRoleId] = useState(user.role_id);
     const [localStoreIds, setLocalStoreIds] = useState((user.stores || []).map((s) => s.id));
+    const [selectedZoneId, setSelectedZoneId] = useState<number | null>(null);
     const storesDropdownRef = useRef<HTMLDivElement>(null);
 
     // Sync localStoreIds when user.stores reference changes (after server refresh)
@@ -431,7 +443,7 @@ function UserRow({
                 )}
             </td>
 
-            {/* Stores - Editable Multi-select (auto-save on toggle, click outside to close) */}
+            {/* Stores - Zone→Store drill-down (auto-save on toggle) */}
             <td className="px-4 py-3 relative">
                 {isBanned ? (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-400 text-sm font-medium cursor-not-allowed">
@@ -441,40 +453,90 @@ function UserRow({
                 ) : isEditing && editingField === 'stores' ? (
                     <div className="relative" ref={storesDropdownRef}>
                         <button
-                            onClick={onCancelEdit}
+                            onClick={() => { setSelectedZoneId(null); onCancelEdit(); }}
                             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 transition-colors text-sm font-medium"
                         >
                             <Building2 className="w-3.5 h-3.5 text-blue-500" />
                             {localStoreIds.length > 0 ? `${localStoreIds.length} tienda(s)` : 'Ninguna'}
                             <X className="w-3 h-3 text-blue-400" />
                         </button>
-                        <div className="absolute z-10 mt-1 w-52 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-auto">
-                            {stores.map((store) => (
-                                <label
-                                    key={store.id}
-                                    className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer transition-colors"
-                                >
-                                    <input
-                                        type="checkbox"
-                                        checked={localStoreIds.includes(store.id)}
-                                        onChange={(e) => {
-                                            const newIds = e.target.checked
-                                                ? [...localStoreIds, store.id]
-                                                : localStoreIds.filter((id) => id !== store.id);
-                                            setLocalStoreIds(newIds);
-                                            onUpdateKeepOpen({ store_ids: newIds });
-                                        }}
-                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                    />
-                                    <span className="text-sm text-slate-700">{store.name}</span>
-                                </label>
-                            ))}
+                        <div className="absolute z-10 mt-1 w-60 bg-white border border-slate-200 rounded-xl shadow-lg max-h-64 overflow-auto">
+                            {selectedZoneId === null ? (
+                                /* Zone list */
+                                <>
+                                    <div className="px-3 py-2 border-b border-slate-100">
+                                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Selecciona una zona</span>
+                                    </div>
+                                    {zones.map((zone) => {
+                                        const zoneStores = stores.filter((s) => s.zone_id === zone.id);
+                                        const assignedCount = zoneStores.filter((s) => localStoreIds.includes(s.id)).length;
+                                        return (
+                                            <button
+                                                key={zone.id}
+                                                onClick={() => setSelectedZoneId(zone.id)}
+                                                className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-slate-50 transition-colors text-left"
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <MapPin className="w-3.5 h-3.5 text-slate-400" />
+                                                    <span className="text-sm text-slate-700 font-medium">{zone.name}</span>
+                                                </div>
+                                                <div className="flex items-center gap-1.5">
+                                                    {assignedCount > 0 && (
+                                                        <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">
+                                                            {assignedCount}
+                                                        </span>
+                                                    )}
+                                                    <span className="text-xs text-slate-400">{zoneStores.length}</span>
+                                                    <ChevronRight className="w-3.5 h-3.5 text-slate-300" />
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </>
+                            ) : (
+                                /* Stores within selected zone */
+                                <>
+                                    <button
+                                        onClick={() => setSelectedZoneId(null)}
+                                        className="w-full flex items-center gap-2 px-3 py-2 border-b border-slate-100 hover:bg-slate-50 transition-colors text-left"
+                                    >
+                                        <ArrowLeft className="w-3.5 h-3.5 text-slate-400" />
+                                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                            {zones.find((z) => z.id === selectedZoneId)?.name || 'Zona'}
+                                        </span>
+                                    </button>
+                                    {stores.filter((s) => s.zone_id === selectedZoneId).map((store) => (
+                                        <label
+                                            key={store.id}
+                                            className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer transition-colors"
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={localStoreIds.includes(store.id)}
+                                                onChange={(e) => {
+                                                    const newIds = e.target.checked
+                                                        ? [...localStoreIds, store.id]
+                                                        : localStoreIds.filter((id) => id !== store.id);
+                                                    setLocalStoreIds(newIds);
+                                                    onUpdateKeepOpen({ store_ids: newIds });
+                                                }}
+                                                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <span className="text-sm text-slate-700">{store.name}</span>
+                                        </label>
+                                    ))}
+                                    {stores.filter((s) => s.zone_id === selectedZoneId).length === 0 && (
+                                        <div className="px-3 py-3 text-xs text-slate-400 text-center">Sin tiendas en esta zona</div>
+                                    )}
+                                </>
+                            )}
                         </div>
                     </div>
                 ) : (
                     <button
                         onClick={() => {
                             setLocalStoreIds((user.stores || []).map((s) => s.id));
+                            setSelectedZoneId(null);
                             onStartEdit('stores');
                         }}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors text-sm font-medium"
@@ -557,11 +619,12 @@ function UserRow({
 interface NewUserFormProps {
     roles: Role[];
     stores: StoreType[];
+    zones: ZoneType[];
     onCancel: () => void;
     onSave: (data: CreateUserRequest) => Promise<void>;
 }
 
-function NewUserForm({ roles, stores: _stores, onCancel, onSave }: NewUserFormProps) {
+function NewUserForm({ roles, stores: _stores, zones: _zones, onCancel, onSave }: NewUserFormProps) {
     const [formData, setFormData] = useState({
         email: '',
         password: 'Test123!', // Default password - user will receive email to change it

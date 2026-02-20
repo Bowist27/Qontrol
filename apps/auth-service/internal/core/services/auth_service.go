@@ -227,6 +227,12 @@ func (s *AuthService) GetAllActiveUsers(ctx context.Context) ([]domain.UserSyncD
 			roleName = user.Role.Name
 			permissions = user.Role.Permissions
 		}
+		// Extract store IDs from user's assigned stores
+		var storeIDs []int
+		for _, store := range user.Stores {
+			storeIDs = append(storeIDs, store.ID)
+		}
+
 		syncUsers = append(syncUsers, domain.UserSyncDTO{
 			ID:           user.ID,
 			Email:        user.Email,
@@ -236,6 +242,7 @@ func (s *AuthService) GetAllActiveUsers(ctx context.Context) ([]domain.UserSyncD
 			RoleID:       user.RoleID,
 			RoleName:     roleName,
 			IsActive:     user.IsActive,
+			StoreIDs:     storeIDs,
 			Permissions:  permissions,
 		})
 	}

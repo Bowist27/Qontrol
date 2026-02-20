@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -23,9 +24,13 @@ func NewAuditHandler(service *services.AuditService) *AuditHandler {
 }
 
 // GetAudits handles GET /api/audits - Dashboard endpoint (HU10)
-// Returns filtered audits based on business rules
+// Returns audits filtered by the requesting user's assigned stores.
+// Admins see all audits; other roles only see audits for their stores.
 func (h *AuditHandler) GetAudits(c *gin.Context) {
-	audits, err := h.service.GetAudits(c.Request.Context())
+	userID, _ := c.Get("userID")
+	role, _ := c.Get("role")
+
+	audits, err := h.service.GetAudits(c.Request.Context(), fmt.Sprintf("%v", userID), fmt.Sprintf("%v", role))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "fetch_failed",
@@ -37,8 +42,22 @@ func (h *AuditHandler) GetAudits(c *gin.Context) {
 }
 
 // ListStores handles GET /api/stores
+// Returns stores filtered by the user's assignments (admins see all)
+// POS routes (no auth) see all stores
 func (h *AuditHandler) ListStores(c *gin.Context) {
-	stores, err := h.service.ListStores(c.Request.Context())
+	userID, hasUser := c.Get("userID")
+	role, _ := c.Get("role")
+
+	var stores []domain.Store
+	var err error
+
+	// If no auth context (POS routes), or admin → show all
+	roleStr := fmt.Sprintf("%v", role)
+	if !hasUser || roleStr == "Administrador" {
+		stores, err = h.service.ListStores(c.Request.Context(), "", "Administrador")
+	} else {
+		stores, err = h.service.ListStores(c.Request.Context(), fmt.Sprintf("%v", userID), roleStr)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "internal_error",
@@ -284,11 +303,12 @@ func (h *AuditHandler) RegisterRoutes(router *gin.Engine) {
 		api.DELETE("/audits/:id", h.DeleteAudit) // Cancel/Delete audit
 
 		// Physical Scan endpoints (for POS app)
-		api.GET("/audits/active", h.ListActiveAudits)          // Audits available for POS
-		api.POST("/audits/:id/scans", h.AddScan)               // Add scan from POS
-		api.GET("/audits/:id/scans", h.GetScans)               // Get all scans
-		api.GET("/audits/:id/scans/summary", h.GetScanSummary) // Get summary
-		api.DELETE("/audits/:id/scans/last", h.UndoLastScan)   // Undo last scan
+		api.GET("/audits/active", h.ListActiveAudits)                // Audits available for POS
+		api.POST("/audits/:id/scans", h.AddScan)                     // Add scan from POS
+		api.GET("/audits/:id/scans", h.GetScans)                     // Get all scans
+		api.GET("/audits/:id/scans/summary", h.GetScanSummary)       // Get summary
+		api.DELETE("/audits/:id/scans/last", h.UndoLastScan)         // Undo last scan
+		api.PUT("/audits/:id/scans/modify", h.ModifyProductQuantity) // Modify product quantity
 	}
 }
 
@@ -319,6 +339,7 @@ func (h *AuditHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middlewa
 		pos.GET("/audits/:id/scans", h.GetScans)                           // Get all scans
 		pos.GET("/audits/:id/scans/summary", h.GetScanSummary)             // Get summary
 		pos.DELETE("/audits/:id/scans/last", h.UndoLastScan)               // Undo last scan
+		pos.PUT("/audits/:id/scans/modify", h.ModifyProductQuantity)       // Modify product quantity
 		pos.PATCH("/audits/:id/close-from-pos", h.CloseAuditFromPOS)       // POS finalize
 		pos.GET("/pos/stores", h.ListStores)                               // Stores for POS
 		pos.POST("/pos/audits", h.CreateAuditFromPOS)                      // Create empty audit from POS
@@ -500,6 +521,42 @@ func (h *AuditHandler) UndoLastScan(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+// ModifyProductQuantity handles PUT /api/audits/:id/scans/modify
+func (h *AuditHandler) ModifyProductQuantity(c *gin.Context) {
+	idStr := c.Param("id")
+	auditID, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_id",
+			Message: "ID must be a valid integer",
+		})
+		return
+	}
+
+	var req struct {
+		Barcode     string  `json:"barcode" binding:"required"`
+		NewQuantity float64 `json:"new_quantity" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "invalid_request",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	err = h.service.ModifyProductQuantity(c.Request.Context(), auditID, req.Barcode, req.NewQuantity)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "modify_failed",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "barcode": req.Barcode, "new_quantity": req.NewQuantity})
+}
+
 // Helper to get user ID
 func (h *AuditHandler) getUserIDFromContext(c *gin.Context) *string {
 	val, exists := c.Get("userID")
@@ -653,9 +710,12 @@ func (h *AuditHandler) RequestReopenFromPOS(c *gin.Context) {
 }
 
 // GetPendingReopenRequests handles GET /api/reopen-requests
-// Returns all pending reopen requests (for web-admin dashboard)
+// Returns pending reopen requests filtered by user's store assignments
 func (h *AuditHandler) GetPendingReopenRequests(c *gin.Context) {
-	requests, err := h.service.GetPendingReopenRequests(c.Request.Context())
+	userID, _ := c.Get("userID")
+	role, _ := c.Get("role")
+
+	requests, err := h.service.GetPendingReopenRequests(c.Request.Context(), fmt.Sprintf("%v", userID), fmt.Sprintf("%v", role))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "fetch_failed",

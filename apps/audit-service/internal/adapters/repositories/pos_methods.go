@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"audit-service/internal/core/domain"
@@ -83,6 +84,44 @@ func (r *PostgresRepository) GetPendingReopenRequestsForAudit(ctx context.Contex
 	return requests, nil
 }
 
+// GetPendingReopenRequestsByStores returns pending reopen requests filtered by store IDs
+func (r *PostgresRepository) GetPendingReopenRequestsByStores(ctx context.Context, storeIDs []int) ([]domain.ReopenRequest, error) {
+	if len(storeIDs) == 0 {
+		return []domain.ReopenRequest{}, nil
+	}
+	placeholders := make([]string, len(storeIDs))
+	args := make([]interface{}, len(storeIDs))
+	for i, id := range storeIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	query := fmt.Sprintf(`
+		SELECT rr.id, rr.audit_id, rr.requested_by, rr.device_id, rr.reason, rr.status, rr.created_at,
+			   COALESCE(s.name, 'Desconocida') as store_name
+		FROM reopen_requests rr
+		JOIN audit_sessions a ON a.id = rr.audit_id
+		LEFT JOIN stores s ON s.id = a.store_id
+		WHERE rr.status = 'pending' AND a.store_id IN (%s)
+		ORDER BY rr.created_at DESC
+	`, strings.Join(placeholders, ", "))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending reopen requests by stores: %w", err)
+	}
+	defer rows.Close()
+	var requests []domain.ReopenRequest
+	for rows.Next() {
+		var req domain.ReopenRequest
+		err := rows.Scan(&req.ID, &req.AuditID, &req.RequestedBy, &req.DeviceID,
+			&req.Reason, &req.Status, &req.CreatedAt, &req.StoreName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan reopen request: %w", err)
+		}
+		requests = append(requests, req)
+	}
+	return requests, nil
+}
+
 // ResolveReopenRequest marks a reopen request as approved or rejected
 func (r *PostgresRepository) ResolveReopenRequest(ctx context.Context, requestID string, resolvedBy string, status string) error {
 	_, err := r.db.ExecContext(ctx, `
@@ -101,7 +140,7 @@ func (r *PostgresRepository) CreateEmptyAuditSession(ctx context.Context, storeI
 	var session domain.AuditSession
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO audit_sessions (store_id, created_by, status, created_at)
-		VALUES ($1, $2, 'COUNTING', NOW())
+		VALUES ($1, $2, 'IN_PROGRESS', NOW())
 		RETURNING id, store_id, created_by, status, created_at
 	`, storeID, createdBy).Scan(
 		&session.ID, &session.StoreID, &session.CreatedBy,

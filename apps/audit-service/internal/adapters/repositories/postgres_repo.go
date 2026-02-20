@@ -14,6 +14,7 @@ import (
 // AuditRepository defines the interface for audit data access
 type AuditRepository interface {
 	FindAllStores(ctx context.Context) ([]domain.Store, error)
+	FindStoresByIDs(ctx context.Context, storeIDs []int) ([]domain.Store, error)
 	InsertSession(ctx context.Context, session *domain.AuditSession) (int, error)
 	DeleteSession(ctx context.Context, id int) error
 	UpdateSessionStatus(ctx context.Context, id int, status string) error
@@ -28,10 +29,13 @@ type AuditRepository interface {
 	GetPhysicalScans(ctx context.Context, auditID int) ([]domain.PhysicalScan, error)
 	GetPhysicalScanSummary(ctx context.Context, auditID int) (*domain.AuditPhysicalSummary, error)
 	DeleteLastPhysicalScan(ctx context.Context, auditID int) error
+	ModifyProductQuantity(ctx context.Context, auditID int, barcode string, newQuantity float64) error
 	GetActiveAuditsForPOS(ctx context.Context) ([]domain.AuditListDTO, error)
 
 	// Dashboard specific (HU10)
 	GetDashboardAudits(ctx context.Context) ([]domain.AuditListDTO, error)
+	GetDashboardAuditsByStores(ctx context.Context, storeIDs []int) ([]domain.AuditListDTO, error)
+	GetUserStoreIDs(ctx context.Context, userID string) ([]int, error)
 
 	// Audit Logs (HU12)
 	LogEvent(ctx context.Context, auditID int, userID *string, eventType string, details map[string]interface{}) error
@@ -48,6 +52,7 @@ type AuditRepository interface {
 	// POS Reopen Requests
 	InsertReopenRequest(ctx context.Context, auditID int, requestedBy, deviceID, reason string) (*domain.ReopenRequest, error)
 	GetPendingReopenRequests(ctx context.Context) ([]domain.ReopenRequest, error)
+	GetPendingReopenRequestsByStores(ctx context.Context, storeIDs []int) ([]domain.ReopenRequest, error)
 	GetPendingReopenRequestsForAudit(ctx context.Context, auditID int) ([]domain.ReopenRequest, error)
 	ResolveReopenRequest(ctx context.Context, requestID string, resolvedBy string, status string) error
 
@@ -96,7 +101,9 @@ func timeAgo(t time.Time) string {
 
 // FindAllStores returns all active stores
 func (r *PostgresRepository) FindAllStores(ctx context.Context) ([]domain.Store, error) {
-	query := `SELECT id, name, status, created_at FROM stores WHERE status = true ORDER BY name`
+	query := `SELECT s.id, s.name, s.status, s.created_at, s.zone_id, z.name
+	          FROM stores s LEFT JOIN zones z ON s.zone_id = z.id
+	          WHERE s.status = true ORDER BY z.name NULLS LAST, s.name`
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -106,7 +113,38 @@ func (r *PostgresRepository) FindAllStores(ctx context.Context) ([]domain.Store,
 	var stores []domain.Store
 	for rows.Next() {
 		var s domain.Store
-		if err := rows.Scan(&s.ID, &s.Name, &s.Status, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Status, &s.CreatedAt, &s.ZoneID, &s.ZoneName); err != nil {
+			return nil, err
+		}
+		stores = append(stores, s)
+	}
+	return stores, nil
+}
+
+// FindStoresByIDs returns active stores filtered by IDs
+func (r *PostgresRepository) FindStoresByIDs(ctx context.Context, storeIDs []int) ([]domain.Store, error) {
+	if len(storeIDs) == 0 {
+		return []domain.Store{}, nil
+	}
+	placeholders := make([]string, len(storeIDs))
+	args := make([]interface{}, len(storeIDs))
+	for i, id := range storeIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	query := fmt.Sprintf(`SELECT s.id, s.name, s.status, s.created_at, s.zone_id, z.name
+	          FROM stores s LEFT JOIN zones z ON s.zone_id = z.id
+	          WHERE s.status = true AND s.id IN (%s)
+	          ORDER BY z.name NULLS LAST, s.name`, strings.Join(placeholders, ", "))
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var stores []domain.Store
+	for rows.Next() {
+		var s domain.Store
+		if err := rows.Scan(&s.ID, &s.Name, &s.Status, &s.CreatedAt, &s.ZoneID, &s.ZoneName); err != nil {
 			return nil, err
 		}
 		stores = append(stores, s)
@@ -369,45 +407,55 @@ func (r *PostgresRepository) GetAllProducts(ctx context.Context) ([]domain.Produ
 }
 
 // GetProductsPaginated returns paginated products with optional search
-func (r *PostgresRepository) GetProductsPaginated(ctx context.Context, page, limit int, search string) ([]domain.Product, int, error) {
+func (r *PostgresRepository) GetProductsPaginated(ctx context.Context, page, limit int, search string, sortBy string, hideZero bool) ([]domain.Product, int, error) {
 	offset := (page - 1) * limit
 
-	var totalCount int
-	var countQuery string
-	var dataQuery string
-	var args []interface{}
+	// Build WHERE clauses
+	var whereClauses []string
+	var countArgs []interface{}
+	argIdx := 1
 
 	if search != "" {
 		searchPattern := "%" + search + "%"
-		countQuery = `SELECT COUNT(*) FROM products WHERE sku ILIKE $1 OR name ILIKE $1 OR COALESCE(barcode, '') ILIKE $1`
-		dataQuery = `
-			SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
-			FROM products 
-			WHERE sku ILIKE $1 OR name ILIKE $1 OR COALESCE(barcode, '') ILIKE $1
-			ORDER BY sku
-			LIMIT $2 OFFSET $3`
-		args = []interface{}{searchPattern, limit, offset}
-
-		err := r.db.QueryRowContext(ctx, countQuery, searchPattern).Scan(&totalCount)
-		if err != nil {
-			return nil, 0, err
-		}
-	} else {
-		countQuery = `SELECT COUNT(*) FROM products`
-		dataQuery = `
-			SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
-			FROM products 
-			ORDER BY sku
-			LIMIT $1 OFFSET $2`
-		args = []interface{}{limit, offset}
-
-		err := r.db.QueryRowContext(ctx, countQuery).Scan(&totalCount)
-		if err != nil {
-			return nil, 0, err
-		}
+		whereClauses = append(whereClauses, fmt.Sprintf("(sku ILIKE $%d OR name ILIKE $%d OR COALESCE(barcode, '') ILIKE $%d)", argIdx, argIdx, argIdx))
+		countArgs = append(countArgs, searchPattern)
+		argIdx++
+	}
+	if hideZero {
+		whereClauses = append(whereClauses, "COALESCE(last_price, 0) > 0")
 	}
 
-	rows, err := r.db.QueryContext(ctx, dataQuery, args...)
+	whereSQL := ""
+	if len(whereClauses) > 0 {
+		whereSQL = " WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	// Determine ORDER BY
+	orderBy := "ORDER BY sku"
+	switch sortBy {
+	case "price_asc":
+		orderBy = "ORDER BY COALESCE(last_price, 0) ASC, sku"
+	case "price_desc":
+		orderBy = "ORDER BY COALESCE(last_price, 0) DESC, sku"
+	}
+
+	// Count query
+	countQuery := "SELECT COUNT(*) FROM products" + whereSQL
+	var totalCount int
+	err := r.db.QueryRowContext(ctx, countQuery, countArgs...).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Data query
+	dataArgs := append(countArgs, limit, offset)
+	dataQuery := fmt.Sprintf(`
+		SELECT id, sku, COALESCE(barcode, ''), name, unit, COALESCE(last_price, 0), last_updated, COALESCE(source, ''), created_at
+		FROM products%s
+		%s
+		LIMIT $%d OFFSET $%d`, whereSQL, orderBy, argIdx, argIdx+1)
+
+	rows, err := r.db.QueryContext(ctx, dataQuery, dataArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1397,6 +1445,38 @@ func (r *PostgresRepository) DeleteLastPhysicalScan(ctx context.Context, auditID
 	return err
 }
 
+// ModifyProductQuantity deletes all scans for a barcode and inserts one with the new total
+func (r *PostgresRepository) ModifyProductQuantity(ctx context.Context, auditID int, barcode string, newQuantity float64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Delete all existing scans for this barcode in this audit
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM audit_physical WHERE audit_id = $1 AND barcode = $2`,
+		auditID, barcode,
+	)
+	if err != nil {
+		return err
+	}
+
+	// If new quantity > 0, insert a single consolidated scan
+	if newQuantity > 0 {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO audit_physical (audit_id, barcode, quantity, scanned_at)
+			 VALUES ($1, $2, $3, CURRENT_TIMESTAMP)`,
+			auditID, barcode, newQuantity,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 // LogEvent logs an audit event
 func (r *PostgresRepository) LogEvent(ctx context.Context, auditID int, userID *string, eventType string, details map[string]interface{}) error {
 	var detailsJSON []byte
@@ -1538,4 +1618,87 @@ func (r *PostgresRepository) UpdateAuditTheoretical(ctx context.Context, auditID
 	}
 
 	return tx.Commit()
+}
+
+// GetUserStoreIDs returns the store IDs assigned to a user via the user_stores table
+func (r *PostgresRepository) GetUserStoreIDs(ctx context.Context, userID string) ([]int, error) {
+	query := `SELECT store_id FROM user_stores WHERE user_id = $1`
+	rows, err := r.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var storeIDs []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		storeIDs = append(storeIDs, id)
+	}
+	return storeIDs, nil
+}
+
+// GetDashboardAuditsByStores returns audits filtered to specific store IDs
+func (r *PostgresRepository) GetDashboardAuditsByStores(ctx context.Context, storeIDs []int) ([]domain.AuditListDTO, error) {
+	if len(storeIDs) == 0 {
+		return []domain.AuditListDTO{}, nil
+	}
+
+	// Build placeholders $1, $2, $3...
+	placeholders := make([]string, len(storeIDs))
+	args := make([]interface{}, len(storeIDs))
+	for i, id := range storeIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(`
+		SELECT s.id, s.store_id, st.name, s.created_by, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
+		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       COALESCE((
+		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
+		           FROM audit_theoretical t
+		           LEFT JOIN (
+		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
+		               FROM audit_physical ap2
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               GROUP BY ap2.audit_id, p2.sku
+		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           WHERE t.audit_id = s.id
+		       ), 0) as total_loss
+		FROM audit_sessions s
+		JOIN stores st ON s.store_id = st.id
+		WHERE s.store_id IN (%s)
+		ORDER BY s.created_at DESC
+	`, strings.Join(placeholders, ", "))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []domain.AuditListDTO
+	for rows.Next() {
+		var dto domain.AuditListDTO
+		var s domain.AuditSession
+		var storeName string
+
+		err := rows.Scan(
+			&s.ID, &s.StoreID, &storeName, &s.CreatedBy, &s.Status,
+			&s.ReferenceDate, &s.PDFURL, &s.CreatedAt, &s.ClosedAt,
+			&dto.TheoreticalSKUs, &dto.ScannedSKUs, &dto.TotalLoss,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		dto.Session = s
+		dto.StoreName = storeName
+		sessions = append(sessions, dto)
+	}
+	return sessions, nil
 }

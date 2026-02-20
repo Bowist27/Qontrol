@@ -33,6 +33,8 @@ func (h *CatalogHandler) ListProducts(c *gin.Context) {
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "25")
 	search := c.Query("search")
+	sortBy := c.Query("sort_by") // "price_asc" or "price_desc"
+	hideZero := c.Query("hide_zero") == "true"
 
 	page, err := strconv.Atoi(pageStr)
 	if err != nil || page < 1 {
@@ -43,7 +45,7 @@ func (h *CatalogHandler) ListProducts(c *gin.Context) {
 		limit = 25
 	}
 
-	products, totalCount, err := h.service.GetProductsPaginated(c.Request.Context(), page, limit, search)
+	products, totalCount, err := h.service.GetProductsPaginated(c.Request.Context(), page, limit, search, sortBy, hideZero)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "catalog_error",

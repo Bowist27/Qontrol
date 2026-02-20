@@ -12,15 +12,16 @@ import {
     CheckCircle2, RefreshCw, Search, FileSpreadsheet, X, ArrowLeft,
     Activity, AlertCircle, BarChart3, History, MapPin, Calendar, User,
     ChevronDown, Store, Save, Loader2, FileDown, DownloadCloud,
-    Trash2, LockKeyhole, RotateCcw, ShieldAlert, Info
+    Trash2, LockKeyhole, RotateCcw, ShieldAlert, Info, ScanLine, Package
 } from 'lucide-react';
 import { pdf } from '@react-pdf/renderer';
-import { auditApi, type Store as StoreType, type AuditEvent } from '../../services/audit.api';
+import { auditApi, type Store as StoreType, type AuditEvent, type PhysicalScan } from '../../services/audit.api';
 import { useAudit } from '../../context/AuditContext';
 import ReporteAjusteInventario from './ReporteAjusteInventario';
 
 // Types
-type AuditStatus = 'not_started' | 'partial' | 'in_progress' | 'reconciled' | 'locked';
+// Status types used in detail display logic
+// DB statuses: IN_PROGRESS, COUNTING, UPLOADING, REVIEW_PENDING, COMPLETED, CLOSED, CANCELLED, ARCHIVED
 
 interface TheoreticalData {
     status: 'empty' | 'loaded' | 'error';
@@ -98,7 +99,7 @@ const AuditSessionDetail: React.FC = () => {
     const [isLoadingEvents, setIsLoadingEvents] = useState(false);
 
     // Audit Session State (for close/reopen functionality) 
-    const [sessionStatus, setSessionStatus] = useState<'activa' | 'finalizado' | 'IN_PROGRESS'>('activa');
+    const [sessionStatus, setSessionStatus] = useState<string>('activa');
 
     useEffect(() => {
         if (showEventLog && _sessionId) {
@@ -147,6 +148,7 @@ const AuditSessionDetail: React.FC = () => {
         activeUsers: []
     });
     const [diffItems, setDiffItems] = useState<DiffItem[]>([]);
+    const [rawScans, setRawScans] = useState<PhysicalScan[]>([]);
     const [activeTab, setActiveTab] = useState<'all' | 'differences' | 'extras'>('differences'); // Default to discrepancies
     const [searchQuery, setSearchQuery] = useState('');
     const [isDragging, setIsDragging] = useState(false);
@@ -226,8 +228,8 @@ const AuditSessionDetail: React.FC = () => {
                     auditApi.getPhysicalScanSummary(auditId)
                 ]);
 
-
-
+                // Store raw scans for pre-PDF preview table
+                setRawScans(scans);
 
                 // Extract unique device IDs as "users"
                 const devices = [...new Set(scans.map(s => s.device_id).filter(Boolean))];
@@ -401,7 +403,7 @@ const AuditSessionDetail: React.FC = () => {
                     // Set initial session status from DB
                     if (data.session.status) {
                         // Map specific DB statuses if needed, or cast directly if they match
-                        setSessionStatus(data.session.status as any);
+                        setSessionStatus(data.session.status);
                     }
                 })
                 .catch(err => {
@@ -413,16 +415,43 @@ const AuditSessionDetail: React.FC = () => {
         }
     }, [isNewAudit, _sessionId, existingStoreName, stores]);
 
-    // Calculate audit status
-    const getAuditStatus = (): AuditStatus => {
-        if (theoretical.status === 'empty' && physical.status === 'disconnected') return 'not_started';
-        if (theoretical.status === 'loaded' && physical.status === 'disconnected') return 'partial';
-        if (theoretical.status === 'empty' && physical.status === 'active') return 'partial';
-        if (theoretical.status === 'loaded' && physical.status === 'active') return 'in_progress';
-        return 'not_started';
+    // Calculate audit status — consistent with AuditHub list view labels
+    type DetailDisplayStatus = 'not_started' | 'waiting_pdf' | 'waiting_count' | 'counting' | 'locked';
+
+    const getDetailDisplayStatus = (): DetailDisplayStatus => {
+        const dbStatus = sessionStatus;
+        // Closed / finalized
+        if (dbStatus === 'finalizado' || dbStatus === 'closed' || dbStatus === 'COMPLETED') return 'locked';
+
+        // No PDF loaded yet → always "Esperando PDF", even if counting is happening
+        if (theoretical.status !== 'loaded' && dbStatus !== 'finalizado' && dbStatus !== 'closed' && dbStatus !== 'COMPLETED') {
+            // COUNTING or IN_PROGRESS without PDF → waiting_pdf
+            if (dbStatus === 'COUNTING' || dbStatus === 'IN_PROGRESS' || dbStatus === 'activa'
+                || dbStatus === 'REVIEW_PENDING' || dbStatus === 'UPLOADING' || dbStatus === 'waiting_pdf') {
+                return 'waiting_pdf';
+            }
+        }
+
+        // Already counting (with PDF)
+        if (dbStatus === 'COUNTING') return 'counting';
+        // Waiting for PDF upload
+        if (dbStatus === 'REVIEW_PENDING' || dbStatus === 'UPLOADING' || dbStatus === 'waiting_pdf') return 'waiting_pdf';
+        // Waiting for physical count
+        if (dbStatus === 'waiting_count' || dbStatus === 'waiting_valuation') return 'waiting_count';
+
+        // IN_PROGRESS — disambiguate by data state
+        if (dbStatus === 'IN_PROGRESS' || dbStatus === 'activa') {
+            if (physical.status === 'active' || physical.scannedItems > 0) return 'counting';
+            if (theoretical.status === 'loaded') return 'waiting_count';
+            return 'waiting_pdf';
+        }
+
+        // New / unknown
+        if (theoretical.status === 'empty') return isNewAudit ? 'not_started' : 'waiting_pdf';
+        return 'waiting_count';
     };
 
-    const displayStatus = getAuditStatus();
+    const displayStatus = getDetailDisplayStatus();
 
     // Simulate live updates
     useEffect(() => {
@@ -841,20 +870,25 @@ const AuditSessionDetail: React.FC = () => {
                     )}
 
                     {/* Status Badge */}
-                    <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${displayStatus === 'not_started' ? 'bg-slate-100 text-slate-600' :
-                        displayStatus === 'partial' ? 'bg-amber-100 text-amber-700' :
-                            displayStatus === 'in_progress' ? 'bg-blue-100 text-blue-700' :
-                                'bg-emerald-100 text-emerald-700'
+                    <div className={`px-3 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 ${
+                        displayStatus === 'not_started' ? 'bg-slate-100 text-slate-600' :
+                        displayStatus === 'waiting_pdf' ? 'bg-slate-100 text-slate-500' :
+                        displayStatus === 'waiting_count' ? 'bg-amber-100 text-amber-700' :
+                        displayStatus === 'counting' ? 'bg-blue-100 text-blue-700' :
+                        'bg-emerald-100 text-emerald-700'
                         }`}>
-                        <span className={`w-2 h-2 rounded-full ${displayStatus === 'not_started' ? 'bg-slate-400' :
-                            displayStatus === 'partial' ? 'bg-amber-500' :
-                                displayStatus === 'in_progress' ? 'bg-blue-500 animate-pulse' :
-                                    'bg-emerald-500'
+                        <span className={`w-2 h-2 rounded-full ${
+                            displayStatus === 'not_started' ? 'bg-slate-400' :
+                            displayStatus === 'waiting_pdf' ? 'bg-slate-400' :
+                            displayStatus === 'waiting_count' ? 'bg-amber-500' :
+                            displayStatus === 'counting' ? 'bg-blue-500 animate-pulse' :
+                            'bg-emerald-500'
                             }`}></span>
                         {displayStatus === 'not_started' && 'Sin Iniciar'}
-                        {displayStatus === 'partial' && 'Parcial'}
-                        {displayStatus === 'in_progress' && 'En Progreso'}
-                        {displayStatus === 'reconciled' && 'Conciliado'}
+                        {displayStatus === 'waiting_pdf' && 'Esperando PDF'}
+                        {displayStatus === 'waiting_count' && 'Esperando Conteo'}
+                        {displayStatus === 'counting' && 'En Conteo'}
+                        {displayStatus === 'locked' && 'Finalizado'}
                     </div>
                 </div>
 
@@ -1201,14 +1235,120 @@ const AuditSessionDetail: React.FC = () => {
             < div className="flex-1 bg-white rounded-xl border border-slate-200 flex flex-col overflow-hidden" >
                 {
                     theoretical.status !== 'loaded' ? (
-                        /* Waiting State */
-                        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-                            <BarChart3 size={48} className="text-slate-300 mb-4" />
-                            <p className="text-lg font-medium text-slate-600">Esperando datos para conciliar</p>
-                            <p className="text-sm text-slate-400 max-w-md mt-1">
-                                Sube el PDF de valuación{physical.status !== 'active' && ' y espera los escaneos de la App de Escritorio'} para ver las diferencias.
-                            </p>
-                        </div>
+                        rawScans.length > 0 ? (
+                            /* Pre-PDF: Show live scan feed */
+                            <div className="flex-1 flex flex-col overflow-hidden">
+                                {/* Header */}
+                                <div className="px-4 py-3 border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <ScanLine size={18} className="text-blue-500" />
+                                        <h3 className="text-sm font-semibold text-slate-700">Conteo Físico en Vivo</h3>
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700">
+                                            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span>
+                                            {physical.uniqueProducts} productos
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-slate-400">
+                                        Sube el PDF de valuación para ver la conciliación completa
+                                    </p>
+                                </div>
+
+                                {/* Scan table */}
+                                <div className="flex-1 overflow-auto">
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-slate-50 sticky top-0">
+                                            <tr>
+                                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">#</th>
+                                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">SKU / Código</th>
+                                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Producto</th>
+                                                <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Cantidad</th>
+                                                <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Escaneos</th>
+                                                <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Último Escaneo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {(() => {
+                                                // Aggregate scans by SKU/barcode
+                                                const grouped = new Map<string, { sku: string; barcode: string; name: string; qty: number; scanCount: number; lastScan: string; isUnknown: boolean }>();
+                                                rawScans.forEach(scan => {
+                                                    const key = scan.sku || scan.barcode;
+                                                    const existing = grouped.get(key);
+                                                    if (existing) {
+                                                        existing.qty += scan.quantity;
+                                                        existing.scanCount += 1;
+                                                        if (scan.scanned_at > existing.lastScan) existing.lastScan = scan.scanned_at;
+                                                    } else {
+                                                        grouped.set(key, {
+                                                            sku: scan.sku || scan.barcode,
+                                                            barcode: scan.barcode,
+                                                            name: scan.product_name || (scan.is_unknown ? `⚠ ${scan.barcode} (no catalogado)` : scan.barcode),
+                                                            qty: scan.quantity,
+                                                            scanCount: 1,
+                                                            lastScan: scan.scanned_at,
+                                                            isUnknown: scan.is_unknown
+                                                        });
+                                                    }
+                                                });
+                                                const rows = Array.from(grouped.values()).sort((a, b) => b.lastScan.localeCompare(a.lastScan));
+
+                                                return rows.map((row, idx) => (
+                                                    <tr key={row.sku} className={`hover:bg-slate-50 transition-colors ${idx === 0 ? 'bg-blue-50/30' : ''}`}>
+                                                        <td className="px-4 py-2.5 text-slate-400 text-xs">{idx + 1}</td>
+                                                        <td className="px-4 py-2.5">
+                                                            <span className="font-mono text-xs text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
+                                                                {row.sku}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-2.5">
+                                                            <div className="flex items-center gap-2">
+                                                                <Package size={14} className={row.isUnknown ? 'text-amber-400' : 'text-slate-400'} />
+                                                                <span className={`text-sm ${row.isUnknown ? 'text-amber-600 italic' : 'text-slate-700'}`}>
+                                                                    {row.name}
+                                                                </span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-4 py-2.5 text-right">
+                                                            <span className="text-sm font-semibold text-blue-700">{row.qty}</span>
+                                                        </td>
+                                                        <td className="px-4 py-2.5 text-right">
+                                                            <span className="text-xs text-slate-500">{row.scanCount}×</span>
+                                                        </td>
+                                                        <td className="px-4 py-2.5 text-right text-xs text-slate-400">
+                                                            {new Date(row.lastScan).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+                                                        </td>
+                                                    </tr>
+                                                ));
+                                            })()}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {/* Footer summary */}
+                                <div className="px-4 py-2 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
+                                    <div className="flex items-center gap-4">
+                                        <span>{physical.uniqueProducts} productos únicos</span>
+                                        <span>{physical.totalQuantity} unidades totales</span>
+                                        <span>{physical.scannedItems} escaneos</span>
+                                        {physical.unknownItems > 0 && (
+                                            <span className="text-amber-600 font-medium">{physical.unknownItems} no catalogados</span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-blue-500">
+                                        <Activity size={12} className="animate-pulse" />
+                                        <span className="font-medium">Actualizando en vivo</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            /* No scans and no PDF — true empty state */
+                            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                                <BarChart3 size={48} className="text-slate-300 mb-4" />
+                                <p className="text-lg font-medium text-slate-600">Esperando datos para conciliar</p>
+                                <p className="text-sm text-slate-400 max-w-md mt-1">
+                                    Sube el PDF de valuación y espera los escaneos de la App de Escritorio para ver las diferencias.
+                                </p>
+                            </div>
+                        )
                     ) : (
                         <>
                             {/* Action Bar: Tabs LEFT | Tools RIGHT (Dumbbell Pattern) */}

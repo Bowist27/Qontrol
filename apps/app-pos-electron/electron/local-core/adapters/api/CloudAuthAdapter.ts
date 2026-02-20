@@ -12,7 +12,7 @@ export class CloudAuthAdapter {
 
     async getUsersFromCloud(): Promise<User[]> {
         try {
-            const url = `${this.apiUrl}/api/users/sync`;
+            const url = `${this.apiUrl}/users/sync`;
             console.log(`Syncing from ${url} with key ${this.syncKey ? 'PRESENT' : 'MISSING'}...`);
             const response = await axios.get(url, {
                 headers: {

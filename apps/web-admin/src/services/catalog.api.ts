@@ -155,12 +155,18 @@ export const catalogApi = {
     /**
      * GET /api/catalog - List products with pagination
      */
-    getProducts: async (page: number = 1, limit: number = 25, search: string = ''): Promise<CatalogListResponse> => {
+    getProducts: async (page: number = 1, limit: number = 25, search: string = '', sortBy: string = '', hideZero: boolean = false): Promise<CatalogListResponse> => {
         const params = new URLSearchParams();
         params.append('page', page.toString());
         params.append('limit', limit.toString());
         if (search) {
             params.append('search', search);
+        }
+        if (sortBy) {
+            params.append('sort_by', sortBy);
+        }
+        if (hideZero) {
+            params.append('hide_zero', 'true');
         }
         return httpClient.get<CatalogListResponse>(`${API_BASE}/api/catalog?${params.toString()}`);
     },

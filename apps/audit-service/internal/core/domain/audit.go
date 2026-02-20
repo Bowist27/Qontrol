@@ -8,6 +8,8 @@ type Store struct {
 	Name      string    `json:"name"`
 	Status    bool      `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
+	ZoneID    *int      `json:"zone_id,omitempty"`
+	ZoneName  *string   `json:"zone_name,omitempty"`
 }
 
 // AuditSession represents an audit session for a store

@@ -394,6 +394,9 @@ func (r *PostgresUserRepo) GetAllActive(ctx context.Context) ([]*domain.User, er
 			}
 		}
 
+		// Load stores for this user
+		user.Stores, _ = r.GetUserStores(ctx, user.ID)
+
 		users = append(users, &user)
 	}
 
@@ -611,7 +614,7 @@ func (r *PostgresUserRepo) GetStoreByID(ctx context.Context, id int) (*domain.St
 		LEFT JOIN zones z ON s.zone_id = z.id
 		WHERE s.id = $1
 	`
-	
+
 	var store domain.Store
 	err := r.db.QueryRowContext(ctx, query, id).Scan(&store.ID, &store.Name, &store.Status, &store.ZoneID, &store.ZoneName)
 	if err != nil {
@@ -623,7 +626,7 @@ func (r *PostgresUserRepo) GetStoreByID(ctx context.Context, id int) (*domain.St
 // CreateStore creates a new store
 func (r *PostgresUserRepo) CreateStore(ctx context.Context, name string, zoneID *int) (*domain.Store, error) {
 	query := `INSERT INTO stores (name, status, zone_id) VALUES ($1, true, $2) RETURNING id, name, status, zone_id`
-	
+
 	var store domain.Store
 	err := r.db.QueryRowContext(ctx, query, name, zoneID).Scan(&store.ID, &store.Name, &store.Status, &store.ZoneID)
 	if err != nil {
@@ -635,7 +638,7 @@ func (r *PostgresUserRepo) CreateStore(ctx context.Context, name string, zoneID 
 // UpdateStore updates an existing store
 func (r *PostgresUserRepo) UpdateStore(ctx context.Context, id int, name string, status bool, zoneID *int) (*domain.Store, error) {
 	query := `UPDATE stores SET name = $1, status = $2, zone_id = $3 WHERE id = $4 RETURNING id, name, status, zone_id`
-	
+
 	var store domain.Store
 	err := r.db.QueryRowContext(ctx, query, name, status, zoneID, id).Scan(&store.ID, &store.Name, &store.Status, &store.ZoneID)
 	if err != nil {
@@ -747,7 +750,7 @@ func (r *PostgresUserRepo) GetAllZones(ctx context.Context) ([]domain.Zone, erro
 		zone.Supervisors = []domain.ZoneSupervisor{}
 		zones = append(zones, zone)
 	}
-	
+
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
@@ -773,13 +776,13 @@ func (r *PostgresUserRepo) getZoneSupervisors(ctx context.Context, zoneID int) (
 		WHERE zs.zone_id = $1
 		ORDER BY u.first_name, u.last_name
 	`
-	
+
 	rows, err := r.db.QueryContext(ctx, query, zoneID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	var supervisors []domain.ZoneSupervisor
 	for rows.Next() {
 		var s domain.ZoneSupervisor
@@ -788,11 +791,11 @@ func (r *PostgresUserRepo) getZoneSupervisors(ctx context.Context, zoneID int) (
 		}
 		supervisors = append(supervisors, s)
 	}
-	
+
 	if supervisors == nil {
 		supervisors = []domain.ZoneSupervisor{}
 	}
-	
+
 	return supervisors, rows.Err()
 }
 
@@ -809,20 +812,20 @@ func (r *PostgresUserRepo) GetZoneByID(ctx context.Context, id int) (*domain.Zon
 		LEFT JOIN price_lists pl ON z.price_list_id = pl.id
 		WHERE z.id = $1
 	`
-	
+
 	var zone domain.Zone
 	err := r.db.QueryRowContext(ctx, query, id).Scan(&zone.ID, &zone.Name, &zone.PriceListID, &zone.PriceListName, &zone.Status, &zone.StoreCount)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Load supervisors
 	supervisors, err := r.getZoneSupervisors(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	zone.Supervisors = supervisors
-	
+
 	return &zone, nil
 }
 
@@ -833,7 +836,7 @@ func (r *PostgresUserRepo) CreateZone(ctx context.Context, name string, supervis
 		return nil, err
 	}
 	defer tx.Rollback()
-	
+
 	// Create zone
 	var zone domain.Zone
 	err = tx.QueryRowContext(ctx, `INSERT INTO zones (name, price_list_id, status) VALUES ($1, $2, true) RETURNING id, name, status`, name, priceListID).Scan(&zone.ID, &zone.Name, &zone.Status)
@@ -841,7 +844,7 @@ func (r *PostgresUserRepo) CreateZone(ctx context.Context, name string, supervis
 		return nil, err
 	}
 	zone.PriceListID = priceListID
-	
+
 	// Add supervisors
 	for _, supervisorID := range supervisorIDs {
 		_, err = tx.ExecContext(ctx, `INSERT INTO zone_supervisors (zone_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, zone.ID, supervisorID)
@@ -849,17 +852,17 @@ func (r *PostgresUserRepo) CreateZone(ctx context.Context, name string, supervis
 			return nil, err
 		}
 	}
-	
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	
+
 	// Load supervisors for response
 	zone.Supervisors, _ = r.getZoneSupervisors(ctx, zone.ID)
 	if zone.Supervisors == nil {
 		zone.Supervisors = []domain.ZoneSupervisor{}
 	}
-	
+
 	return &zone, nil
 }
 
@@ -870,7 +873,7 @@ func (r *PostgresUserRepo) UpdateZone(ctx context.Context, id int, name string, 
 		return nil, err
 	}
 	defer tx.Rollback()
-	
+
 	// Update zone
 	var zone domain.Zone
 	err = tx.QueryRowContext(ctx, `UPDATE zones SET name = $1, price_list_id = $2, status = $3 WHERE id = $4 RETURNING id, name, status`, name, priceListID, status, id).Scan(&zone.ID, &zone.Name, &zone.Status)
@@ -878,13 +881,13 @@ func (r *PostgresUserRepo) UpdateZone(ctx context.Context, id int, name string, 
 		return nil, err
 	}
 	zone.PriceListID = priceListID
-	
+
 	// Remove existing supervisors
 	_, err = tx.ExecContext(ctx, `DELETE FROM zone_supervisors WHERE zone_id = $1`, id)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Add new supervisors
 	for _, supervisorID := range supervisorIDs {
 		_, err = tx.ExecContext(ctx, `INSERT INTO zone_supervisors (zone_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, supervisorID)
@@ -892,17 +895,17 @@ func (r *PostgresUserRepo) UpdateZone(ctx context.Context, id int, name string, 
 			return nil, err
 		}
 	}
-	
+
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	
+
 	// Load supervisors for response
 	zone.Supervisors, _ = r.getZoneSupervisors(ctx, id)
 	if zone.Supervisors == nil {
 		zone.Supervisors = []domain.ZoneSupervisor{}
 	}
-	
+
 	return &zone, nil
 }
 
@@ -917,7 +920,7 @@ func (r *PostgresUserRepo) DeleteZone(ctx context.Context, id int) error {
 	if count > 0 {
 		return fmt.Errorf("zone has %d store(s) assigned", count)
 	}
-	
+
 	_, err = r.db.ExecContext(ctx, `DELETE FROM zones WHERE id = $1`, id)
 	return err
 }

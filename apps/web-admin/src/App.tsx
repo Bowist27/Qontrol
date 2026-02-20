@@ -16,6 +16,7 @@ import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
+import ProtectedRoute from './components/auth/ProtectedRoute';
 
 // View components
 import DashboardView from './components/dashboard/DashboardView';
@@ -26,10 +27,10 @@ import UsersView from './components/users/UsersView';
 import StoresView from './components/stores/StoresView';
 
 /**
- * Protected Route Component
- * Redirects to /login if not authenticated
+ * Auth Guard - Only checks authentication (no permissions)
+ * Used for the Dashboard layout wrapper
  */
-const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const AuthGuard: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
@@ -93,21 +94,21 @@ const AppRoutes: React.FC = () => {
       <Route
         path="/dashboard"
         element={
-          <ProtectedRoute>
+          <AuthGuard>
             <AuditProvider>
               <Dashboard />
             </AuditProvider>
-          </ProtectedRoute>
+          </AuthGuard>
         }
       >
-        {/* Dashboard Nested Routes */}
+        {/* Dashboard Nested Routes - Each with permission guard */}
         <Route index element={<Navigate to="overview" replace />} />
-        <Route path="overview" element={<DashboardView onViewInventory={() => { }} />} />
-        <Route path="inventory" element={<InventoryView />} />
-        <Route path="audits/*" element={<AuditsView />} />
-        <Route path="catalog" element={<CatalogView />} />
-        <Route path="users" element={<UsersView />} />
-        <Route path="stores" element={<StoresView />} />
+        <Route path="overview" element={<ProtectedRoute permission="web:dashboard"><DashboardView onViewInventory={() => { }} /></ProtectedRoute>} />
+        <Route path="inventory" element={<ProtectedRoute permission="web:inventories"><InventoryView /></ProtectedRoute>} />
+        <Route path="audits/*" element={<ProtectedRoute permission="web:audits"><AuditsView /></ProtectedRoute>} />
+        <Route path="catalog" element={<ProtectedRoute permission="web:catalog"><CatalogView /></ProtectedRoute>} />
+        <Route path="users" element={<ProtectedRoute permission="web:users"><UsersView /></ProtectedRoute>} />
+        <Route path="stores" element={<ProtectedRoute permission="web:users"><StoresView /></ProtectedRoute>} />
       </Route>
 
       {/* Default Route - Redirect based on auth */}

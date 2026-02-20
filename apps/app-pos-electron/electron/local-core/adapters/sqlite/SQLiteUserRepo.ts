@@ -71,6 +71,13 @@ export class SQLiteUserRepo implements UserRepository {
                 `);
                 console.log('Schema migration completed.');
             }
+
+            // Add store_ids column if missing (for DBs created before this column existed)
+            if (!columns.includes('store_ids')) {
+                console.log('Adding store_ids column...');
+                this.db.exec("ALTER TABLE users ADD COLUMN store_ids TEXT DEFAULT '[]'");
+                console.log('store_ids column added.');
+            }
         } catch (err) {
             console.error('Migration check error:', err);
         }

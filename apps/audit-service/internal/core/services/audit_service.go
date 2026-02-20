@@ -26,9 +26,20 @@ func NewAuditService(repo repositories.AuditRepository, s3Client storage.S3Clien
 	}
 }
 
-// ListStores returns all active stores
-func (s *AuditService) ListStores(ctx context.Context) ([]domain.Store, error) {
-	return s.repo.FindAllStores(ctx)
+// ListStores returns stores filtered by user's assignments
+// Admins see all active stores; other roles see only assigned stores
+func (s *AuditService) ListStores(ctx context.Context, userID string, role string) ([]domain.Store, error) {
+	if role == "Administrador" {
+		return s.repo.FindAllStores(ctx)
+	}
+	storeIDs, err := s.repo.GetUserStoreIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(storeIDs) == 0 {
+		return []domain.Store{}, nil
+	}
+	return s.repo.FindStoresByIDs(ctx, storeIDs)
 }
 
 // ParseResult contains the parsed PDF data for preview (no DB save yet)
@@ -221,11 +232,32 @@ func (s *AuditService) UndoLastScan(ctx context.Context, auditID int) error {
 	return s.repo.DeleteLastPhysicalScan(ctx, auditID)
 }
 
+// ModifyProductQuantity updates the total quantity for a product in an audit
+func (s *AuditService) ModifyProductQuantity(ctx context.Context, auditID int, barcode string, newQuantity float64) error {
+	return s.repo.ModifyProductQuantity(ctx, auditID, barcode, newQuantity)
+}
+
 // GetAudits returns audits for the dashboard following business rules:
-// - Scope: Global (all stores)
-// - Status: 'waiting_count', 'waiting_valuation' OR 'closed' within last 24 hours
-func (s *AuditService) GetAudits(ctx context.Context) ([]domain.AuditListDTO, error) {
-	audits, err := s.repo.GetDashboardAudits(ctx)
+// - Admins see all audits (global scope)
+// - Other roles see only audits from their assigned stores
+func (s *AuditService) GetAudits(ctx context.Context, userID string, role string) ([]domain.AuditListDTO, error) {
+	var audits []domain.AuditListDTO
+	var err error
+
+	// Admins see everything
+	if role == "Administrador" {
+		audits, err = s.repo.GetDashboardAudits(ctx)
+	} else {
+		// Get the user's assigned store IDs
+		storeIDs, storeErr := s.repo.GetUserStoreIDs(ctx, userID)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		if len(storeIDs) == 0 {
+			return []domain.AuditListDTO{}, nil
+		}
+		audits, err = s.repo.GetDashboardAuditsByStores(ctx, storeIDs)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -376,9 +408,19 @@ func (s *AuditService) RequestReopenAudit(ctx context.Context, auditID int, requ
 	return req, nil
 }
 
-// GetPendingReopenRequests returns all pending reopen requests (for web-admin)
-func (s *AuditService) GetPendingReopenRequests(ctx context.Context) ([]domain.ReopenRequest, error) {
-	return s.repo.GetPendingReopenRequests(ctx)
+// GetPendingReopenRequests returns pending reopen requests filtered by user's stores
+func (s *AuditService) GetPendingReopenRequests(ctx context.Context, userID string, role string) ([]domain.ReopenRequest, error) {
+	if role == "Administrador" {
+		return s.repo.GetPendingReopenRequests(ctx)
+	}
+	storeIDs, err := s.repo.GetUserStoreIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(storeIDs) == 0 {
+		return []domain.ReopenRequest{}, nil
+	}
+	return s.repo.GetPendingReopenRequestsByStores(ctx, storeIDs)
 }
 
 // GetPendingReopenRequestsForAudit returns pending reopen requests for a specific audit
