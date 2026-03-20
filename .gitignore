@@ -3,6 +3,8 @@
 .env
 *.env.local
 node_modules
+.env.production
+*.env.production
 
 # Excel temporary files
 ~$*.xlsx
