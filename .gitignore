@@ -12,3 +12,7 @@ node_modules
 docs/pruebas/package.json
 docs/pruebas/package-lock.json
 docs/pruebas/node_modules
+
+# Electron build output
+**/release*/
+**/dist-electron/
