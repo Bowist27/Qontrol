@@ -610,6 +610,70 @@ const AuditSessionDetail: React.FC = () => {
         }
     };
 
+    // Export live physical scans to PDF (Pre-reconciliation)
+    const exportLiveScansToPDF = async () => {
+        try {
+            console.log('📄 Generating Live Scans PDF...');
+            
+            // Build pseudo diffItems from live scans
+            const grouped = new Map<string, { sku: string; name: string; qty: number; }>();
+            rawScans.forEach(scan => {
+                const key = scan.sku || scan.barcode;
+                const existing = grouped.get(key);
+                if (existing) {
+                    existing.qty += scan.quantity;
+                } else {
+                    grouped.set(key, {
+                        sku: scan.sku || scan.barcode,
+                        name: scan.product_name || (scan.is_unknown ? `⚠ ${scan.barcode} (no catalogado)` : scan.barcode),
+                        qty: scan.quantity,
+                    });
+                }
+            });
+
+            const rows = Array.from(grouped.values());
+            const storeName = existingStoreName || stores.find(s => s.id === selectedStoreId)?.name || 'Tienda Sin Nombre';
+            const fechaInventario = new Date().toLocaleDateString('es-MX');
+            const fechaValuacion = 'N/A';
+            
+            const ajustes = rows.map(item => {
+                let familia = 'OTROS';
+                const desc = item.name.toUpperCase();
+                if (desc.includes('CUBETA')) familia = 'CUBETAS';
+                else if (desc.includes('GALON') || desc.includes('GAL')) familia = 'GALONES';
+                else if (desc.includes('LITRO') || desc.includes('LT')) familia = 'LITROS';
+                else if (desc.includes('BROCHA') || desc.includes('RODILLO') || desc.includes('LIJA') || desc.includes('CINTA')) familia = 'COMPLEMENTOS';
+
+                return {
+                    codigo: item.sku,
+                    descripcion: item.name,
+                    unidad: 'PZA',
+                    familia,
+                    cantidadTeorica: 0,
+                    cantidadFisica: item.qty,
+                    diferencia: item.qty,
+                    tipoMovimiento: 'ENTRADA' as const
+                };
+            });
+
+            const pdfData = { ajustes, nombreTienda: storeName, fechaValuacion, fechaInventario };
+            const blob = await pdf(<ReporteAjusteInventario {...pdfData} />).toBlob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            const date = new Date().toISOString().split('T')[0];
+            link.download = `ConteoFisico_${storeName.replace(/\\s+/g, '_')}_${date}.pdf`;
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('❌ Error generating PDF:', error);
+            showFeedback('error', 'Error al generar PDF', 'No se pudo generar el PDF.');
+        }
+    };
+
     // Scroll to top on page change
     useEffect(() => {
         if (tableContainerRef.current) {
@@ -1278,9 +1342,19 @@ const AuditSessionDetail: React.FC = () => {
                                             {physical.uniqueProducts} productos
                                         </span>
                                     </div>
-                                    <p className="text-xs text-slate-400">
-                                        Sube el PDF de valuación para ver la conciliación completa
-                                    </p>
+                                    <div className="flex items-center gap-3">
+                                        <p className="text-xs text-slate-400">
+                                            Sube el PDF de valuación para ver la conciliación completa
+                                        </p>
+                                        <button 
+                                            onClick={exportLiveScansToPDF} 
+                                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded bg-white border border-slate-200 shadow-sm flex items-center gap-2" 
+                                            title="Descargar PDF de Conteo Físico"
+                                        >
+                                            <DownloadCloud size={14} className="text-blue-500" />
+                                            <span className="text-xs font-medium text-slate-600">Descargar PDF</span>
+                                        </button>
+                                    </div>
                                 </div>
 
                                 {/* Scan table */}
