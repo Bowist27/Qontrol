@@ -674,6 +674,53 @@ const AuditSessionDetail: React.FC = () => {
         }
     };
 
+    // Export live physical scans to Excel
+    const exportLiveScansToExcel = () => {
+        if (rawScans.length === 0) {
+            showFeedback('warning', 'Sin datos', 'No hay escaneos para exportar.');
+            return;
+        }
+
+        const grouped = new Map<string, { sku: string; name: string; qty: number; }>();
+        rawScans.forEach(scan => {
+            const key = scan.sku || scan.barcode;
+            const existing = grouped.get(key);
+            if (existing) {
+                existing.qty += scan.quantity;
+            } else {
+                grouped.set(key, {
+                    sku: scan.sku || scan.barcode,
+                    name: scan.product_name || (scan.is_unknown ? `⚠ ${scan.barcode} (no catalogado)` : scan.barcode),
+                    qty: scan.quantity,
+                });
+            }
+        });
+
+        const rows = Array.from(grouped.values()).map(item => [
+            item.sku,
+            `"${item.name.replace(/"/g, '""')}"`,
+            item.qty.toString()
+        ]);
+
+        const headers = ['SKU', 'Descripción', 'Cant. Físico'];
+        const BOM = '\uFEFF';
+        const csvContent = BOM + [headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+
+        const storeName = existingStoreName || stores.find(s => s.id === selectedStoreId)?.name || 'Auditoria';
+        const date = new Date().toISOString().split('T')[0];
+        link.download = `ConteoFisico_${storeName.replace(/\s+/g, '_')}_${date}.csv`;
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     // Scroll to top on page change
     useEffect(() => {
         if (tableContainerRef.current) {
@@ -1343,17 +1390,27 @@ const AuditSessionDetail: React.FC = () => {
                                         </span>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                        <p className="text-xs text-slate-400">
+                                        <p className="text-xs text-slate-400 hidden sm:block">
                                             Sube el PDF de valuación para ver la conciliación completa
                                         </p>
-                                        <button 
-                                            onClick={exportLiveScansToPDF} 
-                                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded bg-white border border-slate-200 shadow-sm flex items-center gap-2" 
-                                            title="Descargar PDF de Conteo Físico"
-                                        >
-                                            <DownloadCloud size={14} className="text-blue-500" />
-                                            <span className="text-xs font-medium text-slate-600">Descargar PDF</span>
-                                        </button>
+                                        <div className="flex items-center gap-2 border-l border-slate-200 pl-3">
+                                            <button 
+                                                onClick={exportLiveScansToExcel} 
+                                                className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded bg-white border border-slate-200 shadow-sm flex items-center gap-2" 
+                                                title="Descargar Excel de Conteo Físico"
+                                            >
+                                                <FileSpreadsheet size={14} className="text-emerald-500" />
+                                                <span className="text-xs font-medium">Excel</span>
+                                            </button>
+                                            <button 
+                                                onClick={exportLiveScansToPDF} 
+                                                className="p-1.5 text-blue-600 hover:bg-blue-50 rounded bg-white border border-slate-200 shadow-sm flex items-center gap-2" 
+                                                title="Descargar PDF de Conteo Físico"
+                                            >
+                                                <DownloadCloud size={14} className="text-blue-500" />
+                                                <span className="text-xs font-medium">PDF</span>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 
