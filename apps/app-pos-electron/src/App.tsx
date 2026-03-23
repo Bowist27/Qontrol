@@ -3,8 +3,9 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { PhysicalAudit } from './pages/PhysicalAudit';
+import { PosBillingView } from './pages/billing/PosBillingView';
 
-type AppPage = 'dashboard' | 'audit';
+type AppPage = 'dashboard' | 'audit' | 'billing';
 
 // Inner component that uses auth context
 function AppContent() {
@@ -28,6 +29,12 @@ function AppContent() {
       case 'audit':
         return (
           <PhysicalAudit 
+            onBack={() => setCurrentPage('dashboard')} 
+          />
+        );
+      case 'billing':
+        return (
+          <PosBillingView 
             onBack={() => setCurrentPage('dashboard')} 
           />
         );

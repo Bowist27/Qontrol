@@ -492,7 +492,7 @@ const AuditSessionDetail: React.FC = () => {
 
     // Export to Excel (CSV format compatible with Excel)
     const exportToExcel = () => {
-        if (diffItems.length === 0) {
+        if (filteredItems.length === 0) {
             showFeedback('warning', 'Sin datos', 'No hay datos para exportar.');
             return;
         }
@@ -501,7 +501,7 @@ const AuditSessionDetail: React.FC = () => {
         const headers = ['SKU', 'Descripción', 'Precio Unitario', 'Cant. Teórico', 'Cant. Físico', 'Diferencia', 'Impacto ($)'];
 
         // Data rows
-        const rows = diffItems.map(item => [
+        const rows = filteredItems.map(item => [
             item.sku,
             `"${item.name.replace(/"/g, '""')}"`, // Escape quotes in names
             item.unitCost?.toFixed(2) || '0.00',
@@ -541,7 +541,7 @@ const AuditSessionDetail: React.FC = () => {
         const fechaInventario = new Date().toLocaleDateString('es-MX');
         const fechaValuacion = new Date().toLocaleDateString('es-MX');
 
-        const ajustes = diffItems.map(item => {
+        const ajustes = filteredItems.map(item => {
             // Determine product family based on description/unit
             let familia = 'OTROS';
             const desc = item.name.toUpperCase();

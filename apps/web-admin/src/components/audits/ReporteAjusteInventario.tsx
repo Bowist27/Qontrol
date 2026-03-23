@@ -212,16 +212,15 @@ const ReporteAjusteInventario: React.FC<ReporteProps> = ({
     fechaValuacion,
     fechaInventario
 }) => {
-    // Filter discrepancies
-    const discrepancias = ajustes.filter(item => item.diferencia !== 0);
-
-    // Group by family
+    // Group by family (no filtering, handled by parent)
     const familias: Record<string, AjusteItem[]> = {};
-    discrepancias.forEach(item => {
+    ajustes.forEach(item => {
         const fam = item.familia || 'OTROS';
         if (!familias[fam]) familias[fam] = [];
         familias[fam].push(item);
     });
+
+    const discrepanciasCount = ajustes.filter(item => item.diferencia !== 0).length;
 
     const timestamp = new Date().toLocaleString('es-MX');
 
@@ -277,7 +276,10 @@ const ReporteAjusteInventario: React.FC<ReporteProps> = ({
                 {/* Summary */}
                 <View style={styles.summary}>
                     <Text style={styles.summaryText}>
-                        Total de Discrepancias: {discrepancias.length}
+                        Total Ítems: {ajustes.length}
+                    </Text>
+                    <Text style={[styles.summaryText, { marginTop: 4, fontSize: 9, color: colors.secondary }]}>
+                        Con diferencia: {discrepanciasCount}
                     </Text>
                 </View>
 

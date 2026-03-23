@@ -4,7 +4,7 @@
  */
 
 import { NavLink } from 'react-router-dom';
-import { BarChart3, Package, ClipboardList, FileSpreadsheet, Users, MapPin, LogOut, Activity, ChevronLeft, ChevronRight } from 'lucide-react';
+import { BarChart3, Package, ClipboardList, FileSpreadsheet, Users, MapPin, LogOut, Activity, ChevronLeft, ChevronRight, Receipt } from 'lucide-react';
 import { usePermissions, type Permission } from '../../hooks/usePermissions';
 import type { SystemHealth } from '../../types';
 
@@ -29,6 +29,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         { path: '/dashboard/overview', label: 'Dashboard', icon: BarChart3, permission: 'web:dashboard' },
         { path: '/dashboard/inventory', label: 'Inventarios', icon: Package, permission: 'web:inventories' },
         { path: '/dashboard/audits', label: 'Auditorías', icon: ClipboardList, permission: 'web:audits' },
+        { path: '/dashboard/billing', label: 'Facturación CFDI', icon: Receipt, permission: 'web:dashboard' },
     ];
 
     const configItems: { path: string; label: string; icon: any; permission?: Permission }[] = [

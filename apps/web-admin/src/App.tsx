@@ -17,11 +17,16 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import BillingPortal from './pages/BillingPortal';
+import InvoiceSuccess from './pages/InvoiceSuccess';
+import Terms from './pages/Terms';
+import Privacy from './pages/Privacy';
 
 // View components
 import DashboardView from './components/dashboard/DashboardView';
 import InventoryView from './components/inventory/InventoryView';
 import AuditsView from './components/audits/AuditsView';
+import BillingAdminView from './components/billing/BillingAdminView';
 import CatalogView from './components/catalog/CatalogView';
 import UsersView from './components/users/UsersView';
 import StoresView from './components/stores/StoresView';
@@ -90,6 +95,13 @@ const AppRoutes: React.FC = () => {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
 
+      {/* Public Billing Portal - Unauthenticated */}
+      <Route path="/facturacion" element={<BillingPortal />} />
+      <Route path="/facturacion/exito" element={<InvoiceSuccess />} />
+
+      {/* Legal Pages */}
+      <Route path="/terminos" element={<Terms />} />
+      <Route path="/privacidad" element={<Privacy />} />
       {/* Protected Routes */}
       <Route
         path="/dashboard"
@@ -106,6 +118,7 @@ const AppRoutes: React.FC = () => {
         <Route path="overview" element={<ProtectedRoute permission="web:dashboard"><DashboardView onViewInventory={() => { }} /></ProtectedRoute>} />
         <Route path="inventory" element={<ProtectedRoute permission="web:inventories"><InventoryView /></ProtectedRoute>} />
         <Route path="audits/*" element={<ProtectedRoute permission="web:audits"><AuditsView /></ProtectedRoute>} />
+        <Route path="billing/*" element={<ProtectedRoute permission="web:dashboard"><BillingAdminView /></ProtectedRoute>} />
         <Route path="catalog" element={<ProtectedRoute permission="web:catalog"><CatalogView /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute permission="web:users"><UsersView /></ProtectedRoute>} />
         <Route path="stores" element={<ProtectedRoute permission="web:users"><StoresView /></ProtectedRoute>} />
