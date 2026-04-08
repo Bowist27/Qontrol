@@ -186,17 +186,27 @@ func findItemInStream(nums []float64, code string, context string) *domain.Audit
 	}
 
 	for j := 0; j < len(nums)-1; j++ {
-		// Try Pair A*B approx C?
-		// We verify triplet A, B, C (A*B=C)
-		if j+2 < len(nums) {
-			A := nums[j]
-			B := nums[j+1]
-			C := nums[j+2]
+		// Try triplet configurations at this position.
+		// Priority 1: Consecutive (j, j+1, j+2)
+		// Priority 2: Gap of 1 after B (j, j+1, j+3) — handles extra columns between qty and total
+		type tripletIdx struct{ ai, bi, ci int }
+		candidates := []tripletIdx{
+			{j, j + 1, j + 2},
+			{j, j + 1, j + 3},
+		}
+
+		for _, t := range candidates {
+			if t.ci >= len(nums) {
+				continue
+			}
+
+			A := nums[t.ai]
+			B := nums[t.bi]
+			C := nums[t.ci]
 
 			if validateMath(A, B, C) {
 				// Matched A * B = C.
-
-				// Priority:
+				// Determine which is Cost and which is Qty:
 				// 1. Decimals vs Integer Heuristic (Cost normally looks like money)
 				// 2. Sandwich Heuristic (Price repetition)
 				// 3. Size Heuristic (fallback)
@@ -207,15 +217,12 @@ func findItemInStream(nums []float64, code string, context string) *domain.Audit
 				var qty, cost float64
 
 				if hasDecA && !hasDecB {
-					// A is Cost, B is Qty
 					cost = A
 					qty = B
 				} else if !hasDecA && hasDecB {
-					// A is Qty, B is Cost
 					qty = A
 					cost = B
 				} else {
-					// Both ambiguous. Try Sandwich.
 					isSandwich := false
 					if j > 0 {
 						prev := nums[j-1]
@@ -228,7 +235,6 @@ func findItemInStream(nums []float64, code string, context string) *domain.Audit
 						qty = A
 						cost = B
 					} else {
-						// Fallback: Assume Qty is smaller unless A > B
 						if A < B {
 							qty = A
 							cost = B
@@ -259,16 +265,31 @@ func validateEquality(a, b float64) bool {
 }
 
 func createItem(code string, cost float64, qty float64, context string) *domain.AuditItem {
+	// Search for multiple known values to find earliest numeric anchor
+	total := cost * qty
 	costStr := strconv.FormatFloat(cost, 'f', 2, 64)
+	qtyStr := strconv.FormatFloat(qty, 'f', 2, 64)
+	totalStr := strconv.FormatFloat(total, 'f', 2, 64)
+
 	contextClean := strings.ReplaceAll(context, ",", "")
-	idx := strings.Index(contextClean, costStr)
+
+	// Find the earliest occurrence of any known numeric value
+	idx := -1
+	for _, s := range []string{costStr, qtyStr, totalStr} {
+		i := strings.Index(contextClean, s)
+		if i > 0 && (idx == -1 || i < idx) {
+			idx = i
+		}
+	}
+
 	desc := "Producto " + code
 	if idx > 0 {
 		rawDesc := contextClean[:idx]
 		rawDesc = strings.TrimSpace(rawDesc)
 		rawDesc = strings.ReplaceAll(rawDesc, "\n", " ")
 		rawDesc = strings.Join(strings.Fields(rawDesc), " ")
-		// Corrected: REMOVED digits from TrimRight to support names like "V1", "5X1"
+		// Clean trailing numeric garbage that may have leaked into the description
+		rawDesc = trimTrailingNumbers(rawDesc)
 		rawDesc = strings.TrimRight(rawDesc, ".- ")
 		if len(rawDesc) > 2 {
 			desc = rawDesc
@@ -280,6 +301,34 @@ func createItem(code string, cost float64, qty float64, context string) *domain.
 		UnitCost:    cost,
 		ExpectedQty: qty,
 	}
+}
+
+// trimTrailingNumbers removes trailing pure-numeric sequences from a description.
+// It preserves numbers embedded in product names (e.g. "ANCHO 1.10 CON 100 MT")
+// by finding the last alphabetic character and trimming everything after it,
+// while keeping closing punctuation like ) ] that directly follow.
+func trimTrailingNumbers(s string) string {
+	runes := []rune(s)
+	lastLetter := -1
+	for i, r := range runes {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			lastLetter = i
+		}
+	}
+	if lastLetter < 0 {
+		return s
+	}
+	// Include closing punctuation immediately after last letter
+	end := lastLetter + 1
+	for end < len(runes) {
+		r := runes[end]
+		if r == ')' || r == ']' || r == '"' || r == '\'' {
+			end++
+		} else {
+			break
+		}
+	}
+	return string(runes[:end])
 }
 
 func validateMath(a, b, c float64) bool {
