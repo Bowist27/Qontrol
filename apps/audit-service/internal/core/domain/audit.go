@@ -31,6 +31,7 @@ type AuditItem struct {
 	AuditID      int       `json:"audit_id"`
 	ProductCode  string    `json:"product_code"`
 	ProductName  string    `json:"product_name"`
+	Category     string    `json:"category"`
 	UnitCost     float64   `json:"unit_cost"`
 	LastPurchase *string   `json:"last_purchase,omitempty"`
 	ExpectedQty  float64   `json:"expected_qty"`

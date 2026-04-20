@@ -46,6 +46,7 @@ interface PhysicalData {
 interface DiffItem {
     sku: string;
     name: string;
+    category?: string; // Added for category filtering
     unitCost: number;
     theoretical: number;
     physical: number;
@@ -55,6 +56,7 @@ interface DiffItem {
 }
 
 // Props interface removed
+
 
 // Format large currency values: >= 1M shows as "1.92M", < 1M shows as "450k"
 const formatCurrencyCompact = (value: number): string => {
@@ -66,7 +68,27 @@ const formatCurrencyCompact = (value: number): string => {
     }
 };
 
-
+// Helper to classify products identically to backend
+const classifyProduct = (code: string): string => {
+    if (!code) return "OTROS";
+    code = code.trim();
+    if (code.length < 2) return "OTROS";
+    const upper = code.toUpperCase();
+    if (upper.startsWith("AC")) return "ACIDO MURIATICO";
+    if (upper.startsWith("CE")) return "CEPILLOS";
+    if (upper.startsWith("CL")) return "PLAKA";
+    if (upper.startsWith("RT")) return "ESPONJAS";
+    if (upper.startsWith("H02") || upper.startsWith("RE0") || upper.startsWith("EX0") || upper.startsWith("WA")) return "COMPLEMENTO";
+    if (code.startsWith("02")) return "CUBETAS";
+    if (code.startsWith("04")) return "GALONES";
+    if (code.startsWith("06")) return "LITROS";
+    if (code.startsWith("07")) return "MEDIOS";
+    if (code.startsWith("08")) return "CUARTOS";
+    if (code.startsWith("20")) return "PORRON";
+    if (code.startsWith("140")) return "AEROSOLES";
+    if (code.startsWith("22")) return "CARTUCHOS";
+    return "OTROS";
+}
 
 const AuditSessionDetail: React.FC = () => {
     const { loadAudits } = useAudit();
@@ -155,6 +177,8 @@ const AuditSessionDetail: React.FC = () => {
     const [rawScans, setRawScans] = useState<PhysicalScan[]>([]);
     const [activeTab, setActiveTab] = useState<'all' | 'differences' | 'extras'>('differences'); // Default to discrepancies
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set()); // Empty set means NO FILTER (show everything)
+    const [availableCategories, setAvailableCategories] = useState<Record<string, number>>({});
     const [isDragging, setIsDragging] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
@@ -391,6 +415,7 @@ const AuditSessionDetail: React.FC = () => {
                     const items: DiffItem[] = data.items.map(item => ({
                         sku: item.product_code,
                         name: item.product_name,
+                        category: item.category || 'OTROS',
                         unitCost: item.unit_cost,
                         theoretical: item.expected_qty,
                         physical: 0, // No physical count yet
@@ -407,6 +432,15 @@ const AuditSessionDetail: React.FC = () => {
                         totalUnits: items.reduce((sum, i) => sum + i.theoretical, 0),
                         totalValue: items.reduce((sum, i) => sum + Math.abs(i.impact), 0)
                     });
+
+                    // Aggregate categories from loaded items (Frontend classification as fallback)
+                    const cats: Record<string, number> = {};
+                    items.forEach(item => {
+                        const cat = item.category || classifyProduct(item.sku);
+                        item.category = cat;
+                        cats[cat] = (cats[cat] || 0) + 1;
+                    });
+                    setAvailableCategories(cats);
 
                     // Set initial session status from DB
                     if (data.session.status) {
@@ -791,15 +825,22 @@ const AuditSessionDetail: React.FC = () => {
             const result = await auditApi.parsePDF(file);
 
             // Map API items to Frontend DiffItems
-            const mappedItems: DiffItem[] = result.items.map(item => ({
-                sku: item.product_code,
-                name: item.product_name,
-                unitCost: item.unit_cost,      // Keep original sign
-                theoretical: item.expected_qty,   // Keep original sign
-                physical: 0,
-                difference: -item.expected_qty,   // Initial diff is full negative if physical is 0
-                impact: -(item.expected_qty * item.unit_cost)
-            }));
+            const cats: Record<string, number> = {};
+            const mappedItems: DiffItem[] = result.items.map(item => {
+                const cat = item.category || classifyProduct(item.product_code);
+                cats[cat] = (cats[cat] || 0) + 1;
+                
+                return {
+                    sku: item.product_code,
+                    name: item.product_name,
+                    category: cat,
+                    unitCost: item.unit_cost,      // Keep original sign
+                    theoretical: item.expected_qty,   // Keep original sign
+                    physical: 0,
+                    difference: -item.expected_qty,   // Initial diff is full negative if physical is 0
+                    impact: -(item.expected_qty * item.unit_cost)
+                };
+            });
 
             // Update UI with preview data
             setTheoretical({
@@ -811,6 +852,7 @@ const AuditSessionDetail: React.FC = () => {
                 totalValue: result.total_value,
             });
 
+            setAvailableCategories(result.categories && Object.keys(result.categories).length > 0 ? result.categories : cats);
             setDiffItems(mappedItems);
 
             // Prepare Physical card (empty/waiting for scans)
@@ -874,8 +916,15 @@ const AuditSessionDetail: React.FC = () => {
         });
     };
 
-    // Filter diff items based on active tab
+    // Filter diff items based on active tab AND selected categories
     const filteredItems = diffItems.filter(item => {
+        // Category Filter
+        if (selectedCategories.size > 0) {
+            const itemCat = item.category || 'OTROS';
+            if (!selectedCategories.has(itemCat)) return false;
+        }
+
+        // Search Filter
         const matchesSearch = item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
             item.name.toLowerCase().includes(searchQuery.toLowerCase());
 
@@ -911,9 +960,28 @@ const AuditSessionDetail: React.FC = () => {
 
                     <div className="h-6 w-px bg-slate-200"></div>
 
-                    <h2 className="text-lg font-bold text-slate-800">
-                        {isNewAudit ? 'Nueva Auditoría' : 'Auditoría en Curso'}
-                    </h2>
+                    {isNewAudit ? (
+                        <div className="relative group flex items-center">
+                            <input
+                                type="text"
+                                placeholder="Nueva Auditoría"
+                                value={auditName}
+                                onChange={(e) => setAuditName(e.target.value)}
+                                maxLength={200}
+                                disabled={theoretical.status === 'loaded'}
+                                className={`text-lg font-bold text-slate-800 transition-all focus:outline-none w-64 px-3 py-1 rounded-md ${
+                                    theoretical.status === 'loaded' 
+                                        ? 'bg-transparent border border-transparent cursor-not-allowed'
+                                        : 'bg-slate-50 border-b-2 border-slate-300 border-x-0 border-t-0 hover:bg-slate-100 hover:border-blue-400 focus:bg-white focus:border-blue-600 placeholder:text-slate-400 placeholder:font-medium'
+                                }`}
+                                title="Editar nombre de la auditoría"
+                            />
+                        </div>
+                    ) : (
+                        <h2 className="text-lg font-bold text-slate-800">
+                            Auditoría en Curso
+                        </h2>
+                    )}
 
                     {/* Store Selector (New Audit) OR Store Badge (Existing) */}
                     {isNewAudit ? (
@@ -983,20 +1051,6 @@ const AuditSessionDetail: React.FC = () => {
                             )}
                         </div>
 
-                        {/* Audit Name Input (optional) */}
-                        <input
-                            type="text"
-                            placeholder="Nombre de auditoría (opcional)"
-                            value={auditName}
-                            onChange={(e) => setAuditName(e.target.value)}
-                            maxLength={200}
-                            disabled={theoretical.status === 'loaded'}
-                            className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors w-56 ${
-                                theoretical.status === 'loaded'
-                                    ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
-                                    : 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500'
-                            }`}
-                        />
                         </>
                     ) : (
                         <div className="flex items-center gap-3">
@@ -1513,36 +1567,89 @@ const AuditSessionDetail: React.FC = () => {
                     ) : (
                         <>
                             {/* Action Bar: Tabs LEFT | Tools RIGHT (Dumbbell Pattern) */}
-                            <div className="px-4 py-2 border-b border-slate-200 bg-white flex items-center justify-between">
-                                {/* Left: Tabs */}
-                                <div className="flex">
-                                    <button
-                                        onClick={() => { setActiveTab('differences'); setCurrentPage(1); }}
-                                        className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'differences'
-                                            ? 'border-red-500 text-red-700'
-                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                                            }`}
-                                    >
-                                        🚨 Discrepancias ({discrepanciesCount})
-                                    </button>
-                                    <button
-                                        onClick={() => { setActiveTab('all'); setCurrentPage(1); }}
-                                        className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'all'
-                                            ? 'border-blue-500 text-blue-700'
-                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                                            }`}
-                                    >
-                                        📋 Todos ({totalProducts})
-                                    </button>
-                                    <button
-                                        onClick={() => { setActiveTab('extras'); setCurrentPage(1); }}
-                                        className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${activeTab === 'extras'
-                                            ? 'border-amber-500 text-amber-700'
-                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                                            }`}
-                                    >
-                                        🆕 Extras ({extrasCount})
-                                    </button>
+                            <div className="px-4 py-2 border-b border-slate-200 bg-white flex flex-wrap lg:flex-nowrap items-center justify-between gap-y-2">
+                                {/* Left: Tabs + Category Filters */}
+                                <div className="flex flex-wrap items-center gap-4">
+                                    <div className="flex border-r border-slate-200 pr-4">
+                                        <button
+                                            onClick={() => { setActiveTab('differences'); setCurrentPage(1); }}
+                                            className={`px-4 py-1.5 text-sm font-medium transition-colors border-b-2 ${activeTab === 'differences'
+                                                ? 'border-red-500 text-red-700'
+                                                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                                }`}
+                                        >
+                                            🚨 Discrepancias ({discrepanciesCount})
+                                        </button>
+                                        <button
+                                            onClick={() => { setActiveTab('all'); setCurrentPage(1); }}
+                                            className={`px-4 py-1.5 text-sm font-medium transition-colors border-b-2 ${activeTab === 'all'
+                                                ? 'border-blue-500 text-blue-700'
+                                                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                                }`}
+                                        >
+                                            📋 Todos ({totalProducts})
+                                        </button>
+                                        <button
+                                            onClick={() => { setActiveTab('extras'); setCurrentPage(1); }}
+                                            className={`px-4 py-1.5 text-sm font-medium transition-colors border-b-2 ${activeTab === 'extras'
+                                                ? 'border-amber-500 text-amber-700'
+                                                : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                                }`}
+                                        >
+                                            🆕 Extras ({extrasCount})
+                                        </button>
+                                    </div>
+
+                                    {/* Category Filters (Toggle Chips) IN THE SAME ROW */}
+                                    {Object.keys(availableCategories).length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">FAMILIAS:</span>
+                                            <button
+                                                onClick={() => {
+                                                    setSelectedCategories(new Set());
+                                                    setCurrentPage(1);
+                                                } }
+                                                className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold transition-colors whitespace-nowrap uppercase ${
+                                                    selectedCategories.size === 0
+                                                        ? 'bg-slate-700 text-white shadow-sm'
+                                                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                                }`}
+                                            >
+                                                Todos ({totalProducts})
+                                            </button>
+                                            {Object.entries(availableCategories)
+                                                .sort((a, b) => {
+                                                    if (a[0] === 'OTROS') return 1;
+                                                    if (b[0] === 'OTROS') return -1;
+                                                    return b[1] - a[1];
+                                                }) // Sort by count descending, but OTROS at the end
+                                                .map(([cat, count]) => {
+                                                    const isSelected = selectedCategories.has(cat);
+                                                    return (
+                                                        <button
+                                                            key={cat}
+                                                            onClick={() => {
+                                                                const newSet = new Set(selectedCategories);
+                                                                if (isSelected) newSet.delete(cat);
+                                                                else newSet.add(cat);
+                                                                setSelectedCategories(newSet);
+                                                                setCurrentPage(1);
+                                                            }}
+                                                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold transition-colors whitespace-nowrap flex items-center gap-1 uppercase ${
+                                                                isSelected
+                                                                    ? 'bg-blue-600 text-white shadow-sm'
+                                                                    : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                                            }`}
+                                                        >
+                                                            {cat}
+                                                            <span className={`text-[9px] px-1 py-0.5 leading-none rounded-full ${isSelected ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
+                                                                {count}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Right: Search + Density + Tool Icons (Grouped) */}
@@ -1552,24 +1659,21 @@ const AuditSessionDetail: React.FC = () => {
                                         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                                         <input
                                             type="text"
-                                            placeholder="Buscar por SKU, Producto..."
+                                            placeholder="Buscar SKU, Prod..."
                                             value={searchQuery}
                                             onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-                                            className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm w-64 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400 text-gray-900"
+                                            className="pl-9 pr-3 py-1.5 border border-slate-300 rounded-lg text-sm w-48 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-slate-400"
                                         />
                                     </div>
-
-                                    {/* Separator */}
-                                    <div className="h-8 w-px bg-slate-200"></div>
 
                                     {/* Export Dropdown */}
                                     <div className="relative">
                                         <button
                                             onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
-                                            className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-1"
+                                            className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-1"
                                             title="Exportar"
                                         >
-                                            <DownloadCloud size={20} />
+                                            <DownloadCloud size={18} />
                                             <ChevronDown size={14} className={`transition-transform ${exportDropdownOpen ? 'rotate-180' : ''}`} />
                                         </button>
 
@@ -1664,7 +1768,14 @@ const AuditSessionDetail: React.FC = () => {
                                                     {/* SKU - Monospace */}
                                                     <td className="px-3 py-1.5 font-mono text-xs text-slate-600">{item.sku}</td>
                                                     {/* Description */}
-                                                    <td className="px-3 py-1.5 text-slate-700 text-xs">{item.name}</td>
+                                                    <td className="px-3 py-1.5 text-slate-700 text-xs">
+                                                        <div className="flex flex-col gap-0.5">
+                                                            <span className="truncate max-w-[200px]" title={item.name}>{item.name}</span>
+                                                            <span className="text-[9px] font-semibold text-slate-500 bg-slate-100 px-1.5 rounded-sm w-fit uppercase border border-slate-200">
+                                                                {item.category || 'OTROS'}
+                                                            </span>
+                                                        </div>
+                                                    </td>
                                                     {/* Precio Unitario */}
                                                     <td className="px-3 py-1.5 text-right text-slate-600 tabular-nums text-xs">
                                                         ${item.unitCost?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '—'}

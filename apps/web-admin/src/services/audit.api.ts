@@ -37,6 +37,7 @@ export interface AuditItem {
     audit_id: number;
     product_code: string;
     product_name: string;
+    category: string;
     unit_cost: number;
     expected_qty: number;
 }
@@ -79,6 +80,7 @@ export interface ParseResult {
     total_items: number;
     total_units: number;
     total_value: number;
+    categories: Record<string, number>;
 }
 
 // Helper to get headers with Auth (deprecated)

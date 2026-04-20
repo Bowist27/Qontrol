@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS audit_theoretical (
     audit_id INT NOT NULL REFERENCES audit_sessions(id) ON DELETE CASCADE,
     product_code VARCHAR(50) NOT NULL,
     product_name VARCHAR(255),
+    category VARCHAR(50) DEFAULT 'OTROS',
     unit_cost DECIMAL(10, 2),
     last_purchase DATE,
     expected_qty DECIMAL(10, 3) NOT NULL,

@@ -48,6 +48,7 @@ type ParseResult struct {
 	TotalItems int                `json:"total_items"`
 	TotalUnits float64            `json:"total_units"`
 	TotalValue float64            `json:"total_value"`
+	Categories map[string]int     `json:"categories"`
 }
 
 // ParsePDF parses a PDF and returns items for preview WITHOUT saving to DB
@@ -59,12 +60,14 @@ func (s *AuditService) ParsePDF(ctx context.Context, pdfData []byte) (*ParseResu
 		return nil, fmt.Errorf("failed to parse PDF: %w", err)
 	}
 
-	// Calculate summary stats
+	// Calculate summary stats and category counts
 	totalUnits := 0.0
 	totalValue := 0.0
+	categories := make(map[string]int)
 	for _, item := range items {
 		totalUnits += item.ExpectedQty
 		totalValue += item.UnitCost * item.ExpectedQty
+		categories[item.Category]++
 	}
 
 	return &ParseResult{
@@ -72,6 +75,7 @@ func (s *AuditService) ParsePDF(ctx context.Context, pdfData []byte) (*ParseResu
 		TotalItems: len(items),
 		TotalUnits: totalUnits,
 		TotalValue: totalValue,
+		Categories: categories,
 	}, nil
 }
 

@@ -187,11 +187,11 @@ func (r *PostgresRepository) SaveAuditBatch(ctx context.Context, auditID int, it
 		valueStrings := make([]string, 0, len(items))
 		valueArgs := make([]interface{}, 0, len(items)*5)
 		for i, item := range items {
-			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)",
-				i*5+1, i*5+2, i*5+3, i*5+4, i*5+5))
-			valueArgs = append(valueArgs, auditID, item.ProductCode, item.ProductName, item.UnitCost, item.ExpectedQty)
+			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d)",
+				i*6+1, i*6+2, i*6+3, i*6+4, i*6+5, i*6+6))
+			valueArgs = append(valueArgs, auditID, item.ProductCode, item.ProductName, item.Category, item.UnitCost, item.ExpectedQty)
 		}
-		query := fmt.Sprintf(`INSERT INTO audit_theoretical (audit_id, product_code, product_name, unit_cost, expected_qty) VALUES %s`,
+		query := fmt.Sprintf(`INSERT INTO audit_theoretical (audit_id, product_code, product_name, category, unit_cost, expected_qty) VALUES %s`,
 			strings.Join(valueStrings, ","))
 		_, err = tx.ExecContext(ctx, query, valueArgs...)
 		if err != nil {
@@ -221,7 +221,7 @@ func (r *PostgresRepository) GetSessionByID(ctx context.Context, id int) (*domai
 
 // GetItemsByAuditID retrieves all items for an audit
 func (r *PostgresRepository) GetItemsByAuditID(ctx context.Context, auditID int) ([]domain.AuditItem, error) {
-	query := `SELECT id, audit_id, product_code, product_name, unit_cost, expected_qty FROM audit_theoretical WHERE audit_id = $1`
+	query := `SELECT id, audit_id, product_code, product_name, category, unit_cost, expected_qty FROM audit_theoretical WHERE audit_id = $1`
 	rows, err := r.db.QueryContext(ctx, query, auditID)
 	if err != nil {
 		return nil, err
@@ -231,7 +231,7 @@ func (r *PostgresRepository) GetItemsByAuditID(ctx context.Context, auditID int)
 	var items []domain.AuditItem
 	for rows.Next() {
 		var item domain.AuditItem
-		if err := rows.Scan(&item.ID, &item.AuditID, &item.ProductCode, &item.ProductName, &item.UnitCost, &item.ExpectedQty); err != nil {
+		if err := rows.Scan(&item.ID, &item.AuditID, &item.ProductCode, &item.ProductName, &item.Category, &item.UnitCost, &item.ExpectedQty); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
@@ -275,11 +275,11 @@ func (r *PostgresRepository) SaveAuditBatchWithStatus(ctx context.Context, audit
 		valueStrings := make([]string, 0, len(items))
 		valueArgs := make([]interface{}, 0, len(items)*5)
 		for i, item := range items {
-			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d)",
-				i*5+1, i*5+2, i*5+3, i*5+4, i*5+5))
-			valueArgs = append(valueArgs, auditID, item.ProductCode, item.ProductName, item.UnitCost, item.ExpectedQty)
+			valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d)",
+				i*6+1, i*6+2, i*6+3, i*6+4, i*6+5, i*6+6))
+			valueArgs = append(valueArgs, auditID, item.ProductCode, item.ProductName, item.Category, item.UnitCost, item.ExpectedQty)
 		}
-		query := fmt.Sprintf(`INSERT INTO audit_theoretical (audit_id, product_code, product_name, unit_cost, expected_qty) VALUES %s`,
+		query := fmt.Sprintf(`INSERT INTO audit_theoretical (audit_id, product_code, product_name, category, unit_cost, expected_qty) VALUES %s`,
 			strings.Join(valueStrings, ","))
 		_, err = tx.ExecContext(ctx, query, valueArgs...)
 		if err != nil {
@@ -1604,11 +1604,11 @@ func (r *PostgresRepository) UpdateAuditTheoretical(ctx context.Context, auditID
 		valueStrings := make([]string, 0, len(items))
 		valueArgs := make([]interface{}, 0, len(items)*5)
 		for i, item := range items {
-			// ($1, $2, $3, $4, $5)
-			valueStrings = append(valueStrings, fmt.Sprintf("($1, $%d, $%d, $%d, $%d)", i*4+2, i*4+3, i*4+4, i*4+5))
-			valueArgs = append(valueArgs, item.ProductCode, item.ProductName, item.UnitCost, item.ExpectedQty)
+			// ($1, $2, $3, $4, $5, $6)
+			valueStrings = append(valueStrings, fmt.Sprintf("($1, $%d, $%d, $%d, $%d, $%d)", i*5+2, i*5+3, i*5+4, i*5+5, i*5+6))
+			valueArgs = append(valueArgs, item.ProductCode, item.ProductName, item.Category, item.UnitCost, item.ExpectedQty)
 		}
-		stmt := fmt.Sprintf("INSERT INTO audit_theoretical (audit_id, product_code, product_name, unit_cost, expected_qty) VALUES %s", strings.Join(valueStrings, ","))
+		stmt := fmt.Sprintf("INSERT INTO audit_theoretical (audit_id, product_code, product_name, category, unit_cost, expected_qty) VALUES %s", strings.Join(valueStrings, ","))
 
 		args := append([]interface{}{auditID}, valueArgs...)
 		_, err = tx.ExecContext(ctx, stmt, args...)

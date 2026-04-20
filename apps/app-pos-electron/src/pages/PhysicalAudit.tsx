@@ -75,6 +75,28 @@ interface PhysicalAuditProps {
     onBack: () => void;
 }
 
+// Helper to classify products identically to backend
+const classifyProduct = (code: string): string => {
+    if (!code) return "OTROS";
+    code = code.trim();
+    if (code.length < 2) return "OTROS";
+    const upper = code.toUpperCase();
+    if (upper.startsWith("AC")) return "ACIDO MURIATICO";
+    if (upper.startsWith("CE")) return "CEPILLOS";
+    if (upper.startsWith("CL")) return "PLAKA";
+    if (upper.startsWith("RT")) return "ESPONJAS";
+    if (upper.startsWith("H02") || upper.startsWith("RE0") || upper.startsWith("EX0") || upper.startsWith("WA")) return "COMPLEMENTO";
+    if (code.startsWith("02")) return "CUBETAS";
+    if (code.startsWith("04")) return "GALONES";
+    if (code.startsWith("06")) return "LITROS";
+    if (code.startsWith("07")) return "MEDIOS";
+    if (code.startsWith("08")) return "CUARTOS";
+    if (code.startsWith("20")) return "PORRON";
+    if (code.startsWith("140")) return "AEROSOLES";
+    if (code.startsWith("22")) return "CARTUCHOS";
+    return "OTROS";
+}
+
 // Use environment variable or default (env var does NOT include /api suffix)
 const AUDIT_API = `${import.meta.env.VITE_AUDIT_API_URL || 'http://localhost:8085'}/api`;
 
@@ -162,6 +184,9 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const lastScanTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const barcodeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // FILTER STATE
+    const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
 
     // Fetch active audits from backend
     const fetchActiveAudits = async () => {
@@ -1756,8 +1781,66 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
 
                 {/* ===== RIGHT PANEL: HISTORIAL (scan history table) ===== */}
                 <div className="w-3/5 flex flex-col bg-black">
+                    {/* ===== FILTER BAR PARA FAMILIAS ===== */}
+                    {(() => {
+                        // Aggregate categories available in current scans
+                        const availableCategories = scans.reduce<Record<string, number>>((acc, scan) => {
+                            const cat = classifyProduct(scan.sku || scan.barcode);
+                            acc[cat] = (acc[cat] || 0) + scan.quantity;
+                            return acc;
+                        }, {});
+
+                        if (Object.keys(availableCategories).length === 0) return null;
+
+                        return (
+                            <div className="bg-gray-900 border-b border-gray-800 px-4 py-2 flex flex-wrap items-center gap-2 shrink-0">
+                                <span className="text-gray-500 text-[10px] font-bold uppercase tracking-widest mr-1">FAMILIAS:</span>
+                                <button
+                                    onClick={() => setSelectedCategories(new Set())}
+                                    className={`px-3 py-1 text-xs font-bold rounded uppercase cursor-pointer transition-colors ${
+                                        selectedCategories.size === 0 
+                                            ? 'bg-blue-600 text-white shadow-sm shadow-blue-900/50' 
+                                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border border-gray-700'
+                                    }`}
+                                >
+                                    TODOS ({summary?.total_quantity || 0})
+                                </button>
+                                {Object.entries(availableCategories)
+                                    .sort((a, b) => {
+                                        if (a[0] === 'OTROS') return 1;
+                                        if (b[0] === 'OTROS') return -1;
+                                        return b[1] - a[1];
+                                    })
+                                    .map(([cat, qty]) => {
+                                        const isSelected = selectedCategories.has(cat);
+                                        return (
+                                            <button
+                                                key={cat}
+                                                onClick={() => {
+                                                    const newSet = new Set(selectedCategories);
+                                                    if (isSelected) newSet.delete(cat);
+                                                    else newSet.add(cat);
+                                                    setSelectedCategories(newSet);
+                                                }}
+                                                className={`px-2.5 py-1 text-xs font-bold rounded uppercase cursor-pointer transition-colors flex items-center gap-1.5 ${
+                                                    isSelected 
+                                                        ? 'bg-blue-600 text-white shadow-sm shadow-blue-900/50' 
+                                                        : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white border border-gray-700'
+                                                }`}
+                                            >
+                                                {cat}
+                                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${isSelected ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-500'}`}>
+                                                    {qty}
+                                                </span>
+                                            </button>
+                                        );
+                                })}
+                            </div>
+                        );
+                    })()}
+
                     {/* Table header */}
-                    <div className="bg-gray-900 border-b border-gray-700 px-4 py-2 flex items-center gap-3 text-xs font-mono uppercase tracking-widest text-gray-500 shrink-0">
+                    <div className="bg-gray-900 border-b border-gray-800 px-4 py-2 flex items-center gap-3 text-xs font-mono uppercase tracking-widest text-gray-500 shrink-0">
                         <span className="w-20">HORA</span>
                         <span className="w-28">SKU</span>
                         <span className="flex-1">PRODUCTO</span>
@@ -1782,6 +1865,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                         product_name: scan.product_name || scan.barcode,
                                         sku: scan.sku || '',
                                         barcode: scan.barcode,
+                                        category: classifyProduct(scan.sku || scan.barcode),
                                         quantity: scan.quantity,
                                         is_unknown: scan.is_unknown,
                                         lastId: scan.id,
@@ -1790,12 +1874,25 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                                 }
                                 return acc;
                             }, {});
-                            const items = Object.values(grouped).sort((a, b) => b.lastId - a.lastId);
+                            const items = Object.values(grouped)
+                                .filter(item => selectedCategories.size === 0 || selectedCategories.has(item.category))
+                                .sort((a, b) => b.lastId - a.lastId);
+                            
+                            if (items.length === 0 && scans.length > 0) {
+                                return (
+                                    <div className="flex flex-col items-center justify-center h-full text-gray-600 py-10">
+                                        <div className="text-4xl mb-4 opacity-30">🔍</div>
+                                        <div className="text-sm font-mono uppercase tracking-widest">NO HAY RESULTADOS</div>
+                                        <div className="text-xs font-mono mt-2">Usa el filtro para ver otras familias</div>
+                                    </div>
+                                );
+                            }
+
                             return items.map((item, index) => (
                                 <div
                                     key={item.key}
                                     className={`flex items-center gap-3 px-4 py-2.5 border-b border-gray-900 font-mono transition-colors
-                                        ${index === 0 ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-900'}
+                                        ${index === 0 && selectedCategories.size === 0 ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-900'}
                                         ${item.is_unknown ? 'border-l-2 border-l-amber-600' : ''}`}
                                 >
                                     <span className="w-20 text-sm text-gray-600 tabular-nums shrink-0">

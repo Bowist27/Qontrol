@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"audit-service/internal/classifier"
 	"audit-service/internal/core/domain"
 
 	"github.com/ledongthuc/pdf"
@@ -298,6 +299,7 @@ func createItem(code string, cost float64, qty float64, context string) *domain.
 	return &domain.AuditItem{
 		ProductCode: code,
 		ProductName: desc,
+		Category:    classifier.ClassifyProduct(code),
 		UnitCost:    cost,
 		ExpectedQty: qty,
 	}
