@@ -17,9 +17,27 @@ contextBridge.exposeInMainWorld('auth', {
 contextBridge.exposeInMainWorld('products', {
     sync: () => ipcRenderer.invoke('products:sync'),
     search: (query: string) => ipcRenderer.invoke('products:search', query),
+    findByBarcode: (barcode: string) => ipcRenderer.invoke('products:findByBarcode', barcode),
     count: () => ipcRenderer.invoke('products:count'),
     create: (product: { sku: string; barcode: string | null; name: string; unit: string; last_price: number | null }) =>
         ipcRenderer.invoke('products:create', product),
+});
+
+// Offline-First: cola de escaneos + estado del catálogo local
+contextBridge.exposeInMainWorld('syncQueue', {
+    enqueue: (item: {
+        auditId: number;
+        barcode: string;
+        quantity: number;
+        scannedBy?: string | null;
+        deviceId?: string | null;
+        scannedAt: string;
+    }) => ipcRenderer.invoke('queue:enqueue', item),
+    getPendingCount: () => ipcRenderer.invoke('queue:getPendingCount'),
+});
+
+contextBridge.exposeInMainWorld('catalog', {
+    getLastSyncedAt: () => ipcRenderer.invoke('catalog:getLastSyncedAt'),
 });
 
 // Expose audit API to renderer
@@ -81,7 +99,29 @@ declare global {
                 unit: string;
                 last_price: number | null;
             }>>;
+            findByBarcode: (barcode: string) => Promise<{
+                id: number;
+                sku: string;
+                barcode: string | null;
+                name: string;
+                unit: string;
+                last_price: number | null;
+            } | null>;
             count: () => Promise<number>;
+        };
+        syncQueue: {
+            enqueue: (item: {
+                auditId: number;
+                barcode: string;
+                quantity: number;
+                scannedBy?: string | null;
+                deviceId?: string | null;
+                scannedAt: string;
+            }) => Promise<{ success: boolean; item?: unknown; error?: string }>;
+            getPendingCount: () => Promise<number>;
+        };
+        catalog: {
+            getLastSyncedAt: () => Promise<string | null>;
         };
         audit: {
             createSession: (storeId: number, storeName: string) => Promise<{

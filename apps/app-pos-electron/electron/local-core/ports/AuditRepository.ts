@@ -1,4 +1,4 @@
-import { AuditSession, AuditScanItem } from '../domain/AuditSession';
+import { AuditSession, AuditScanItem, SyncQueueItem, EnqueueScanInput } from '../domain/AuditSession';
 
 export interface AuditRepository {
     // Session management
@@ -18,10 +18,18 @@ export interface AuditRepository {
     getLastItem(sessionId: string): AuditScanItem | undefined;
     
     // Aggregations
-    getSessionSummary(sessionId: string): { 
-        total_items: number; 
+    getSessionSummary(sessionId: string): {
+        total_items: number;
         total_quantity: number;
         unique_products: number;
         unknown_items: number;
     };
+
+    // Offline-First: cola de escaneos pendientes de subir al cloud
+    enqueueScan(item: EnqueueScanInput): SyncQueueItem;
+    getPendingScans(limit?: number): SyncQueueItem[];
+    countPendingScans(): number;
+    markScansSynced(ids: number[]): void;
+    markScanFailed(id: number, error: string): void;
+    resetStaleScans(): void;
 }

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
 import dotenv from 'dotenv';
+import axios from 'axios';
 import { autoUpdater } from 'electron-updater';
 import { SQLiteUserRepo } from './local-core/adapters/sqlite/SQLiteUserRepo';
 import { SQLiteProductRepo } from './local-core/adapters/sqlite/SQLiteProductRepo';
@@ -132,15 +133,86 @@ app.on('ready', async () => {
         const syncProductsUseCase = new SyncProductsUseCase(cloudProductAdapter, productRepo);
         const auditUseCase = new AuditUseCase(auditRepo, productRepo);
 
-        // --- Auto Sync on Startup ---
-        // Sync users and products in parallel
-        Promise.all([
-            syncUseCase.execute(),
-            syncProductsUseCase.execute()
-        ]).then(([userRes, productRes]) => {
-            console.log('Startup User Sync Result:', userRes);
-            console.log('Startup Product Sync Result:', productRes);
-        });
+        // ─────────────────────────────────────────────────────────────
+        // Offline-First: workers en segundo plano (Store & Forward)
+        // ─────────────────────────────────────────────────────────────
+
+        // Base de la API de auditoría (mismo formato que el renderer: base + /api)
+        const AUDIT_API = `${process.env.VITE_AUDIT_API_URL || 'http://localhost:8085'}/api`;
+        const CATALOG_REFRESH_MS = 30 * 60 * 1000; // refrescar catálogo cada 30 min
+
+        let isSyncingScans = false;
+
+        // Worker 1: sube a la nube los escaneos guardados localmente sin red.
+        async function runScanSyncWorker() {
+            if (isSyncingScans) return; // evita ciclos solapados
+            isSyncingScans = true;
+            try {
+                const pending = auditRepo.getPendingScans(50);
+                if (pending.length === 0) return;
+                console.log(`[SyncWorker] Subiendo ${pending.length} escaneo(s) pendiente(s)...`);
+
+                const synced: number[] = [];
+                for (const item of pending) {
+                    try {
+                        await axios.post(
+                            `${AUDIT_API}/audits/${item.audit_id}/scans`,
+                            {
+                                barcode: item.barcode,
+                                quantity: item.quantity,
+                                scanned_by: item.scanned_by || undefined,
+                                device_id: item.device_id || undefined,
+                                scanned_at: item.scanned_at
+                            },
+                            { timeout: 8000 }
+                        );
+                        synced.push(item.id);
+                    } catch (err: any) {
+                        auditRepo.markScanFailed(item.id, err?.message ?? 'unknown');
+                    }
+                }
+                if (synced.length > 0) {
+                    auditRepo.markScansSynced(synced);
+                    console.log(`[SyncWorker] ${synced.length} escaneo(s) subido(s) correctamente.`);
+                }
+            } catch (err) {
+                console.error('[SyncWorker] Error inesperado:', err);
+            } finally {
+                isSyncingScans = false;
+            }
+        }
+
+        // Worker 2: descarga/actualiza el catálogo local de productos y usuarios.
+        // Así la búsqueda manual (F7) funciona aunque se caiga el internet.
+        async function runCatalogSyncWorker() {
+            const lastSync = productRepo.getLastSyncedAt();
+            if (lastSync) {
+                const elapsed = Date.now() - new Date(lastSync).getTime();
+                if (elapsed < CATALOG_REFRESH_MS) return; // ya está fresco
+            }
+            try {
+                const [userRes, productRes] = await Promise.all([
+                    syncUseCase.execute(),
+                    syncProductsUseCase.execute()
+                ]);
+                if (productRes.success) {
+                    productRepo.setLastSyncedAt(new Date().toISOString());
+                }
+                console.log('[CatalogWorker] Sync usuarios:', userRes, '| productos:', productRes);
+            } catch (err) {
+                // Silencioso: sin red se reintenta en el próximo ciclo.
+                console.warn('[CatalogWorker] Sync falló, se reintentará:', err);
+            }
+        }
+
+        // Arranque: recuperar pendientes de sesiones anteriores e intentar sync.
+        auditRepo.resetStaleScans();
+        runScanSyncWorker();
+        runCatalogSyncWorker();
+
+        // Ciclos periódicos.
+        setInterval(runScanSyncWorker, 15_000);   // cada 15s sube pendientes
+        setInterval(runCatalogSyncWorker, 60_000); // cada 1 min revisa si toca refrescar (guarda interna de 30 min)
 
         // --- IPC Handlers ---
 
@@ -185,6 +257,14 @@ app.on('ready', async () => {
 
         ipcMain.handle('products:search', async (_event, query: string) => {
             return productRepo.search(query);
+        });
+
+        // Offline-First: búsqueda directa por código de barras en el catálogo local.
+        ipcMain.handle('products:findByBarcode', async (_event, barcode: string) => {
+            const byBarcode = productRepo.findByBarcode(barcode);
+            if (byBarcode) return byBarcode;
+            // Fallback: algunos productos usan el SKU como código escaneado.
+            return productRepo.findBySku(barcode) ?? null;
         });
 
         ipcMain.handle('products:count', async (_event) => {
@@ -247,6 +327,41 @@ app.on('ready', async () => {
         ipcMain.handle('audit:complete', async (_event, sessionId: string) => {
             auditUseCase.completeSession(sessionId);
             return { success: true };
+        });
+
+        // --- Offline-First: cola de escaneos + estado del catálogo ---
+        ipcMain.handle('queue:enqueue', async (_event, item: {
+            auditId: number;
+            barcode: string;
+            quantity: number;
+            scannedBy?: string | null;
+            deviceId?: string | null;
+            scannedAt: string;
+        }) => {
+            try {
+                const saved = auditRepo.enqueueScan({
+                    audit_id: item.auditId,
+                    barcode: item.barcode,
+                    quantity: item.quantity,
+                    scanned_by: item.scannedBy ?? null,
+                    device_id: item.deviceId ?? null,
+                    scanned_at: item.scannedAt
+                });
+                // Dispara un intento inmediato por si la red ya volvió.
+                runScanSyncWorker();
+                return { success: true, item: saved };
+            } catch (err: any) {
+                console.error('queue:enqueue failed:', err);
+                return { success: false, error: err?.message };
+            }
+        });
+
+        ipcMain.handle('queue:getPendingCount', async (_event) => {
+            return auditRepo.countPendingScans();
+        });
+
+        ipcMain.handle('catalog:getLastSyncedAt', async (_event) => {
+            return productRepo.getLastSyncedAt();
         });
 
         console.log('Core Initialization Complete: Handlers Registered');

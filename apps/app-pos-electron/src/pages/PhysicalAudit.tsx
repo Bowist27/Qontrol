@@ -121,6 +121,10 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     const [isSending, setIsSending] = useState(false);
     const [flashColor, setFlashColor] = useState<'green' | 'red' | 'amber' | null>(null);
 
+    // Offline-First: escaneos pendientes de subir + edad del catálogo local
+    const [pendingCount, setPendingCount] = useState(0);
+    const [catalogSyncedAt, setCatalogSyncedAt] = useState<string | null>(null);
+
     // Undo confirmation state
     const [undoConfirm, setUndoConfirm] = useState<{ scan: PhysicalScan; step: 'confirm' } | null>(null);
     const undoTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -337,14 +341,30 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user]);
 
+    // Offline-First: refresca el conteo de pendientes y la edad del catálogo
+    const refreshOfflineStatus = useCallback(async () => {
+        try {
+            const [count, syncedAt] = await Promise.all([
+                window.syncQueue.getPendingCount(),
+                window.catalog.getLastSyncedAt()
+            ]);
+            setPendingCount(count);
+            setCatalogSyncedAt(syncedAt);
+        } catch {
+            /* sin bridge disponible (ej. fuera de Electron) */
+        }
+    }, []);
+
     // Poll for updates when connected to an audit
     useEffect(() => {
         if (selectedAudit) {
             fetchScans(selectedAudit.session.id);
+            refreshOfflineStatus();
 
             // Poll every 5 seconds for updates (in case web-admin modifies something)
             pollInterval.current = setInterval(() => {
                 fetchScans(selectedAudit.session.id);
+                refreshOfflineStatus();
             }, 5000);
         }
 
@@ -353,24 +373,98 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                 clearInterval(pollInterval.current);
             }
         };
-    }, [selectedAudit]);
+    }, [selectedAudit, refreshOfflineStatus]);
 
-    // Send scan to backend
+    // Send scan to backend (Offline-First: si no hay red, guarda local y encola)
     const sendScan = useCallback(async (barcode: string, quantity: number) => {
         if (!selectedAudit) return;
+        const auditId = selectedAudit.session.id;
+        const scannedAt = new Date().toISOString();
 
         setIsSending(true);
-        try {
-            const response = await fetch(`${AUDIT_API}/audits/${selectedAudit.session.id}/scans`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+
+        // Camino offline: resuelve el producto en el catálogo local, encola el
+        // escaneo para subirlo después y actualiza la UI sin mostrar error.
+        const handleOffline = async () => {
+            let local: LocalProduct | null = null;
+            try {
+                local = await window.products.findByBarcode(barcode);
+            } catch { /* catálogo local no disponible */ }
+
+            try {
+                await window.syncQueue.enqueue({
+                    auditId,
                     barcode,
                     quantity,
-                    scanned_by: user?.id || undefined,
-                    device_id: deviceId
-                })
+                    scannedBy: user?.id || undefined,
+                    deviceId,
+                    scannedAt
+                });
+                setPendingCount(prev => prev + 1);
+            } catch (e) {
+                console.error('No se pudo encolar el escaneo offline:', e);
+            }
+
+            const offlineScan: PhysicalScan = {
+                id: -Date.now(), // id temporal negativo para no chocar con los del servidor
+                audit_id: typeof auditId === 'number' ? auditId : 0,
+                barcode,
+                sku: local?.sku,
+                product_name: local?.name,
+                quantity,
+                scanned_at: scannedAt,
+                is_unknown: !local
+            };
+
+            setScans(prev => [offlineScan, ...prev]);
+            setSummary(prev => prev ? {
+                ...prev,
+                total_scans: prev.total_scans + 1,
+                total_quantity: prev.total_quantity + quantity,
+                unknown_items: local ? prev.unknown_items : prev.unknown_items + 1
+            } : {
+                total_scans: 1,
+                total_quantity: quantity,
+                unique_products: local ? 1 : 0,
+                unknown_items: local ? 0 : 1
             });
+
+            setLastScan({
+                product: `${local?.name || barcode} (sin red)`,
+                quantity,
+                isUnknown: !local
+            });
+            setFlashColor('amber');
+            setTimeout(() => setFlashColor(null), 400);
+            if (lastScanTimeout.current) clearTimeout(lastScanTimeout.current);
+            lastScanTimeout.current = setTimeout(() => setLastScan(null), 2000);
+        };
+
+        try {
+            // Timeout corto: si el servidor tarda demasiado, tratamos como sin red.
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
+            let response: Response;
+            try {
+                response = await fetch(`${AUDIT_API}/audits/${auditId}/scans`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        barcode,
+                        quantity,
+                        scanned_by: user?.id || undefined,
+                        device_id: deviceId
+                    }),
+                    signal: controller.signal
+                });
+            } catch {
+                // Falla de red o timeout → guardar local y encolar
+                clearTimeout(timeoutId);
+                await handleOffline();
+                setIsSending(false);
+                return;
+            }
+            clearTimeout(timeoutId);
 
             if (!response.ok) {
                 throw new Error('Error al enviar escaneo');
@@ -454,7 +548,7 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
         } finally {
             setIsSending(false);
         }
-    }, [selectedAudit, userName, deviceId, scans]);
+    }, [selectedAudit, userName, deviceId, scans, user]);
 
     // Search local products for manual input
     const searchLocalProducts = useCallback(async (query: string) => {
@@ -1259,6 +1353,25 @@ export const PhysicalAudit: React.FC<PhysicalAuditProps> = ({ onBack }) => {
                         <span className="font-bold text-sm uppercase tracking-wide">{selectedAudit.session.name || selectedAudit.store_name}</span>
                     </div>
                     <span className="text-gray-500 text-xs font-mono">{deviceId}</span>
+                    {/* Offline-First: indicador de escaneos guardados localmente */}
+                    {pendingCount > 0 && (
+                        <span
+                            className="bg-amber-500 text-black text-xs font-mono font-bold px-2 py-0.5 rounded animate-pulse"
+                            title="Escaneos guardados en este equipo. Se subirán automáticamente cuando regrese el internet."
+                        >
+                            ⚠ SIN RED — {pendingCount} por subir
+                        </span>
+                    )}
+                    {/* Edad del catálogo local: ámbar si tiene más de 24h */}
+                    {catalogSyncedAt && (() => {
+                        const hours = Math.floor((Date.now() - new Date(catalogSyncedAt).getTime()) / 3_600_000);
+                        if (hours < 24) return null;
+                        return (
+                            <span className="text-amber-400 text-xs font-mono" title="El catálogo local podría estar desactualizado.">
+                                Catálogo: hace {hours}h
+                            </span>
+                        );
+                    })()}
                 </div>
                 <div className="flex items-center gap-6">
                     {/* Inline stats */}

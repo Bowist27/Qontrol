@@ -8,4 +8,8 @@ export interface ProductRepository {
     saveBatch(products: Product[]): ProductSyncStats;
     saveOne(product: Omit<Product, 'id' | 'created_at'>): Product;
     getAll(): Product[];
+
+    // Offline-First: metadata de la última sincronización del catálogo
+    getLastSyncedAt(): string | null;
+    setLastSyncedAt(iso: string): void;
 }
