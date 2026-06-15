@@ -3,9 +3,20 @@ package services
 import (
 	"audit-service/internal/core/domain"
 	"context"
+	"fmt"
 	"math"
 	"time"
 )
+
+// spanishMonthsAbbr holds the 3-letter Spanish month abbreviations. Go's time.Format
+// only knows English month tokens (e.g. "Jan"), so "ENE" was being printed literally
+// for every date regardless of the real month — this builds the date correctly.
+var spanishMonthsAbbr = [...]string{"ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"}
+
+// formatSpanishDate returns a date like "15-JUN-2026".
+func formatSpanishDate(t time.Time) string {
+	return fmt.Sprintf("%02d-%s-%d", t.Day(), spanishMonthsAbbr[t.Month()-1], t.Year())
+}
 
 // CatalogRepository interface for catalog operations
 type CatalogRepository interface {
@@ -189,7 +200,7 @@ func (s *CatalogService) AnalyzeValuationReport(ctx context.Context, items []dom
 	result := &domain.CatalogDiffResult{
 		FileName:  fileName,
 		StoreName: storeName,
-		Date:      time.Now().Format("02-ENE-2006"),
+		Date:      formatSpanishDate(time.Now()),
 		Details:   make([]domain.CatalogDiffItem, 0),
 	}
 

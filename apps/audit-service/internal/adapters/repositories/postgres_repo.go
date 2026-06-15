@@ -301,16 +301,16 @@ func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.Audi
 	query := `
 		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', '')) WHERE ap.audit_id = s.id) as scanned_skus,
 		       COALESCE((
 		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
 		           FROM audit_theoretical t
 		           LEFT JOIN (
 		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
 		               FROM audit_physical ap2
-		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku OR regexp_replace(ap2.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', ''))
 		               GROUP BY ap2.audit_id, p2.sku
-		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           ) ph ON ph.audit_id = t.audit_id AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
 		           WHERE t.audit_id = s.id
 		       ), 0) as total_loss
 		FROM audit_sessions s
@@ -1236,16 +1236,16 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 	query := `
 		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', '')) WHERE ap.audit_id = s.id) as scanned_skus,
 		       COALESCE((
 		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
 		           FROM audit_theoretical t
 		           LEFT JOIN (
 		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
 		               FROM audit_physical ap2
-		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku OR regexp_replace(ap2.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', ''))
 		               GROUP BY ap2.audit_id, p2.sku
-		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           ) ph ON ph.audit_id = t.audit_id AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
 		           WHERE t.audit_id = s.id
 		       ), 0) as total_loss
 		FROM audit_sessions s
@@ -1286,6 +1286,8 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 // InsertPhysicalScan adds a new scan from the POS app
 func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain.AddScanRequest) (*domain.PhysicalScan, error) {
 	scannedAt := time.Now()
+	// Normaliza espacios para evitar falsos "no encontrado" por formato del código
+	req.Barcode = strings.TrimSpace(req.Barcode)
 	query := `
 		INSERT INTO audit_physical (audit_id, barcode, quantity, scanned_by, device_id, scanned_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -1327,10 +1329,14 @@ func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain
 	productQuery := `SELECT sku, name FROM products WHERE barcode = $1 LIMIT 1`
 	err = r.db.QueryRowContext(ctx, productQuery, req.Barcode).Scan(&sku, &productName)
 
-	// If not found by barcode, try searching by SKU
+	// If not found by barcode, try by SKU using normalized variants (handles the "19A" prefix
+	// mismatch between valuation codes and catalog SKUs that caused false "not found").
 	if err == sql.ErrNoRows || !sku.Valid {
-		productQuery = `SELECT sku, name FROM products WHERE sku = $1 LIMIT 1`
-		_ = r.db.QueryRowContext(ctx, productQuery, req.Barcode).Scan(&sku, &productName)
+		for _, variant := range normalizeSKU(req.Barcode) {
+			if e := r.db.QueryRowContext(ctx, `SELECT sku, name FROM products WHERE sku = $1 LIMIT 1`, variant).Scan(&sku, &productName); e == nil && sku.Valid {
+				break
+			}
+		}
 	}
 
 	scan := &domain.PhysicalScan{
@@ -1372,7 +1378,7 @@ func (r *PostgresRepository) GetPhysicalScans(ctx context.Context, auditID int) 
 			CASE WHEN p.id IS NULL AND p2.id IS NULL THEN true ELSE false END as is_unknown
 		FROM audit_physical ap
 		LEFT JOIN products p ON ap.barcode = p.barcode
-		LEFT JOIN products p2 ON ap.barcode = p2.sku AND p.id IS NULL
+		LEFT JOIN products p2 ON (ap.barcode = p2.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', '')) AND p.id IS NULL
 		WHERE ap.audit_id = $1
 		ORDER BY ap.scanned_at DESC
 	`
@@ -1663,16 +1669,16 @@ func (r *PostgresRepository) GetDashboardAuditsByStores(ctx context.Context, sto
 	query := fmt.Sprintf(`
 		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', '')) WHERE ap.audit_id = s.id) as scanned_skus,
 		       COALESCE((
 		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
 		           FROM audit_theoretical t
 		           LEFT JOIN (
 		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
 		               FROM audit_physical ap2
-		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku OR regexp_replace(ap2.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', ''))
 		               GROUP BY ap2.audit_id, p2.sku
-		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           ) ph ON ph.audit_id = t.audit_id AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
 		           WHERE t.audit_id = s.id
 		       ), 0) as total_loss
 		FROM audit_sessions s
