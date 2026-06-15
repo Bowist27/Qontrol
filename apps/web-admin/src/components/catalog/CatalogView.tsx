@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowUpDown, ArrowUp, ArrowDown, EyeOff } from 'lucide-react';
 import { catalogApi, type ValuationProduct, type ValuationSummary, type ImportHistoryItem, type Product, type ProductChange, type CreateProductRequest } from '../../services/catalog.api';
+import { usePermissions } from '../../hooks/usePermissions';
 
 type FilterType = 'all' | 'price_up' | 'price_down' | 'new' | 'unchanged';
 type HistoryTabType = 'imports' | 'changes';
@@ -15,6 +16,7 @@ interface UndoState {
 }
 
 const CatalogView: React.FC = () => {
+  const { isAdmin } = usePermissions();
   // Data state
   const [summary, setSummary] = useState<ValuationSummary | null>(null);
   const [products, setProducts] = useState<ValuationProduct[]>([]);
@@ -80,14 +82,16 @@ const CatalogView: React.FC = () => {
     sku: '',
     name: '',
     barcode: '',
-    unit: 'PZ',
+    unit: '',
     price: 0
   });
   
   // Edit product modal state
   const [editModalProduct, setEditModalProduct] = useState<Product | null>(null);
-  const [editFormData, setEditFormData] = useState({ name: '', barcode: '', unit: '', price: 0 });
+  const [editFormData, setEditFormData] = useState({ sku: '', name: '', barcode: '', unit: '', price: 0 });
   const [savingEditModal, setSavingEditModal] = useState(false);
+  const [isCustomUnitAdd, setIsCustomUnitAdd] = useState(false);
+  const [isCustomUnitEdit, setIsCustomUnitEdit] = useState(false);
 
   // Price column filter/sort state (4-click cycle)
   const [priceMode, setPriceMode] = useState<PriceMode>('none');
@@ -198,9 +202,6 @@ const CatalogView: React.FC = () => {
 
   // Handle adding a new product
   const handleAddProduct = async () => {
-    if (!newProduct.sku || !newProduct.name) {
-      return;
-    }
     
     try {
       setAddingProduct(true);
@@ -510,6 +511,7 @@ const CatalogView: React.FC = () => {
   const openEditModal = (product: Product) => {
     setEditModalProduct(product);
     setEditFormData({
+      sku: product.sku,
       name: product.name,
       barcode: product.barcode || '',
       unit: product.unit,
@@ -522,7 +524,8 @@ const CatalogView: React.FC = () => {
   // Close edit modal
   const closeEditModal = () => {
     setEditModalProduct(null);
-    setEditFormData({ name: '', barcode: '', unit: '', price: 0 });
+    setEditFormData({ sku: '', name: '', barcode: '', unit: '', price: 0 });
+    setIsCustomUnitEdit(false);
   };
 
   // Save edit from modal
@@ -532,6 +535,7 @@ const CatalogView: React.FC = () => {
     try {
       setSavingEditModal(true);
       await catalogApi.updateProduct(editModalProduct.id, {
+        sku: editFormData.sku,
         name: editFormData.name,
         barcode: editFormData.barcode,
         unit: editFormData.unit,
@@ -541,7 +545,7 @@ const CatalogView: React.FC = () => {
       // Update local state
       setCatalogProducts(prev => prev.map(p => 
         p.id === editModalProduct.id 
-          ? { ...p, name: editFormData.name, barcode: editFormData.barcode, unit: editFormData.unit, last_price: editFormData.price }
+          ? { ...p, sku: editFormData.sku, name: editFormData.name, barcode: editFormData.barcode, unit: editFormData.unit, last_price: editFormData.price }
           : p
       ));
       
@@ -1425,13 +1429,23 @@ const CatalogView: React.FC = () => {
               </div>
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">Modificar Producto</h3>
-                <p className="text-sm text-gray-500">SKU: {editModalProduct.sku}</p>
+                <p className="text-sm text-gray-500">ID: {editModalProduct.id}</p>
               </div>
             </div>
             
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">SKU</label>
+                <input
+                  type="text"
+                  value={editFormData.sku}
+                  onChange={(e) => setEditFormData({ ...editFormData, sku: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                  placeholder="Ej: PROD001"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
                 <input
                   type="text"
                   value={editFormData.name}
@@ -1450,40 +1464,75 @@ const CatalogView: React.FC = () => {
                   placeholder="Código de barras"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Unidad *</label>
-                <input
-                  type="text"
-                  value={editFormData.unit}
-                  onChange={(e) => setEditFormData({ ...editFormData, unit: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
-                  placeholder="Ej: PZ, KG, LT"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Precio</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editFormData.price}
-                  onChange={(e) => setEditFormData({ ...editFormData, price: parseFloat(e.target.value) || 0 })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
-                  placeholder="0.00"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Unidad</label>
+                  {isAdmin && isCustomUnitEdit ? (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={editFormData.unit}
+                        onChange={(e) => setEditFormData({ ...editFormData, unit: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                        placeholder="Nueva unidad"
+                        autoFocus
+                      />
+                      <button 
+                        onClick={() => { setIsCustomUnitEdit(false); setEditFormData({ ...editFormData, unit: '' }); }}
+                        className="px-2 py-1 text-gray-400 hover:text-gray-700 bg-gray-100 rounded border border-gray-300 transition-colors"
+                        title="Cancelar nueva unidad"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={editFormData.unit}
+                      onChange={(e) => {
+                        if (e.target.value === 'CREAR_NUEVA') {
+                          setIsCustomUnitEdit(true);
+                          setEditFormData({ ...editFormData, unit: '' });
+                        } else {
+                          setEditFormData({ ...editFormData, unit: e.target.value });
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                    >
+                      <option value="">N/A (Sin unidad)</option>
+                      <option value="PZ">Pieza (PZ)</option>
+                      <option value="KG">Kilogramo (KG)</option>
+                      <option value="LT">Litro (LT)</option>
+                      <option value="MT">Metro (MT)</option>
+                      <option value="CJ">Caja (CJ)</option>
+                      {isAdmin && <option value="CREAR_NUEVA" className="font-semibold text-blue-600 bg-blue-50">+ Crear nueva...</option>}
+                    </select>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Precio</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editFormData.price}
+                    onChange={(e) => setEditFormData({ ...editFormData, price: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 bg-white"
+                    placeholder="0.00"
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="flex gap-3 mt-6">
+            <div className="flex gap-3 justify-end mt-6">
               <button
                 onClick={closeEditModal}
-                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleSaveEditModal}
-                disabled={savingEditModal || !editFormData.name.trim() || !editFormData.unit.trim()}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors flex items-center justify-center gap-2"
+                disabled={savingEditModal}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
               >
                 {savingEditModal ? (
                   <>
@@ -1522,7 +1571,7 @@ const CatalogView: React.FC = () => {
             
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">SKU *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">SKU</label>
                 <input
                   type="text"
                   value={newProduct.sku}
@@ -1532,7 +1581,7 @@ const CatalogView: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
                 <input
                   type="text"
                   value={newProduct.name}
@@ -1554,17 +1603,46 @@ const CatalogView: React.FC = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Unidad</label>
-                  <select
-                    value={newProduct.unit}
-                    onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
-                  >
-                    <option value="PZ">Pieza (PZ)</option>
-                    <option value="KG">Kilogramo (KG)</option>
-                    <option value="LT">Litro (LT)</option>
-                    <option value="MT">Metro (MT)</option>
-                    <option value="CJ">Caja (CJ)</option>
-                  </select>
+                  {isAdmin && isCustomUnitAdd ? (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newProduct.unit}
+                        onChange={(e) => setNewProduct({ ...newProduct, unit: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                        placeholder="Nueva unidad"
+                        autoFocus
+                      />
+                      <button 
+                        onClick={() => { setIsCustomUnitAdd(false); setNewProduct({ ...newProduct, unit: '' }); }}
+                        className="px-2 py-1 text-gray-400 hover:text-gray-700 bg-gray-100 rounded border border-gray-300 transition-colors"
+                        title="Cancelar nueva unidad"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={newProduct.unit}
+                      onChange={(e) => {
+                        if (e.target.value === 'CREAR_NUEVA') {
+                          setIsCustomUnitAdd(true);
+                          setNewProduct({ ...newProduct, unit: '' });
+                        } else {
+                          setNewProduct({ ...newProduct, unit: e.target.value });
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 text-gray-900 bg-white"
+                    >
+                      <option value="">N/A (Sin unidad)</option>
+                      <option value="PZ">Pieza (PZ)</option>
+                      <option value="KG">Kilogramo (KG)</option>
+                      <option value="LT">Litro (LT)</option>
+                      <option value="MT">Metro (MT)</option>
+                      <option value="CJ">Caja (CJ)</option>
+                      {isAdmin && <option value="CREAR_NUEVA" className="font-semibold text-emerald-600 bg-emerald-50">+ Crear nueva...</option>}
+                    </select>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Precio</label>
@@ -1585,7 +1663,8 @@ const CatalogView: React.FC = () => {
               <button
                 onClick={() => {
                   setShowAddProductModal(false);
-                  setNewProduct({ sku: '', name: '', barcode: '', unit: 'PZ', price: 0 });
+                  setNewProduct({ sku: '', name: '', barcode: '', unit: '', price: 0 });
+                  setIsCustomUnitAdd(false);
                 }}
                 disabled={addingProduct}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
@@ -1594,7 +1673,7 @@ const CatalogView: React.FC = () => {
               </button>
               <button
                 onClick={handleAddProduct}
-                disabled={addingProduct || !newProduct.sku || !newProduct.name}
+                disabled={addingProduct}
                 className="px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-2"
               >
                 {addingProduct ? (

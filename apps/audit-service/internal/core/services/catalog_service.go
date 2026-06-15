@@ -17,7 +17,7 @@ type CatalogRepository interface {
 	GetProductByID(ctx context.Context, id int) (*domain.Product, error)
 	GetCatalogStats(ctx context.Context) (int, float64, error)
 	CreateProduct(ctx context.Context, product *domain.Product) (int, error)
-	UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error
+	UpdateProduct(ctx context.Context, id int, sku string, name string, barcode string, unit string, price float64) error
 	DeleteProduct(ctx context.Context, id int) error
 	// Product changes history
 	SaveProductChange(ctx context.Context, change *domain.ProductChange) error
@@ -105,14 +105,14 @@ func (s *CatalogService) CreateProduct(ctx context.Context, product *domain.Prod
 }
 
 // UpdateProduct updates a product's fields and logs the change
-func (s *CatalogService) UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64, userEmail, userName string) error {
+func (s *CatalogService) UpdateProduct(ctx context.Context, id int, sku string, name string, barcode string, unit string, price float64, userEmail, userName string) error {
 	// Get current values before update
 	oldProduct, err := s.repo.GetProductByID(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	err = s.repo.UpdateProduct(ctx, id, name, barcode, unit, price)
+	err = s.repo.UpdateProduct(ctx, id, sku, name, barcode, unit, price)
 	if err != nil {
 		return err
 	}
@@ -120,16 +120,18 @@ func (s *CatalogService) UpdateProduct(ctx context.Context, id int, name string,
 	// Log the change
 	change := &domain.ProductChange{
 		ProductID:   id,
-		ProductSKU:  oldProduct.SKU,
+		ProductSKU:  sku,
 		ProductName: name,
 		Action:      "update",
 		OldValues: map[string]interface{}{
+			"sku":     oldProduct.SKU,
 			"name":    oldProduct.Name,
 			"barcode": oldProduct.Barcode,
 			"unit":    oldProduct.Unit,
 			"price":   oldProduct.LastPrice,
 		},
 		NewValues: map[string]interface{}{
+			"sku":     sku,
 			"name":    name,
 			"barcode": barcode,
 			"unit":    unit,

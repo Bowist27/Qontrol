@@ -78,6 +78,7 @@ func (h *CatalogHandler) UpdateProduct(c *gin.Context) {
 	}
 
 	var req struct {
+		SKU     string  `json:"sku"`
 		Name    string  `json:"name"`
 		Barcode string  `json:"barcode"`
 		Unit    string  `json:"unit"`
@@ -104,7 +105,7 @@ func (h *CatalogHandler) UpdateProduct(c *gin.Context) {
 		name = n
 	}
 
-	if err := h.service.UpdateProduct(c.Request.Context(), id, req.Name, req.Barcode, req.Unit, req.Price, email, name); err != nil {
+	if err := h.service.UpdateProduct(c.Request.Context(), id, req.SKU, req.Name, req.Barcode, req.Unit, req.Price, email, name); err != nil {
 		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
 			Error:   "update_error",
 			Message: err.Error(),
@@ -157,10 +158,10 @@ func (h *CatalogHandler) DeleteProduct(c *gin.Context) {
 // CreateProduct handles POST /api/catalog/products
 func (h *CatalogHandler) CreateProduct(c *gin.Context) {
 	var req struct {
-		SKU     string  `json:"sku" binding:"required"`
-		Name    string  `json:"name" binding:"required"`
+		SKU     string  `json:"sku"`
+		Name    string  `json:"name"`
 		Barcode string  `json:"barcode"`
-		Unit    string  `json:"unit" binding:"required"`
+		Unit    string  `json:"unit"`
 		Price   float64 `json:"price"`
 	}
 

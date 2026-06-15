@@ -241,7 +241,7 @@ export const catalogApi = {
     /**
      * PUT /api/catalog/products/:id - Update a product
      */
-    updateProduct: async (id: number, data: { name: string; barcode: string; unit: string; price: number }): Promise<{ message: string }> => {
+    updateProduct: async (id: number, data: { sku: string; name: string; barcode: string; unit: string; price: number }): Promise<{ message: string }> => {
         return httpClient.put<{ message: string }>(`${API_BASE}/api/catalog/products/${id}`, data);
     },
 

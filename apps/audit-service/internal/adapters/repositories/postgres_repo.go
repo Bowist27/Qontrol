@@ -473,12 +473,12 @@ func (r *PostgresRepository) GetProductsPaginated(ctx context.Context, page, lim
 }
 
 // UpdateProduct updates a product's fields
-func (r *PostgresRepository) UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error {
+func (r *PostgresRepository) UpdateProduct(ctx context.Context, id int, sku string, name string, barcode string, unit string, price float64) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE products 
-		SET name = $2, barcode = NULLIF($3, ''), unit = $4, last_price = $5, last_updated = NOW()
+		SET sku = $2, name = $3, barcode = NULLIF($4, ''), unit = $5, last_price = $6, last_updated = NOW()
 		WHERE id = $1`,
-		id, name, barcode, unit, price)
+		id, sku, name, barcode, unit, price)
 	if err != nil {
 		return err
 	}
