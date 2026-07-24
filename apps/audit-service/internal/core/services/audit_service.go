@@ -192,14 +192,11 @@ func (s *AuditService) ListAudits(ctx context.Context) ([]domain.AuditListDTO, e
 		return nil, err
 	}
 
-	for i := range audits {
-		if audits[i].Session.PDFURL != nil && *audits[i].Session.PDFURL != "" {
-			presigned, err := s.s3Client.PresignURL(ctx, *audits[i].Session.PDFURL)
-			if err == nil {
-				audits[i].Session.PDFURL = &presigned
-			}
-		}
-	}
+	// NOTE: intentionally NOT presigning PDF URLs here. Presigning is a
+	// per-object operation, so doing it inside the list turned this endpoint
+	// into N S3 signings and made the dashboard take 16-33s. The list only
+	// needs metadata; the presigned PDF URL is generated on demand when a
+	// single audit is opened (see GetAuditByID).
 	return audits, nil
 }
 
@@ -301,14 +298,9 @@ func (s *AuditService) GetAudits(ctx context.Context, userID string, role string
 		return nil, err
 	}
 
-	for i := range audits {
-		if audits[i].Session.PDFURL != nil && *audits[i].Session.PDFURL != "" {
-			presigned, err := s.s3Client.PresignURL(ctx, *audits[i].Session.PDFURL)
-			if err == nil {
-				audits[i].Session.PDFURL = &presigned
-			}
-		}
-	}
+	// NOTE: intentionally NOT presigning PDF URLs here — see ListAudits. The
+	// dashboard list does not need PDF URLs; they are presigned on demand when
+	// an audit is opened. This keeps GET /api/audits fast (was 16-33s).
 	return audits, nil
 }
 
