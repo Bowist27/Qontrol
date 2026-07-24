@@ -9,6 +9,33 @@ var AllCategories = []string{
 	"ACIDO MURIATICO", "CEPILLOS", "PLAKA", "ESPONJAS", "OTROS",
 }
 
+// validCategories is a lookup set built from AllCategories for O(1) membership checks.
+var validCategories = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(AllCategories))
+	for _, c := range AllCategories {
+		m[c] = struct{}{}
+	}
+	return m
+}()
+
+// IsValidCategory reports whether s is one of the known product categories.
+// The check is case-insensitive and tolerant of surrounding whitespace.
+func IsValidCategory(s string) bool {
+	_, ok := validCategories[strings.ToUpper(strings.TrimSpace(s))]
+	return ok
+}
+
+// NormalizeCategory returns the canonical (upper-cased, trimmed) category if s
+// matches a known category, or "" if it does not. Useful to sanitize manual /
+// imported values before persisting them as the product's category.
+func NormalizeCategory(s string) string {
+	up := strings.ToUpper(strings.TrimSpace(s))
+	if _, ok := validCategories[up]; ok {
+		return up
+	}
+	return ""
+}
+
 // ClassifyProduct returns the category for a product based on its code prefix.
 // Rules are based on Comex product code conventions.
 func ClassifyProduct(code string) string {
@@ -32,9 +59,10 @@ func ClassifyProduct(code string) string {
 		return "ESPONJAS"
 	}
 
-	// Complemento — multiple prefixes
+	// Complemento — multiple prefixes. EX/WA match any code with that letter
+	// prefix (e.g. EX00027 and EX75645 are both COMPLEMENTO).
 	if strings.HasPrefix(upper, "H02") || strings.HasPrefix(upper, "RE0") ||
-		strings.HasPrefix(upper, "EX0") || strings.HasPrefix(upper, "WA") {
+		strings.HasPrefix(upper, "EX") || strings.HasPrefix(upper, "WA") {
 		return "COMPLEMENTO"
 	}
 

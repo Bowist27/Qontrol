@@ -150,6 +150,16 @@ interface LatestValuationResponse {
     }>;
 }
 
+export interface CategoryImportResult {
+    message: string;
+    file_name: string;
+    total_rows: number;
+    updated: number;
+    not_found: number;
+    invalid: number;
+    skipped_skus: string[];
+}
+
 // API Client
 export const catalogApi = {
     /**
@@ -183,6 +193,33 @@ export const catalogApi = {
         }
 
         return httpClient.postMultipart<CatalogDiffResult>(`${API_BASE}/api/catalog/analyze`, formData);
+    },
+
+    /**
+     * POST /api/catalog/categories/import - Import SKU -> category corrections
+     * (Adrián's Excel/CSV). Updates each product's category (unit field).
+     */
+    importCategories: async (file: File): Promise<CategoryImportResult> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        return httpClient.postMultipart<CategoryImportResult>(`${API_BASE}/api/catalog/categories/import`, formData);
+    },
+
+    /**
+     * POST /api/catalog/detect-upload - Detect whether an uploaded file is a
+     * category-correction list or a valuation/catalog file.
+     */
+    detectUpload: async (file: File): Promise<{ kind: 'categories' | 'valuation' }> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        return httpClient.postMultipart<{ kind: 'categories' | 'valuation' }>(`${API_BASE}/api/catalog/detect-upload`, formData);
+    },
+
+    /**
+     * POST /api/catalog/reclassify - Backfill categories from prefix classifier
+     */
+    reclassifyCategories: async (): Promise<{ updated: number }> => {
+        return httpClient.post<{ updated: number }>(`${API_BASE}/api/catalog/reclassify`);
     },
 
     /**
@@ -241,7 +278,7 @@ export const catalogApi = {
     /**
      * PUT /api/catalog/products/:id - Update a product
      */
-    updateProduct: async (id: number, data: { name: string; barcode: string; unit: string; price: number }): Promise<{ message: string }> => {
+    updateProduct: async (id: number, data: { sku: string; name: string; barcode: string; unit: string; price: number }): Promise<{ message: string }> => {
         return httpClient.put<{ message: string }>(`${API_BASE}/api/catalog/products/${id}`, data);
     },
 

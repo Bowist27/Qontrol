@@ -26,6 +26,35 @@ func NewAuditService(repo repositories.AuditRepository, s3Client storage.S3Clien
 	}
 }
 
+// enrichCategoriesFromCatalog overrides each item's prefix-derived category with
+// the one stored in the master catalog (products.unit) when available. The PDF
+// parser fills Category via the prefix classifier; this lets manually-curated /
+// Excel-imported categories in the catalog take precedence — the catalog is the
+// source of truth, the prefix rule is only the fallback for unknown SKUs.
+//
+// It never clears a category: if the catalog has nothing valid for a SKU, the
+// item keeps whatever the classifier already assigned. A repo lookup failure is
+// non-fatal — the audit proceeds with the classifier's categories.
+func (s *AuditService) enrichCategoriesFromCatalog(ctx context.Context, items []domain.AuditItem) []domain.AuditItem {
+	if len(items) == 0 {
+		return items
+	}
+	skus := make([]string, 0, len(items))
+	for _, it := range items {
+		skus = append(skus, it.ProductCode)
+	}
+	catMap, err := s.repo.GetCategoriesBySKUs(ctx, skus)
+	if err != nil || len(catMap) == 0 {
+		return items // fallback: keep classifier-derived categories
+	}
+	for i := range items {
+		if cat, ok := catMap[items[i].ProductCode]; ok && cat != "" {
+			items[i].Category = cat
+		}
+	}
+	return items
+}
+
 // ListStores returns stores filtered by user's assignments
 // Admins see all active stores; other roles see only assigned stores
 func (s *AuditService) ListStores(ctx context.Context, userID string, role string) ([]domain.Store, error) {
@@ -59,6 +88,9 @@ func (s *AuditService) ParsePDF(ctx context.Context, pdfData []byte) (*ParseResu
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse PDF: %w", err)
 	}
+
+	// Catalog categories take precedence over prefix-derived ones
+	items = s.enrichCategoriesFromCatalog(ctx, items)
 
 	// Calculate summary stats and category counts
 	totalUnits := 0.0
@@ -116,6 +148,9 @@ func (s *AuditService) CreateAudit(ctx context.Context, storeID int, pdfData []b
 		_ = s.repo.DeleteSession(ctx, sessionID)
 		return nil, fmt.Errorf("failed to parse PDF: %w", err)
 	}
+
+	// Catalog categories take precedence over prefix-derived ones
+	items = s.enrichCategoriesFromCatalog(ctx, items)
 
 	// 5. repo.SaveAuditBatch(session_id, items, s3_key) with status = IN_PROGRESS
 	err = s.repo.SaveAuditBatchWithStatus(ctx, sessionID, items, s3Key, "IN_PROGRESS")
@@ -308,6 +343,9 @@ func (s *AuditService) UpdateAudit(ctx context.Context, auditID int, pdfData []b
 	if err != nil {
 		return fmt.Errorf("failed to parse PDF: %w", err)
 	}
+
+	// Catalog categories take precedence over prefix-derived ones
+	items = s.enrichCategoriesFromCatalog(ctx, items)
 
 	// 4. Update DB (Transactional: Delete scans, Delete items, Insert items, Update session)
 	// We pass s3Key (private) instead of s3URL

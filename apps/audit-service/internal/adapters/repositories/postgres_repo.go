@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"audit-service/internal/classifier"
 	"audit-service/internal/core/domain"
 )
 
@@ -58,6 +59,10 @@ type AuditRepository interface {
 
 	// POS Audit Creation
 	CreateEmptyAuditSession(ctx context.Context, storeID int, createdBy *string, name *string) (*domain.AuditSession, error)
+
+	// Category enrichment: catalog (products.unit) is the source of truth for
+	// a product's audit category; the prefix classifier is the fallback.
+	GetCategoriesBySKUs(ctx context.Context, skus []string) (map[string]string, error)
 }
 
 // PostgresRepository implements AuditRepository
@@ -301,16 +306,16 @@ func (r *PostgresRepository) FindAllSessions(ctx context.Context) ([]domain.Audi
 	query := `
 		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', '')) WHERE ap.audit_id = s.id) as scanned_skus,
 		       COALESCE((
 		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
 		           FROM audit_theoretical t
 		           LEFT JOIN (
 		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
 		               FROM audit_physical ap2
-		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku OR regexp_replace(ap2.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', ''))
 		               GROUP BY ap2.audit_id, p2.sku
-		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           ) ph ON ph.audit_id = t.audit_id AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
 		           WHERE t.audit_id = s.id
 		       ), 0) as total_loss
 		FROM audit_sessions s
@@ -473,12 +478,12 @@ func (r *PostgresRepository) GetProductsPaginated(ctx context.Context, page, lim
 }
 
 // UpdateProduct updates a product's fields
-func (r *PostgresRepository) UpdateProduct(ctx context.Context, id int, name string, barcode string, unit string, price float64) error {
+func (r *PostgresRepository) UpdateProduct(ctx context.Context, id int, sku string, name string, barcode string, unit string, price float64) error {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE products 
-		SET name = $2, barcode = NULLIF($3, ''), unit = $4, last_price = $5, last_updated = NOW()
+		SET sku = $2, name = $3, barcode = NULLIF($4, ''), unit = $5, last_price = $6, last_updated = NOW()
 		WHERE id = $1`,
-		id, name, barcode, unit, price)
+		id, sku, name, barcode, unit, price)
 	if err != nil {
 		return err
 	}
@@ -655,6 +660,151 @@ func (r *PostgresRepository) FindProductBySKU(ctx context.Context, sku string) (
 
 	// None found
 	return nil, fmt.Errorf("product not found for SKU: %s", sku)
+}
+
+// ============ CATEGORY (UNIT) METHODS ============
+// In this catalog the product's "unit" column doubles as its audit category
+// (CUBETAS, GALONES, LITROS, ...). These helpers let the audit/PDF flow honor
+// the catalog as the source of truth, with the prefix classifier as fallback.
+
+// GetCategoriesBySKUs returns a map of SKU -> category for the given SKUs,
+// considering only products whose stored category is a known/valid one.
+// Matching tolerates the "19A" prefix mismatch via regexp_replace, and the
+// returned map is keyed by BOTH the raw and the normalized (sans-19A) SKU so
+// callers can look it up however the code arrived from the PDF.
+func (r *PostgresRepository) GetCategoriesBySKUs(ctx context.Context, skus []string) (map[string]string, error) {
+	result := make(map[string]string)
+	if len(skus) == 0 {
+		return result, nil
+	}
+
+	// Build the set of lookup keys: each SKU plus its normalized variants.
+	keySet := make(map[string]struct{})
+	for _, s := range skus {
+		for _, v := range normalizeSKU(strings.TrimSpace(s)) {
+			keySet[v] = struct{}{}
+		}
+	}
+	keys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
+	}
+
+	// Postgres array binding via pq is not imported here; use ANY on a
+	// dynamically built parameter list to stay dependency-free.
+	placeholders := make([]string, len(keys))
+	args := make([]interface{}, len(keys))
+	for i, k := range keys {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = k
+	}
+
+	query := fmt.Sprintf(`
+		SELECT sku, unit FROM products
+		WHERE unit IS NOT NULL AND unit <> ''
+		  AND (sku IN (%s) OR regexp_replace(sku, '^19A', '') IN (%s))`,
+		strings.Join(placeholders, ","), strings.Join(placeholders, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sku, unit string
+		if err := rows.Scan(&sku, &unit); err != nil {
+			return nil, err
+		}
+		if !classifier.IsValidCategory(unit) {
+			continue // ignore legacy non-category values like "Pieza"/"Kilogramo"
+		}
+		canonical := classifier.NormalizeCategory(unit)
+		// Index by every variant of this SKU so PDF codes match regardless of 19A.
+		for _, v := range normalizeSKU(sku) {
+			result[v] = canonical
+		}
+	}
+	return result, rows.Err()
+}
+
+// ReclassifyAllUnits backfills every product's category (stored in the unit
+// column) using the prefix classifier. Returns the number of rows updated.
+// This is the one-time migration from legacy unit-of-measure values to the
+// audit categories; manual/Excel corrections layer on top afterwards.
+func (r *PostgresRepository) ReclassifyAllUnits(ctx context.Context) (int, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, sku FROM products`)
+	if err != nil {
+		return 0, err
+	}
+	type row struct {
+		id  int
+		sku string
+	}
+	var pending []row
+	for rows.Next() {
+		var rw row
+		if err := rows.Scan(&rw.id, &rw.sku); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, rw)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `UPDATE products SET unit = $2, last_updated = NOW() WHERE id = $1`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	updated := 0
+	for _, rw := range pending {
+		category := classifier.ClassifyProduct(rw.sku)
+		if _, err := stmt.ExecContext(ctx, rw.id, category); err != nil {
+			return 0, err
+		}
+		updated++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return updated, nil
+}
+
+// UpdateProductUnitBySKU sets the category (unit column) for a product matched
+// by SKU, tolerating the 19A prefix mismatch. Returns true if a row was updated.
+func (r *PostgresRepository) UpdateProductUnitBySKU(ctx context.Context, sku, category string) (bool, error) {
+	variants := normalizeSKU(strings.TrimSpace(sku))
+	placeholders := make([]string, len(variants))
+	args := make([]interface{}, 0, len(variants)+1)
+	args = append(args, category)
+	for i, v := range variants {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, v)
+	}
+
+	query := fmt.Sprintf(`
+		UPDATE products SET unit = $1, last_updated = NOW()
+		WHERE sku IN (%s) OR regexp_replace(sku, '^19A', '') IN (%s)`,
+		strings.Join(placeholders, ","), strings.Join(placeholders, ","))
+
+	res, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, err
+	}
+	affected, _ := res.RowsAffected()
+	return affected > 0, nil
 }
 
 // ============ CATALOG IMPORT METHODS ============
@@ -1236,16 +1386,16 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 	query := `
 		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', '')) WHERE ap.audit_id = s.id) as scanned_skus,
 		       COALESCE((
 		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
 		           FROM audit_theoretical t
 		           LEFT JOIN (
 		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
 		               FROM audit_physical ap2
-		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku OR regexp_replace(ap2.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', ''))
 		               GROUP BY ap2.audit_id, p2.sku
-		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           ) ph ON ph.audit_id = t.audit_id AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
 		           WHERE t.audit_id = s.id
 		       ), 0) as total_loss
 		FROM audit_sessions s
@@ -1286,6 +1436,8 @@ func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.A
 // InsertPhysicalScan adds a new scan from the POS app
 func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain.AddScanRequest) (*domain.PhysicalScan, error) {
 	scannedAt := time.Now()
+	// Normaliza espacios para evitar falsos "no encontrado" por formato del código
+	req.Barcode = strings.TrimSpace(req.Barcode)
 	query := `
 		INSERT INTO audit_physical (audit_id, barcode, quantity, scanned_by, device_id, scanned_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -1327,10 +1479,14 @@ func (r *PostgresRepository) InsertPhysicalScan(ctx context.Context, req *domain
 	productQuery := `SELECT sku, name FROM products WHERE barcode = $1 LIMIT 1`
 	err = r.db.QueryRowContext(ctx, productQuery, req.Barcode).Scan(&sku, &productName)
 
-	// If not found by barcode, try searching by SKU
+	// If not found by barcode, try by SKU using normalized variants (handles the "19A" prefix
+	// mismatch between valuation codes and catalog SKUs that caused false "not found").
 	if err == sql.ErrNoRows || !sku.Valid {
-		productQuery = `SELECT sku, name FROM products WHERE sku = $1 LIMIT 1`
-		_ = r.db.QueryRowContext(ctx, productQuery, req.Barcode).Scan(&sku, &productName)
+		for _, variant := range normalizeSKU(req.Barcode) {
+			if e := r.db.QueryRowContext(ctx, `SELECT sku, name FROM products WHERE sku = $1 LIMIT 1`, variant).Scan(&sku, &productName); e == nil && sku.Valid {
+				break
+			}
+		}
 	}
 
 	scan := &domain.PhysicalScan{
@@ -1372,7 +1528,7 @@ func (r *PostgresRepository) GetPhysicalScans(ctx context.Context, auditID int) 
 			CASE WHEN p.id IS NULL AND p2.id IS NULL THEN true ELSE false END as is_unknown
 		FROM audit_physical ap
 		LEFT JOIN products p ON ap.barcode = p.barcode
-		LEFT JOIN products p2 ON ap.barcode = p2.sku AND p.id IS NULL
+		LEFT JOIN products p2 ON (ap.barcode = p2.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', '')) AND p.id IS NULL
 		WHERE ap.audit_id = $1
 		ORDER BY ap.scanned_at DESC
 	`
@@ -1663,16 +1819,16 @@ func (r *PostgresRepository) GetDashboardAuditsByStores(ctx context.Context, sto
 	query := fmt.Sprintf(`
 		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
 		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku) WHERE ap.audit_id = s.id) as scanned_skus,
+		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', '')) WHERE ap.audit_id = s.id) as scanned_skus,
 		       COALESCE((
 		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
 		           FROM audit_theoretical t
 		           LEFT JOIN (
 		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
 		               FROM audit_physical ap2
-		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku)
+		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku OR regexp_replace(ap2.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', ''))
 		               GROUP BY ap2.audit_id, p2.sku
-		           ) ph ON ph.audit_id = t.audit_id AND ph.sku = t.product_code
+		           ) ph ON ph.audit_id = t.audit_id AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
 		           WHERE t.audit_id = s.id
 		       ), 0) as total_loss
 		FROM audit_sessions s

@@ -37,3 +37,31 @@ export interface ScanResult {
     error?: string;
     isUnknown?: boolean;
 }
+
+/**
+ * Offline-First: escaneo en cola pendiente de subir al servidor cloud.
+ * Se persiste en SQLite (tabla sync_queue) cuando no hay red, y un worker
+ * en segundo plano lo sube cuando el internet regresa.
+ */
+export interface SyncQueueItem {
+    id: number;
+    audit_id: number;        // id remoto (cloud) de la auditoría
+    barcode: string;
+    quantity: number;
+    scanned_by: string | null;
+    device_id: string | null;
+    scanned_at: string;      // ISO timestamp
+    status: 'PENDING' | 'SYNCING' | 'FAILED';
+    attempts: number;
+    last_error: string | null;
+    created_at: string;
+}
+
+export interface EnqueueScanInput {
+    audit_id: number;
+    barcode: string;
+    quantity: number;
+    scanned_by?: string | null;
+    device_id?: string | null;
+    scanned_at: string;
+}

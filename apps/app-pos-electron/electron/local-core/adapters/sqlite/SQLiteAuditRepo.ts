@@ -3,8 +3,13 @@ import path from 'path';
 import fs from 'fs-extra';
 import { app } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
-import { AuditSession, AuditScanItem } from '../../domain/AuditSession';
+import { AuditSession, AuditScanItem, SyncQueueItem, EnqueueScanInput } from '../../domain/AuditSession';
 import { AuditRepository } from '../../ports/AuditRepository';
+
+// Reintentos máximos antes de marcar un escaneo como FAILED
+const MAX_SYNC_ATTEMPTS = 3;
+// Tiempo tras el cual un escaneo en estado SYNCING se considera "atascado"
+const STALE_SYNCING_MS = 2 * 60 * 1000; // 2 minutos
 
 export class SQLiteAuditRepo implements AuditRepository {
     private db: Database.Database;
@@ -51,6 +56,28 @@ export class SQLiteAuditRepo implements AuditRepository {
 
         this.db.exec(`
             CREATE INDEX IF NOT EXISTS idx_scan_items_session ON audit_scan_items(session_id)
+        `);
+
+        // Offline-First: cola de escaneos pendientes de subir al servidor cloud.
+        // Persistente en disco: si el usuario apaga la laptop, los escaneos NO se pierden.
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS sync_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                audit_id INTEGER NOT NULL,
+                barcode TEXT NOT NULL,
+                quantity REAL NOT NULL DEFAULT 1,
+                scanned_by TEXT,
+                device_id TEXT,
+                scanned_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TEXT NOT NULL
+            )
+        `);
+
+        this.db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status, created_at)
         `);
     }
 
@@ -193,5 +220,100 @@ export class SQLiteAuditRepo implements AuditRepository {
             unique_products: result.unique_products || 0,
             unknown_items: result.unknown_items || 0
         };
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Offline-First: cola de sincronización de escaneos (Store & Forward)
+    // ─────────────────────────────────────────────────────────────
+
+    enqueueScan(item: EnqueueScanInput): SyncQueueItem {
+        const created_at = new Date().toISOString();
+        const stmt = this.db.prepare(`
+            INSERT INTO sync_queue (
+                audit_id, barcode, quantity, scanned_by, device_id,
+                scanned_at, status, attempts, last_error, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', 0, NULL, ?)
+        `);
+        const result = stmt.run(
+            item.audit_id,
+            item.barcode,
+            item.quantity,
+            item.scanned_by ?? null,
+            item.device_id ?? null,
+            item.scanned_at,
+            created_at
+        );
+        return {
+            id: result.lastInsertRowid as number,
+            audit_id: item.audit_id,
+            barcode: item.barcode,
+            quantity: item.quantity,
+            scanned_by: item.scanned_by ?? null,
+            device_id: item.device_id ?? null,
+            scanned_at: item.scanned_at,
+            status: 'PENDING',
+            attempts: 0,
+            last_error: null,
+            created_at
+        };
+    }
+
+    getPendingScans(limit: number = 50): SyncQueueItem[] {
+        // Toma PENDING y los marca como SYNCING de forma atómica para evitar
+        // que dos ciclos del worker procesen el mismo registro.
+        const select = this.db.prepare(`
+            SELECT * FROM sync_queue
+            WHERE status = 'PENDING'
+            ORDER BY created_at ASC
+            LIMIT ?
+        `);
+        const markSyncing = this.db.prepare(`
+            UPDATE sync_queue SET status = 'SYNCING' WHERE id = ?
+        `);
+        const claim = this.db.transaction((max: number) => {
+            const rows = select.all(max) as SyncQueueItem[];
+            for (const row of rows) markSyncing.run(row.id);
+            return rows;
+        });
+        return claim(limit);
+    }
+
+    countPendingScans(): number {
+        // Cuenta todo lo que aún no se ha subido (incluye reintentos en curso).
+        const stmt = this.db.prepare(`
+            SELECT COUNT(*) as count FROM sync_queue
+            WHERE status IN ('PENDING', 'SYNCING')
+        `);
+        return (stmt.get() as { count: number }).count;
+    }
+
+    markScansSynced(ids: number[]): void {
+        if (ids.length === 0) return;
+        const placeholders = ids.map(() => '?').join(',');
+        const stmt = this.db.prepare(`DELETE FROM sync_queue WHERE id IN (${placeholders})`);
+        stmt.run(...ids);
+    }
+
+    markScanFailed(id: number, error: string): void {
+        const stmt = this.db.prepare(`
+            UPDATE sync_queue
+            SET attempts = attempts + 1,
+                last_error = ?,
+                status = CASE WHEN attempts + 1 >= ? THEN 'FAILED' ELSE 'PENDING' END
+            WHERE id = ?
+        `);
+        stmt.run(error, MAX_SYNC_ATTEMPTS, id);
+    }
+
+    resetStaleScans(): void {
+        // Si un ciclo anterior murió a mitad (crash/cierre), regresa a PENDING
+        // los registros SYNCING antiguos para que se reintenten.
+        const cutoff = new Date(Date.now() - STALE_SYNCING_MS).toISOString();
+        const stmt = this.db.prepare(`
+            UPDATE sync_queue
+            SET status = 'PENDING'
+            WHERE status = 'SYNCING' AND created_at < ?
+        `);
+        stmt.run(cutoff);
     }
 }

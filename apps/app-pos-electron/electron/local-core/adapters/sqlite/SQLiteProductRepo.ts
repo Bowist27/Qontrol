@@ -37,7 +37,17 @@ export class SQLiteProductRepo implements ProductRepository {
         this.db.exec(`
             CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku)
         `);
+
+        // Offline-First: metadata clave/valor (ej. última sync del catálogo).
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS app_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        `);
     }
+
+    private static readonly LAST_SYNCED_KEY = 'products_last_synced';
 
     findByBarcode(barcode: string): Product | undefined {
         const stmt = this.db.prepare('SELECT * FROM products WHERE barcode = ?');
@@ -128,5 +138,23 @@ export class SQLiteProductRepo implements ProductRepository {
             updated: 0,
             total: this.count()
         };
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Offline-First: metadata de sincronización del catálogo
+    // ─────────────────────────────────────────────────────────────
+
+    getLastSyncedAt(): string | null {
+        const stmt = this.db.prepare('SELECT value FROM app_meta WHERE key = ?');
+        const row = stmt.get(SQLiteProductRepo.LAST_SYNCED_KEY) as { value: string } | undefined;
+        return row?.value ?? null;
+    }
+
+    setLastSyncedAt(iso: string): void {
+        const stmt = this.db.prepare(`
+            INSERT INTO app_meta (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        `);
+        stmt.run(SQLiteProductRepo.LAST_SYNCED_KEY, iso);
     }
 }
