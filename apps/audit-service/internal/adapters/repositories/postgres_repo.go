@@ -1383,23 +1383,45 @@ func formatDateSpanish(t time.Time) string {
 // - ALL active audits (status != 'closed') OR ('closed' AND closed_at > NOW() - 24 hours)
 // - Ordered by creation date DESC
 func (r *PostgresRepository) GetDashboardAudits(ctx context.Context) ([]domain.AuditListDTO, error) {
+	// Same math as before, but the heavy physical<->products join (regex-based,
+	// index-unfriendly) is computed ONCE in the MATERIALIZED `phys` CTE and reused,
+	// instead of re-running as a correlated subquery per audit session (which made
+	// this endpoint take 16-33s). Results are identical.
 	query := `
+		WITH phys AS MATERIALIZED (
+			SELECT ap.audit_id, p.sku, SUM(ap.quantity) AS qty
+			FROM audit_physical ap
+			JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku
+				OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', ''))
+			GROUP BY ap.audit_id, p.sku
+		),
+		theo AS (
+			SELECT audit_id, COUNT(DISTINCT product_code) AS theoretical_skus
+			FROM audit_theoretical
+			GROUP BY audit_id
+		),
+		scanned AS (
+			SELECT audit_id, COUNT(DISTINCT sku) AS scanned_skus
+			FROM phys
+			GROUP BY audit_id
+		),
+		loss AS (
+			SELECT t.audit_id,
+			       SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost) AS total_loss
+			FROM audit_theoretical t
+			LEFT JOIN phys ph ON ph.audit_id = t.audit_id
+				AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
+			GROUP BY t.audit_id
+		)
 		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
-		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', '')) WHERE ap.audit_id = s.id) as scanned_skus,
-		       COALESCE((
-		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
-		           FROM audit_theoretical t
-		           LEFT JOIN (
-		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
-		               FROM audit_physical ap2
-		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku OR regexp_replace(ap2.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', ''))
-		               GROUP BY ap2.audit_id, p2.sku
-		           ) ph ON ph.audit_id = t.audit_id AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
-		           WHERE t.audit_id = s.id
-		       ), 0) as total_loss
+		       COALESCE(theo.theoretical_skus, 0) AS theoretical_skus,
+		       COALESCE(scanned.scanned_skus, 0) AS scanned_skus,
+		       COALESCE(loss.total_loss, 0) AS total_loss
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
+		LEFT JOIN theo ON theo.audit_id = s.id
+		LEFT JOIN scanned ON scanned.audit_id = s.id
+		LEFT JOIN loss ON loss.audit_id = s.id
 		ORDER BY s.created_at DESC
 	`
 
@@ -1816,23 +1838,44 @@ func (r *PostgresRepository) GetDashboardAuditsByStores(ctx context.Context, sto
 		args[i] = id
 	}
 
+	// Same math as before; the heavy physical<->products join is computed ONCE in
+	// the MATERIALIZED `phys` CTE and reused, instead of a correlated subquery per
+	// audit session. See GetDashboardAudits.
 	query := fmt.Sprintf(`
+		WITH phys AS MATERIALIZED (
+			SELECT ap.audit_id, p.sku, SUM(ap.quantity) AS qty
+			FROM audit_physical ap
+			JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku
+				OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', ''))
+			GROUP BY ap.audit_id, p.sku
+		),
+		theo AS (
+			SELECT audit_id, COUNT(DISTINCT product_code) AS theoretical_skus
+			FROM audit_theoretical
+			GROUP BY audit_id
+		),
+		scanned AS (
+			SELECT audit_id, COUNT(DISTINCT sku) AS scanned_skus
+			FROM phys
+			GROUP BY audit_id
+		),
+		loss AS (
+			SELECT t.audit_id,
+			       SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost) AS total_loss
+			FROM audit_theoretical t
+			LEFT JOIN phys ph ON ph.audit_id = t.audit_id
+				AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
+			GROUP BY t.audit_id
+		)
 		SELECT s.id, s.store_id, st.name, s.created_by, s.name, s.status, s.reference_date, s.pdf_url, s.created_at, s.closed_at,
-		       (SELECT COUNT(DISTINCT product_code) FROM audit_theoretical WHERE audit_id = s.id) as theoretical_skus,
-		       (SELECT COUNT(DISTINCT p.sku) FROM audit_physical ap JOIN products p ON (ap.barcode = p.barcode OR ap.barcode = p.sku OR regexp_replace(ap.barcode, '^19A', '') = regexp_replace(p.sku, '^19A', '')) WHERE ap.audit_id = s.id) as scanned_skus,
-		       COALESCE((
-		           SELECT SUM((COALESCE(ph.qty, 0) - t.expected_qty) * t.unit_cost)
-		           FROM audit_theoretical t
-		           LEFT JOIN (
-		               SELECT ap2.audit_id, p2.sku, SUM(ap2.quantity) as qty
-		               FROM audit_physical ap2
-		               JOIN products p2 ON (ap2.barcode = p2.barcode OR ap2.barcode = p2.sku OR regexp_replace(ap2.barcode, '^19A', '') = regexp_replace(p2.sku, '^19A', ''))
-		               GROUP BY ap2.audit_id, p2.sku
-		           ) ph ON ph.audit_id = t.audit_id AND (ph.sku = t.product_code OR regexp_replace(ph.sku, '^19A', '') = regexp_replace(t.product_code, '^19A', ''))
-		           WHERE t.audit_id = s.id
-		       ), 0) as total_loss
+		       COALESCE(theo.theoretical_skus, 0) AS theoretical_skus,
+		       COALESCE(scanned.scanned_skus, 0) AS scanned_skus,
+		       COALESCE(loss.total_loss, 0) AS total_loss
 		FROM audit_sessions s
 		JOIN stores st ON s.store_id = st.id
+		LEFT JOIN theo ON theo.audit_id = s.id
+		LEFT JOIN scanned ON scanned.audit_id = s.id
+		LEFT JOIN loss ON loss.audit_id = s.id
 		WHERE s.store_id IN (%s)
 		ORDER BY s.created_at DESC
 	`, strings.Join(placeholders, ", "))
