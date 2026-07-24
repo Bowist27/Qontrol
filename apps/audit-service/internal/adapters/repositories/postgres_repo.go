@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"audit-service/internal/classifier"
 	"audit-service/internal/core/domain"
 )
 
@@ -58,6 +59,10 @@ type AuditRepository interface {
 
 	// POS Audit Creation
 	CreateEmptyAuditSession(ctx context.Context, storeID int, createdBy *string, name *string) (*domain.AuditSession, error)
+
+	// Category enrichment: catalog (products.unit) is the source of truth for
+	// a product's audit category; the prefix classifier is the fallback.
+	GetCategoriesBySKUs(ctx context.Context, skus []string) (map[string]string, error)
 }
 
 // PostgresRepository implements AuditRepository
@@ -655,6 +660,151 @@ func (r *PostgresRepository) FindProductBySKU(ctx context.Context, sku string) (
 
 	// None found
 	return nil, fmt.Errorf("product not found for SKU: %s", sku)
+}
+
+// ============ CATEGORY (UNIT) METHODS ============
+// In this catalog the product's "unit" column doubles as its audit category
+// (CUBETAS, GALONES, LITROS, ...). These helpers let the audit/PDF flow honor
+// the catalog as the source of truth, with the prefix classifier as fallback.
+
+// GetCategoriesBySKUs returns a map of SKU -> category for the given SKUs,
+// considering only products whose stored category is a known/valid one.
+// Matching tolerates the "19A" prefix mismatch via regexp_replace, and the
+// returned map is keyed by BOTH the raw and the normalized (sans-19A) SKU so
+// callers can look it up however the code arrived from the PDF.
+func (r *PostgresRepository) GetCategoriesBySKUs(ctx context.Context, skus []string) (map[string]string, error) {
+	result := make(map[string]string)
+	if len(skus) == 0 {
+		return result, nil
+	}
+
+	// Build the set of lookup keys: each SKU plus its normalized variants.
+	keySet := make(map[string]struct{})
+	for _, s := range skus {
+		for _, v := range normalizeSKU(strings.TrimSpace(s)) {
+			keySet[v] = struct{}{}
+		}
+	}
+	keys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
+	}
+
+	// Postgres array binding via pq is not imported here; use ANY on a
+	// dynamically built parameter list to stay dependency-free.
+	placeholders := make([]string, len(keys))
+	args := make([]interface{}, len(keys))
+	for i, k := range keys {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = k
+	}
+
+	query := fmt.Sprintf(`
+		SELECT sku, unit FROM products
+		WHERE unit IS NOT NULL AND unit <> ''
+		  AND (sku IN (%s) OR regexp_replace(sku, '^19A', '') IN (%s))`,
+		strings.Join(placeholders, ","), strings.Join(placeholders, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var sku, unit string
+		if err := rows.Scan(&sku, &unit); err != nil {
+			return nil, err
+		}
+		if !classifier.IsValidCategory(unit) {
+			continue // ignore legacy non-category values like "Pieza"/"Kilogramo"
+		}
+		canonical := classifier.NormalizeCategory(unit)
+		// Index by every variant of this SKU so PDF codes match regardless of 19A.
+		for _, v := range normalizeSKU(sku) {
+			result[v] = canonical
+		}
+	}
+	return result, rows.Err()
+}
+
+// ReclassifyAllUnits backfills every product's category (stored in the unit
+// column) using the prefix classifier. Returns the number of rows updated.
+// This is the one-time migration from legacy unit-of-measure values to the
+// audit categories; manual/Excel corrections layer on top afterwards.
+func (r *PostgresRepository) ReclassifyAllUnits(ctx context.Context) (int, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, sku FROM products`)
+	if err != nil {
+		return 0, err
+	}
+	type row struct {
+		id  int
+		sku string
+	}
+	var pending []row
+	for rows.Next() {
+		var rw row
+		if err := rows.Scan(&rw.id, &rw.sku); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		pending = append(pending, rw)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `UPDATE products SET unit = $2, last_updated = NOW() WHERE id = $1`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	updated := 0
+	for _, rw := range pending {
+		category := classifier.ClassifyProduct(rw.sku)
+		if _, err := stmt.ExecContext(ctx, rw.id, category); err != nil {
+			return 0, err
+		}
+		updated++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return updated, nil
+}
+
+// UpdateProductUnitBySKU sets the category (unit column) for a product matched
+// by SKU, tolerating the 19A prefix mismatch. Returns true if a row was updated.
+func (r *PostgresRepository) UpdateProductUnitBySKU(ctx context.Context, sku, category string) (bool, error) {
+	variants := normalizeSKU(strings.TrimSpace(sku))
+	placeholders := make([]string, len(variants))
+	args := make([]interface{}, 0, len(variants)+1)
+	args = append(args, category)
+	for i, v := range variants {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, v)
+	}
+
+	query := fmt.Sprintf(`
+		UPDATE products SET unit = $1, last_updated = NOW()
+		WHERE sku IN (%s) OR regexp_replace(sku, '^19A', '') IN (%s)`,
+		strings.Join(placeholders, ","), strings.Join(placeholders, ","))
+
+	res, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, err
+	}
+	affected, _ := res.RowsAffected()
+	return affected > 0, nil
 }
 
 // ============ CATALOG IMPORT METHODS ============

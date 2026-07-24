@@ -1,10 +1,13 @@
 package services
 
 import (
+	"audit-service/internal/classifier"
 	"audit-service/internal/core/domain"
+	"audit-service/internal/parser"
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -45,6 +48,9 @@ type CatalogRepository interface {
 	DiscardCatalogImport(ctx context.Context, importID int) error
 	RestoreCatalogImport(ctx context.Context, importID int) error
 	ClearCatalog(ctx context.Context) (int64, error)
+	// Category (unit) maintenance
+	ReclassifyAllUnits(ctx context.Context) (int, error)
+	UpdateProductUnitBySKU(ctx context.Context, sku, category string) (bool, error)
 }
 
 // CatalogService handles catalog business logic
@@ -327,4 +333,85 @@ func (s *CatalogService) GetLatestPendingValuation(ctx context.Context) (*domain
 // ClearCatalog deletes all products and import history from the catalog
 func (s *CatalogService) ClearCatalog(ctx context.Context) (int64, error) {
 	return s.repo.ClearCatalog(ctx)
+}
+
+// ReclassifyCatalogUnits backfills every product's category (stored in the unit
+// column) using the prefix classifier. One-time migration from legacy
+// unit-of-measure values; manual / Excel corrections layer on top.
+func (s *CatalogService) ReclassifyCatalogUnits(ctx context.Context) (int, error) {
+	return s.repo.ReclassifyAllUnits(ctx)
+}
+
+// Upload kinds returned by DetectUploadKind.
+const (
+	UploadKindCategories = "categories" // SKU -> category correction list
+	UploadKindValuation  = "valuation"  // valuation report / catalog (PDF or LISTADF Excel)
+)
+
+// DetectUploadKind inspects an uploaded file and decides whether it is a
+// category-correction list (one row per SKU with a category column) or a
+// valuation/catalog file. The single "Actualizar Catálogo" button uses this to
+// route automatically. Detection is content-based so it works for both CSV and
+// Excel: a file is treated as a category list when it parses as SKU->category
+// AND the majority of its category values are valid known categories. PDFs are
+// always valuation.
+func (s *CatalogService) DetectUploadKind(data []byte, filename string) string {
+	lower := strings.ToLower(filename)
+	if strings.HasSuffix(lower, ".pdf") {
+		return UploadKindValuation
+	}
+
+	corrections, err := parser.ParseCategoryCorrections(data, filename)
+	if err != nil || len(corrections) == 0 {
+		return UploadKindValuation
+	}
+
+	valid := 0
+	for _, cat := range corrections {
+		if classifier.IsValidCategory(cat) {
+			valid++
+		}
+	}
+	// Majority of rows must carry a recognized category to call it a category list.
+	if valid > 0 && valid*2 >= len(corrections) {
+		return UploadKindCategories
+	}
+	return UploadKindValuation
+}
+
+// CategoryImportResult summarizes the outcome of importing category corrections.
+type CategoryImportResult struct {
+	Updated  int      `json:"updated"`   // products whose category was set
+	NotFound int      `json:"not_found"` // SKUs not present in the catalog
+	Invalid  int      `json:"invalid"`   // rows with an unrecognized category
+	Skipped  []string `json:"skipped"`   // SKUs not found (capped sample for UI)
+}
+
+// ImportCategoryCorrections applies a SKU -> category map (e.g. Adrián's Excel)
+// onto the catalog. Categories are validated against the known set; unknown ones
+// are counted as invalid and skipped. SKUs not present in the catalog are
+// counted as not-found. This is the bulk override mechanism on top of the
+// prefix classifier — exceptions only, not the whole catalog.
+func (s *CatalogService) ImportCategoryCorrections(ctx context.Context, corrections map[string]string) (*CategoryImportResult, error) {
+	res := &CategoryImportResult{Skipped: make([]string, 0)}
+	for sku, rawCat := range corrections {
+		category := classifier.NormalizeCategory(rawCat)
+		if category == "" {
+			res.Invalid++
+			continue
+		}
+		ok, err := s.repo.UpdateProductUnitBySKU(ctx, sku, category)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			res.Updated++
+		} else {
+			res.NotFound++
+			if len(res.Skipped) < 50 {
+				res.Skipped = append(res.Skipped, sku)
+			}
+		}
+	}
+	return res, nil
 }

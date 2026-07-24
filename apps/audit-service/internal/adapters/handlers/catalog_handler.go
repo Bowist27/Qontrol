@@ -272,6 +272,105 @@ func (h *CatalogHandler) ImportCatalog(c *gin.Context) {
 	})
 }
 
+// ImportCategories handles POST /api/catalog/categories/import
+// Reads a SKU -> category correction file (Adrián's Excel / CSV) and updates
+// each product's category (stored in the unit column). Bulk override on top of
+// the prefix classifier — only the exceptions need to be in the file.
+func (h *CatalogHandler) ImportCategories(c *gin.Context) {
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "no_file",
+			Message: "No file provided",
+		})
+		return
+	}
+	defer file.Close()
+
+	fileData, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "read_error",
+			Message: "Failed to read file",
+		})
+		return
+	}
+
+	corrections, err := parser.ParseCategoryCorrections(fileData, header.Filename)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "parse_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	result, err := h.service.ImportCategoryCorrections(c.Request.Context(), corrections)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "import_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "Categorías importadas",
+		"file_name":   header.Filename,
+		"total_rows":  len(corrections),
+		"updated":     result.Updated,
+		"not_found":   result.NotFound,
+		"invalid":     result.Invalid,
+		"skipped_skus": result.Skipped,
+	})
+}
+
+// DetectUpload handles POST /api/catalog/detect-upload
+// Inspects the uploaded file and reports whether it is a category-correction
+// list or a valuation/catalog file, so the single "Actualizar Catálogo" button
+// can route automatically without extra buttons.
+func (h *CatalogHandler) DetectUpload(c *gin.Context) {
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, domain.ErrorResponse{
+			Error:   "no_file",
+			Message: "No file provided",
+		})
+		return
+	}
+	defer file.Close()
+
+	fileData, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "read_error",
+			Message: "Failed to read file",
+		})
+		return
+	}
+
+	kind := h.service.DetectUploadKind(fileData, header.Filename)
+	c.JSON(http.StatusOK, gin.H{"kind": kind})
+}
+
+// ReclassifyCategories handles POST /api/catalog/reclassify
+// Backfills every product's category (unit column) from the prefix classifier.
+func (h *CatalogHandler) ReclassifyCategories(c *gin.Context) {
+	updated, err := h.service.ReclassifyCatalogUnits(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, domain.ErrorResponse{
+			Error:   "reclassify_error",
+			Message: err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Catálogo reclasificado por prefijo",
+		"updated": updated,
+	})
+}
+
 // LookupBarcode handles GET /api/catalog/barcode/:code
 func (h *CatalogHandler) LookupBarcode(c *gin.Context) {
 	barcode := c.Param("code")
@@ -549,6 +648,9 @@ func (h *CatalogHandler) RegisterRoutes(router *gin.Engine) {
 		api.PUT("/catalog/products/:id", h.UpdateProduct)
 		api.DELETE("/catalog/products/:id", h.DeleteProduct)
 		api.POST("/catalog/import", h.ImportCatalog)
+		api.POST("/catalog/categories/import", h.ImportCategories)
+		api.POST("/catalog/detect-upload", h.DetectUpload)
+		api.POST("/catalog/reclassify", h.ReclassifyCategories)
 		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)
 		api.GET("/catalog/changes", h.GetProductChanges)
@@ -575,6 +677,9 @@ func (h *CatalogHandler) RegisterRoutesWithAuth(router *gin.Engine, auth *middle
 		api.PUT("/catalog/products/:id", h.UpdateProduct)
 		api.DELETE("/catalog/products/:id", h.DeleteProduct)
 		api.POST("/catalog/import", h.ImportCatalog)
+		api.POST("/catalog/categories/import", h.ImportCategories)
+		api.POST("/catalog/detect-upload", h.DetectUpload)
+		api.POST("/catalog/reclassify", h.ReclassifyCategories)
 		api.DELETE("/catalog/clear", h.ClearCatalog)
 		api.GET("/catalog/barcode/:code", h.LookupBarcode)
 		api.GET("/catalog/changes", h.GetProductChanges)
