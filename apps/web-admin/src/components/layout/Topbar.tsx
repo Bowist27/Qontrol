@@ -5,9 +5,11 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
-import { ChevronDown, User, Settings, LogOut, Shield, Store, Clock } from 'lucide-react';
+import { ChevronDown, User, Settings, LogOut, Shield, Store, Clock, Download } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
+// Public endpoint that redirects to the latest desktop-app installer on S3.
+const AUDIT_API_URL = import.meta.env.VITE_AUDIT_API_URL || 'http://localhost:8085';
 
 interface TopbarProps {
     onLogout: () => void;
@@ -124,6 +126,12 @@ const Topbar: React.FC<TopbarProps> = ({ onLogout }) => {
                             <button className="w-full flex items-center gap-3 px-3 py-2 text-slate-600 hover:bg-slate-50 rounded-lg transition-colors text-sm">
                                 <Settings size={16} /> Configuración
                             </button>
+                            <a
+                                href={`${AUDIT_API_URL}/api/pos/download`}
+                                className="w-full flex items-center gap-3 px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-sm font-medium"
+                            >
+                                <Download size={16} /> Descargar App
+                            </a>
                             <button
                                 onClick={onLogout}
                                 className="w-full flex items-center gap-3 px-3 py-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors text-sm"
