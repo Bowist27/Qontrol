@@ -105,6 +105,9 @@ func main() {
 	// POS-specific catalog route (no JWT - POS authenticates locally)
 	router.POST("/api/pos/catalog/products", catalogHandler.CreateProduct)
 
+	// Public desktop-app download (redirects to the latest installer on S3)
+	router.GET("/api/pos/download", handlers.AppDownload)
+
 	// Start server
 	port := os.Getenv("PORT")
 	if port == "" {
